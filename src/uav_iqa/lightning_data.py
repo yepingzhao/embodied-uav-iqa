@@ -30,7 +30,8 @@ class UAVIQDataModule(L.LightningDataModule):
         dry_run: bool = False,
     ):
         super().__init__()
-        self.save_hyperparameters(ignore=["task", "val_task", "distortion_filter", "leave_out_task"])
+        # Save all hyperparameters including task/distortion config for reproducibility
+        self.save_hyperparameters()
 
         self.data_root = Path(data_root)
         self.batch_size = batch_size
@@ -50,10 +51,20 @@ class UAVIQDataModule(L.LightningDataModule):
     def _load_and_filter(self, split: str, task_override: Optional[str] = None) -> list:
         manifest_path = self.data_root / split / "manifest.json"
         if not manifest_path.exists():
+            print(
+                f"[WARNING] Manifest not found: {manifest_path} — {split} split will be empty"
+            )
             return []
         with open(manifest_path) as f:
             samples = json.load(f)
-        return self._filter_manifest(samples, task=task_override)
+        filtered = self._filter_manifest(samples, task=task_override)
+        if len(filtered) == 0 and len(samples) > 0:
+            print(
+                f"[WARNING] All {len(samples)} {split} samples were filtered out "
+                f"(task={self.task}, distortion_filter={self.distortion_filter}, "
+                f"leave_out_task={self.leave_out_task})"
+            )
+        return filtered
 
     def _filter_manifest(
         self,

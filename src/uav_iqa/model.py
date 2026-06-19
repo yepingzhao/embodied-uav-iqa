@@ -14,17 +14,19 @@ class PanetFPN(nn.Module):
         super().__init__()
         self.out_channels = out_channels
 
-        self.lateral_convs = nn.ModuleList([
-            nn.Conv2d(ic, out_channels, 1) for ic in in_channels
-        ])
-        self.smooth_convs = nn.ModuleList([
-            nn.Conv2d(out_channels, out_channels, 3, padding=1) for _ in in_channels
-        ])
+        self.lateral_convs = nn.ModuleList(
+            [nn.Conv2d(ic, out_channels, 1) for ic in in_channels]
+        )
+        self.smooth_convs = nn.ModuleList(
+            [nn.Conv2d(out_channels, out_channels, 3, padding=1) for _ in in_channels]
+        )
 
-        self.bottom_up_convs = nn.ModuleList([
-            nn.Conv2d(out_channels, out_channels, 3, stride=2, padding=1)
-            for _ in range(len(in_channels) - 1)
-        ])
+        self.bottom_up_convs = nn.ModuleList(
+            [
+                nn.Conv2d(out_channels, out_channels, 3, stride=2, padding=1)
+                for _ in range(len(in_channels) - 1)
+            ]
+        )
 
     def forward(self, features: list) -> list:
         n = len(features)
@@ -110,33 +112,42 @@ class FrequencyAwareBranch(nn.Module):
 
         self.proj = nn.Linear(16 * angular_bins * radial_bins, feat_dim)
 
-    def _log_polar(self, magnitude: torch.Tensor) -> torch.Tensor:
-        B, C, H, W = magnitude.shape
-        cy, cx = H / 2, W / 2
+        # Pre-compute log-polar bin indices for patch_size × patch_size grid (fixed size)
+        cy = cx = patch_size / 2
         r_max = min(cy, cx)
-        y, x = torch.meshgrid(
-            torch.arange(H, device=magnitude.device, dtype=torch.float32),
-            torch.arange(W, device=magnitude.device, dtype=torch.float32),
+        y_coords, x_coords = torch.meshgrid(
+            torch.arange(patch_size, dtype=torch.float32),
+            torch.arange(patch_size, dtype=torch.float32),
             indexing="ij",
         )
-        dy, dx = y - cy, x - cx
-        radius = torch.sqrt(dx**2 + dy**2) / r_max * (self.radial_bins - 1)
-        angle = torch.atan2(dy, dx) / (2 * math.pi) * self.angular_bins
+        dy, dx = y_coords - cy, x_coords - cx
+        radius = torch.sqrt(dx**2 + dy**2) / r_max * (radial_bins - 1)
+        angle = torch.atan2(dy, dx) / (2 * math.pi) * angular_bins
+        r_idx = radius.clamp(0, radial_bins - 1).long()
+        a_idx = angle.clamp(0, angular_bins - 1).long()
+        self.register_buffer(
+            "_lp_flat_idx",
+            (a_idx * radial_bins + r_idx).view(-1),  # (patch_size * patch_size,)
+            persistent=False,
+        )
 
-        r_idx = radius.clamp(0, self.radial_bins - 1).long()
-        a_idx = angle.clamp(0, self.angular_bins - 1).long()
-
-        # Vectorized scatter: (B, C, H, W) → (B, C, angular_bins * radial_bins)
-        flat_idx = (a_idx * self.radial_bins + r_idx).view(-1)  # (H*W,)
-        flat_idx = flat_idx.unsqueeze(0).unsqueeze(0).expand(B, C, -1)  # (B, C, H*W)
-        flat_mag = magnitude.reshape(B, C, -1)  # (B, C, H*W)
-
-        lp_flat = torch.zeros(B, C, self.angular_bins * self.radial_bins, device=magnitude.device)
+    def _log_polar(self, magnitude: torch.Tensor) -> torch.Tensor:
+        B, C, *_ = magnitude.shape
+        # Use pre-computed flat_idx, expanding for batch/channel dims
+        flat_idx = self._lp_flat_idx.unsqueeze(0).unsqueeze(0).expand(B, C, -1)
+        flat_mag = magnitude.reshape(B, C, -1)
+        lp_flat = torch.zeros(
+            B,
+            C,
+            self.angular_bins * self.radial_bins,
+            device=magnitude.device,
+            dtype=magnitude.dtype,
+        )
         lp_flat.scatter_add_(2, flat_idx, flat_mag)
         return lp_flat.view(B, C, self.angular_bins, self.radial_bins)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        B, C, H, W = x.shape
+        B, C, *_ = x.shape
         x_gray = 0.299 * x[:, 0:1] + 0.587 * x[:, 1:2] + 0.114 * x[:, 2:3]
 
         patches = x_gray.unfold(2, self.patch_size, self.stride).unfold(
@@ -144,7 +155,9 @@ class FrequencyAwareBranch(nn.Module):
         )
         n_h, n_w = patches.shape[2], patches.shape[3]
         n_patches = n_h * n_w
-        patches = patches.contiguous().view(B, n_patches, self.patch_size, self.patch_size)
+        patches = patches.contiguous().view(
+            B, n_patches, self.patch_size, self.patch_size
+        )
 
         fft = torch.fft.fft2(patches.float())
         magnitude = torch.abs(fft)
@@ -166,7 +179,9 @@ class FrequencyAwareBranch(nn.Module):
 class CrossAttentionGate(nn.Module):
     """Gating mechanism: α = σ(W_g · [f_s, f_f]), producing α ∈ R^64."""
 
-    def __init__(self, spatial_dim: int = 256, freq_dim: int = 64, hidden_dim: int = 128):
+    def __init__(
+        self, spatial_dim: int = 256, freq_dim: int = 64, hidden_dim: int = 128
+    ):
         super().__init__()
         self.gate_net = nn.Sequential(
             nn.Linear(spatial_dim + freq_dim, hidden_dim),
@@ -352,7 +367,9 @@ class UAVIQANet(nn.Module):
         return self._extract_fused_features(x)
 
     def forward(
-        self, x: torch.Tensor, task_ids: Optional[torch.Tensor] = None,
+        self,
+        x: torch.Tensor,
+        task_ids: Optional[torch.Tensor] = None,
         features: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         f = features if features is not None else self._extract_fused_features(x)
@@ -364,7 +381,9 @@ class UAVIQANet(nn.Module):
         else:
             return self.shared_head(f).squeeze(-1)
 
-    def forward_all_tasks(self, x: torch.Tensor, features: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward_all_tasks(
+        self, x: torch.Tensor, features: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
         f = features if features is not None else self._extract_fused_features(x)
 
         if self.use_task_conditioning:

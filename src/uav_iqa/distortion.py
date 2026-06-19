@@ -275,7 +275,9 @@ class LowResSuperResolution(BaseDistortion):
 
         small_h = max(4, int(h / scale))
         small_w = max(4, int(w / scale))
-        small = cv2.resize(image_uint8, (small_w, small_h), interpolation=cv2.INTER_CUBIC)
+        small = cv2.resize(
+            image_uint8, (small_w, small_h), interpolation=cv2.INTER_CUBIC
+        )
 
         sr_model = self._get_sr_model()
         if sr_model is not None:
@@ -463,14 +465,22 @@ class GenericDistortions:
             image_uint8 = _to_uint8(image)
             try:
                 encode_param = [cv2.IMWRITE_JPEG2000_QUALITY, q]
-                _, enc = cv2.imencode('.jp2', cv2.cvtColor(image_uint8, cv2.COLOR_RGB2BGR), encode_param)
+                _, enc = cv2.imencode(
+                    ".jp2", cv2.cvtColor(image_uint8, cv2.COLOR_RGB2BGR), encode_param
+                )
                 decoded = cv2.imdecode(enc, cv2.IMREAD_COLOR)
-                image = cv2.cvtColor(decoded, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+                image = (
+                    cv2.cvtColor(decoded, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+                )
             except AttributeError:
                 encode_param = [cv2.IMWRITE_JPEG_QUALITY, q]
-                _, enc = cv2.imencode('.jpg', cv2.cvtColor(image_uint8, cv2.COLOR_RGB2BGR), encode_param)
+                _, enc = cv2.imencode(
+                    ".jpg", cv2.cvtColor(image_uint8, cv2.COLOR_RGB2BGR), encode_param
+                )
                 decoded = cv2.imdecode(enc, cv2.IMREAD_COLOR)
-                image = cv2.cvtColor(decoded, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+                image = (
+                    cv2.cvtColor(decoded, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+                )
             transform = A.NoOp(p=1.0)
         elif name == "webp_compression":
             q = max(5, int(90 - intensity * 85))
@@ -495,9 +505,10 @@ class GenericDistortions:
             new_h = max(4, int(image.shape[0] * scale))
             new_w = max(4, int(image.shape[1] * scale))
             small = cv2.resize(_to_uint8(image), (new_w, new_h))
-            image = cv2.resize(small, (image.shape[1], image.shape[0])).astype(
-                np.float32
-            ) / 255.0
+            image = (
+                cv2.resize(small, (image.shape[1], image.shape[0])).astype(np.float32)
+                / 255.0
+            )
             transform = A.NoOp(p=1.0)
         elif name == "grayscale":
             gray = cv2.cvtColor(_to_uint8(image), cv2.COLOR_RGB2GRAY)
@@ -518,7 +529,9 @@ class GenericDistortions:
         return _to_uint8(result)
 
 
-def _inject_one_image_mp(img_path: str, output_dir: str, compress: bool, seed: int) -> dict:
+def _inject_one_image_mp(
+    img_path: str, output_dir: str, compress: bool, seed: int
+) -> dict:
     """Pickle-safe worker for ProcessPoolExecutor. Creates its own pipeline instance."""
     from pathlib import Path
 
@@ -593,9 +606,7 @@ class UAVDistortionPipeline:
         for dist_name in distortion_types:
             for level in self.INTENSITY_LEVELS:
                 key = f"{dist_name}_L{int(level*10):02d}"
-                results[key] = self.apply_distortion(
-                    reference_image, dist_name, level
-                )
+                results[key] = self.apply_distortion(reference_image, dist_name, level)
         return results
 
     @staticmethod
@@ -631,9 +642,13 @@ class UAVDistortionPipeline:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         all_distortions = self.get_all_distortion_names()
-        total_expected = len(image_paths) * len(all_distortions) * len(self.INTENSITY_LEVELS)
-        print(f"Processing {len(image_paths)} images × {len(all_distortions)} "
-              f"distortions × {len(self.INTENSITY_LEVELS)} levels = {total_expected} outputs")
+        total_expected = (
+            len(image_paths) * len(all_distortions) * len(self.INTENSITY_LEVELS)
+        )
+        print(
+            f"Processing {len(image_paths)} images × {len(all_distortions)} "
+            f"distortions × {len(self.INTENSITY_LEVELS)} levels = {total_expected} outputs"
+        )
 
         results = {"total_distorted": 0, "failed": 0, "errors": []}
 
@@ -659,6 +674,8 @@ class UAVDistortionPipeline:
         with open(log_path, "w") as f:
             json.dump(results, f, indent=2)
 
-        print(f"Done: {results['total_distorted']} generated, "
-              f"{results['failed']} failed")
+        print(
+            f"Done: {results['total_distorted']} generated, "
+            f"{results['failed']} failed"
+        )
         return results

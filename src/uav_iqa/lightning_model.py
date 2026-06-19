@@ -5,9 +5,15 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from .evaluate import compute_metrics, evaluate_iqa, per_distortion_metrics, per_task_metrics
+from .distortion import UAVDistortionPipeline
+from .evaluate import (
+    compute_metrics,
+    evaluate_iqa,
+    per_distortion_metrics,
+    per_task_metrics,
+)
 from .model import UAVIQANet
-from .trainer import CrossTaskRegularization, ListMLELoss
+from .losses import CrossTaskRegularization, ListMLELoss
 
 
 class UAVIQALightningModule(L.LightningModule):
@@ -15,6 +21,8 @@ class UAVIQALightningModule(L.LightningModule):
 
     All __init__ parameters are flat basic types for jsonargparse/LightningCLI compatibility.
     """
+
+    UAV_DISTORTIONS = set(UAVDistortionPipeline.get_uav_distortion_names())
 
     def __init__(
         self,
@@ -60,12 +68,20 @@ class UAVIQALightningModule(L.LightningModule):
 
         self._val_preds: List[np.ndarray] = []
         self._val_targets: List[np.ndarray] = []
+        self._val_tasks: List[int] = []
+        self._val_distortions: List[str] = []
         self._test_preds: List[np.ndarray] = []
         self._test_targets: List[np.ndarray] = []
         self._test_tasks: List[int] = []
         self._test_distortions: List[str] = []
 
-    def forward(self, x: torch.Tensor, task_ids: Optional[torch.Tensor] = None) -> torch.Tensor:
+        # Exposed per-slice validation metrics for MetricsHistoryCallback to read
+        self.val_per_task_srcc: Dict[str, float] = {}
+        self.val_per_distortion_srcc: Dict[str, float] = {}
+
+    def forward(
+        self, x: torch.Tensor, task_ids: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
         return self.model(x, task_ids)
 
     def training_step(self, batch: Dict, batch_idx: int) -> torch.Tensor:
@@ -99,7 +115,9 @@ class UAVIQALightningModule(L.LightningModule):
             all_task_scores = self.model.forward_all_tasks(images, features=f)
             loss_ct = self.cross_task_loss(all_task_scores)
 
-        loss = loss_mse + self.lambda_rank * loss_rank + self.lambda_cross_task * loss_ct
+        loss = (
+            loss_mse + self.lambda_rank * loss_rank + self.lambda_cross_task * loss_ct
+        )
 
         self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("train/mse", loss_mse, on_step=False, on_epoch=True)
@@ -122,6 +140,8 @@ class UAVIQALightningModule(L.LightningModule):
 
         self._val_preds.append(pred.detach().cpu().numpy())
         self._val_targets.append(scores.detach().cpu().numpy())
+        self._val_tasks.extend(batch["task_id"].cpu().tolist())
+        self._val_distortions.extend(batch.get("distortion", []) or [])
 
     def on_validation_epoch_end(self) -> None:
         if not self._val_preds:
@@ -133,9 +153,40 @@ class UAVIQALightningModule(L.LightningModule):
         metrics = evaluate_iqa(preds, targets)
         self.log("val/srcc", metrics["SRCC"], prog_bar=True)
         self.log("val/plcc", metrics["PLCC"])
+        self.log("val/krcc", metrics["KendallTau"])
+
+        # Per-task validation metrics
+        if self._val_tasks:
+            per_task = per_task_metrics(targets, preds, self._val_tasks)
+            self.val_per_task_srcc = {
+                name: info["srcc"] for name, info in per_task.items()
+            }
+            for name, info in per_task.items():
+                self.log(f"val/srcc_{name}", info["srcc"])
+
+        # Per-distortion validation metrics (log top-N for readability)
+        if self._val_distortions:
+            per_dist = per_distortion_metrics(preds, targets, self._val_distortions)
+            self.val_per_distortion_srcc = {
+                d: info.get("SRCC", 0.0) for d, info in per_dist.items()
+            }
+            # Only log aggregated by distortion family to avoid metric explosion
+            uav_srccs = []
+            generic_srccs = []
+            for d, info in per_dist.items():
+                if d in UAVIQALightningModule.UAV_DISTORTIONS:
+                    uav_srccs.append(info.get("SRCC", 0))
+                else:
+                    generic_srccs.append(info.get("SRCC", 0))
+            if uav_srccs:
+                self.log("val/srcc_uav", float(np.mean(uav_srccs)))
+            if generic_srccs:
+                self.log("val/srcc_generic", float(np.mean(generic_srccs)))
 
         self._val_preds.clear()
         self._val_targets.clear()
+        self._val_tasks.clear()
+        self._val_distortions.clear()
 
     def test_step(self, batch: Dict, batch_idx: int) -> None:
         images = batch["image"]

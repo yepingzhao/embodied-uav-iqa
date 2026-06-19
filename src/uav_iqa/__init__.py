@@ -8,11 +8,40 @@ from .distortion import (
     PropellerShadow,
 )
 from .model import UAVIQANet
-from .dataset import UAVIQADataset
-from .evaluate import compute_srcc, compute_plcc, evaluate_iqa
+from .dataset import UAVIQADataset, validate_manifest
+from .evaluate import (
+    compute_srcc,
+    compute_plcc,
+    evaluate_iqa,
+    per_distortion_category_metrics,
+)
 from .lightning_model import UAVIQALightningModule
 from .lightning_data import UAVIQDataModule
-from .cli import UAVIQACLI
+from .losses import ListMLELoss, CrossTaskRegularization
+from .annotation_utils import (
+    parse_distortion_key,
+    parse_quality_score,
+    parse_usability,
+    degradation_factor,
+    compute_synthetic_score,
+    build_ref_score_lookup,
+    assign_task_label,
+    synthetic_ref_scores,
+)
+from .utils import (
+    setup_logging,
+    load_task_map,
+    split_samples,
+    write_manifest,
+    find_images,
+)
+from .data_synthesis import (
+    DatasetFormat,
+    DataSynthesisPipeline,
+    create_pipeline,
+)
+
+# UAVIQACLI removed (2026-06) — use vanilla lightning.pytorch.cli.LightningCLI
 
 __all__ = [
     "UAVDistortionPipeline",
@@ -27,7 +56,26 @@ __all__ = [
     "compute_srcc",
     "compute_plcc",
     "evaluate_iqa",
+    "per_distortion_category_metrics",
+    "validate_manifest",
     "UAVIQALightningModule",
     "UAVIQDataModule",
-    "UAVIQACLI",
+    "ListMLELoss",
+    "CrossTaskRegularization",
+    "parse_distortion_key",
+    "parse_quality_score",
+    "parse_usability",
+    "degradation_factor",
+    "compute_synthetic_score",
+    "build_ref_score_lookup",
+    "assign_task_label",
+    "synthetic_ref_scores",
+    "setup_logging",
+    "load_task_map",
+    "split_samples",
+    "write_manifest",
+    "find_images",
+    "DatasetFormat",
+    "DataSynthesisPipeline",
+    "create_pipeline",
 ]

@@ -70,12 +70,19 @@ def per_task_metrics(
     for i, name in enumerate(task_names):
         mask = mapped_ids == i
         if mask.sum() < 3:
-            results[name] = {"srcc": 0.0, "plcc": 0.0, "rmse": 0.0, "n": int(mask.sum())}
+            results[name] = {
+                "srcc": 0.0,
+                "plcc": 0.0,
+                "rmse": 0.0,
+                "n": int(mask.sum()),
+            }
         else:
             r = evaluate_iqa(pred[mask], target[mask])
             results[name] = {
-                "srcc": r["SRCC"], "plcc": r["PLCC"],
-                "rmse": r["RMSE"], "n": int(mask.sum()),
+                "srcc": r["SRCC"],
+                "plcc": r["PLCC"],
+                "rmse": r["RMSE"],
+                "n": int(mask.sum()),
             }
     return results
 
@@ -102,8 +109,51 @@ def per_distortion_metrics(
     for dist in unique:
         mask = np.array([d == dist for d in distortion_labels])
         if mask.sum() < 3:
-            results[dist] = {"SRCC": 0.0, "PLCC": 0.0, "RMSE": 0.0, "N": int(mask.sum())}
+            results[dist] = {
+                "SRCC": 0.0,
+                "PLCC": 0.0,
+                "RMSE": 0.0,
+                "N": int(mask.sum()),
+            }
         else:
             results[dist] = evaluate_iqa(pred[mask], target[mask])
             results[dist]["N"] = int(mask.sum())
+    return results
+
+
+def per_distortion_category_metrics(
+    pred: np.ndarray,
+    target: np.ndarray,
+    distortion_labels: list,
+    uav_dist_names: set = None,
+) -> dict:
+    """Compute aggregate metrics for UAV-specific vs generic distortion categories.
+
+    Args:
+        uav_dist_names: Set of distortion names classified as UAV-specific.
+                        Defaults to the 6 known UAV distortion types.
+    Returns:
+        {'UAV': {...}, 'Generic': {...}}
+    """
+    if uav_dist_names is None:
+        uav_dist_names = {
+            "propeller_vibration_blur",
+            "atmospheric_scattering_haze",
+            "six_dof_viewpoint_blur",
+            "communication_packet_loss",
+            "low_res_super_resolution",
+            "propeller_shadow",
+        }
+
+    uav_mask = np.array([d in uav_dist_names for d in distortion_labels])
+    generic_mask = ~uav_mask
+
+    results = {}
+    for cat, mask in [("UAV", uav_mask), ("Generic", generic_mask)]:
+        n = int(mask.sum())
+        if n < 3:
+            results[cat] = {"SRCC": 0.0, "PLCC": 0.0, "RMSE": 0.0, "N": n}
+        else:
+            results[cat] = evaluate_iqa(pred[mask], target[mask])
+            results[cat]["N"] = n
     return results
