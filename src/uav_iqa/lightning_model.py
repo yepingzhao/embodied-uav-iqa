@@ -74,7 +74,9 @@ class UAVIQALightningModule(L.LightningModule):
         score_key = f"{self.curriculum_stage}_score"
         scores = batch.get(score_key, batch.get("score"))
 
-        pred = self.model(images, task_ids)
+        # Share features: compute backbone+FPN+FAB once, reuse for both pred and cross-task
+        f = self.model.forward_features(images)
+        pred = self.model(images, task_ids, features=f)
 
         loss_mse = self.mse_loss(pred, scores)
 
@@ -94,7 +96,7 @@ class UAVIQALightningModule(L.LightningModule):
 
         loss_ct = torch.tensor(0.0, device=self.device)
         if self.model.use_task_conditioning:
-            all_task_scores = self.model.forward_all_tasks(images)
+            all_task_scores = self.model.forward_all_tasks(images, features=f)
             loss_ct = self.cross_task_loss(all_task_scores)
 
         loss = loss_mse + self.lambda_rank * loss_rank + self.lambda_cross_task * loss_ct

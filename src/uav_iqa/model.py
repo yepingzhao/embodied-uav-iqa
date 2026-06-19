@@ -236,7 +236,7 @@ class UAVIQANet(nn.Module):
 
     def __init__(
         self,
-        backbone: str = "mobilenetv4_s",
+        backbone: str = "mobilenetv4_conv_small",
         num_tasks: int = 4,
         freeze_backbone_stage: int = 2,
         use_fab: bool = True,
@@ -347,10 +347,15 @@ class UAVIQANet(nn.Module):
             return torch.cat([f_s, f_f], dim=-1)
         return f_s
 
+    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
+        """Extract fused features (backbone + FPN + CBAM + FAB) once for reuse."""
+        return self._extract_fused_features(x)
+
     def forward(
-        self, x: torch.Tensor, task_ids: Optional[torch.Tensor] = None
+        self, x: torch.Tensor, task_ids: Optional[torch.Tensor] = None,
+        features: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        f = self._extract_fused_features(x)
+        f = features if features is not None else self._extract_fused_features(x)
 
         if self.use_task_conditioning:
             if task_ids is None:
@@ -359,8 +364,8 @@ class UAVIQANet(nn.Module):
         else:
             return self.shared_head(f).squeeze(-1)
 
-    def forward_all_tasks(self, x: torch.Tensor) -> torch.Tensor:
-        f = self._extract_fused_features(x)
+    def forward_all_tasks(self, x: torch.Tensor, features: Optional[torch.Tensor] = None) -> torch.Tensor:
+        f = features if features is not None else self._extract_fused_features(x)
 
         if self.use_task_conditioning:
             B = x.shape[0]
