@@ -28,9 +28,9 @@ python scripts/run_overfit.py
 ```
 src/uav_iqa/
   distortion.py  # 6 UAV + 18 generic distortion models
-  model.py       # UAVQANet (MobileNetV4-S + PANet FPN + CBAM + FAB + task-conditioned heads)
+  model.py       # UAVIQANet (MobileNetV4-S + PANet FPN + CBAM + FAB + task-conditioned heads)
   dataset.py     # UAVIQADataset: manifest.json → image/scores/task_id
-  trainer.py     # UAVQATrainer: MSE + ListMLE ranking + cross-task regularization
+  trainer.py     # ListMLELoss + CrossTaskRegularization (ranking & cross-task losses)
   evaluate.py    # SRCC, PLCC, RMSE, Kendall tau
 
 scripts/
@@ -58,7 +58,7 @@ configs/default.yaml       # Model/data/training/distortion/benchmark config
 - **Distortion naming**: `{name}_L{intensity*10:02d}` (e.g., `propeller_vibration_blur_L04`).
 - **4 task types**: `tracking=0`, `inspection=1`, `delivery=2`, `sar=3`.
 - **Ablation flags** on `run_m3_train.py`: `--no-fab`, `--no-cbam`, `--no-task-cond`.
-- **Test coverage is sparse** (only `test_distortion.py` exists). Add tests to `tests/` when implementing new functionality.
+- **Test coverage is sparse** (only `test_distortion.py` and `test_lightning.py` exist). Add tests to `tests/` when implementing new functionality.
 - **configs/experiment/** is a placeholder directory (currently empty).
 
 ## Research context

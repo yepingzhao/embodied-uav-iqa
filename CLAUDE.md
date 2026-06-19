@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 UAV-Embodied-IQA: visual quality assessment for aerial embodied intelligence (research codebase). It provides:
 - **6 UAV-specific distortion models** (propeller vibration, atmospheric scattering, 6DoF viewpoint blur, packet-loss blocks, low-res+SR artifacts, propeller shadow)
 - **18 generic distortion types** via Albumentations
-- **UAV-QANet**: a lightweight NR-IQA model (~5.4M params, MobileNetV4-S backbone + PANet FPN + frequency-aware branch + task-conditioned FiLM heads)
+- **UAV-IQANet**: a lightweight NR-IQA model (~5.4M params, MobileNetV4-S backbone + PANet FPN + frequency-aware branch + task-conditioned FiLM heads)
 - **Benchmarking** against 15+ existing IQA methods via pyiqa
 
 ## Project structure
@@ -15,11 +15,11 @@ UAV-Embodied-IQA: visual quality assessment for aerial embodied intelligence (re
 ```
 src/uav_iqa/           # Core library
   distortion.py        #   Distortion models (UAVDistortionPipeline + 6 UAV + 18 generic)
-  model.py             #   UAVQANet (backbone → PANet FPN → CBAM → FAB → task heads)
+  model.py             #   UAVIQANet (backbone → PANet FPN → CBAM → FAB → task heads)
   dataset.py           #   UAVIQADataset — loads manifest.json, image/scores/task_id
-  trainer.py           #   UAVQATrainer — MSE + ListMLE rank + cross-task regularization
+  trainer.py           #   ListMLELoss + CrossTaskRegularization (used by LightningModule)
   evaluate.py          #   SRCC, PLCC, RMSE, Kendall tau metrics
-  utils.py             #   set_seed, count_parameters
+  utils.py             #   count_parameters
 configs/default.yaml   # Training/model/distortion/benchmark configuration
 scripts/               # Executable experiment scripts
   run_m3_train.py      #   Training (multi-seed, ablations, cross-task, leave-one-out)
@@ -31,7 +31,7 @@ scripts/               # Executable experiment scripts
   run_overfit.py       #   Overfit test: train on 100 random images, verify loss → 0
   extract_aircopbench_refs.py # Extract clean reference frames from AirCopBench directory tree
 data/                  # Datasets (gitignored except MotionScape scripts)
-tests/                 # pytest tests
+tests/                 # pytest tests (test_distortion.py, test_lightning.py)
 refine-logs/           # Research-refine artifacts (FINAL_PROPOSAL, EXPERIMENT_PLAN, etc.)
 docs/                  # Literature reviews and research roadmap (Chinese + English)
 ```
@@ -42,7 +42,7 @@ docs/                  # Literature reviews and research roadmap (Chinese + Engl
 2. **`run_m1_inject.py`** — Apply all 24 distortions × 5 intensity levels to reference images → `data/database/distorted/`
 3. **`run_m1_manifest.py`** — Scan distorted directory, generate train/val/test `manifest.json` with placeholder scores
 4. **`run_m1_aircopbench.py`** — Alternative M1 pipeline that uses real AirCopBench annotations (Quality/Usability scores) as labels
-5. **`run_m3_train.py`** — Train UAVQANet on the dataset
+5. **`run_m3_train.py`** — Train UAVIQANet on the dataset
 6. **`run_m2_benchmark.py`** — Evaluate existing IQA methods (PSNR, SSIM, LPIPS, BRISQUE, CLIP-IQA, MANIQA, etc.) on the test set
 
 ## Setup and development commands
@@ -65,7 +65,7 @@ black src/ tests/ scripts/
 pytest tests/test_distortion.py::test_pipeline_has_all_distortions -v
 ```
 
-## Model architecture (UAVQANet)
+## Model architecture (UAVIQANet)
 
 ```
 Input (3×256×256)
@@ -85,7 +85,7 @@ Task types: `tracking=0`, `inspection=1`, `delivery=2`, `sar=3`
 - **Manifest format**: JSON list of `{path, task, distortion, intensity_level, ref_id, vlm_score, vla_score, execution_score, annotated}`
 - **3-stage curriculum**: VLM annotations (epochs 1-20) → VLA (21-40) → Execution (41-50)
 - **Loss**: MSE + λ_rank * ListMLE (per-distortion ranking) + λ_cross_task * (- task score variance)
-- **Ablation toggles** on UAVQANet: `--no-fab`, `--no-cbam`, `--no-task-cond`
+- **Ablation toggles** on UAVIQANet: `--no-fab`, `--no-cbam`, `--no-task-cond`
 - **Distortion naming**: `{name}_L{intensity*10:02d}` (e.g., `propeller_vibration_blur_L04`)
 
 ## Common training invocations

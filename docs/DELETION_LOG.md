@@ -64,21 +64,73 @@
 | `seaborn>=0.12.0` | Not imported anywhere in codebase |
 | `scikit-learn>=1.3.0` | Not imported anywhere in codebase |
 
+## [2026-06-19] Dead Code Cleanup Session (Batch 2)
+
+### Unused Function Removed
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `src/uav_iqa/utils.py` | `set_seed()` | No callers anywhere in codebase |
+
+### Deprecated Class Removed
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `src/uav_iqa/trainer.py` | `UAVIQATrainer` class (~146 lines) | Deprecated since `UAVIQALightningModule` was introduced; no external imports |
+
+### Unused Variable Removed
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `src/uav_iqa/distortion.py` | `var_limit` in `GenericDistortions.apply` | Assigned but never used |
+| `src/uav_iqa/model.py` | `patches_padded` in `FrequencyAwareBranch.forward` | No-op `F.pad` result never used |
+| `src/uav_iqa/trainer.py` | `device` in `ListMLELoss.forward` | Assigned but never used |
+| `scripts/run_m2_benchmark.py` | `e` in `except Exception as e` | Unused exception variable |
+
+### Unused Import Removed
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `src/uav_iqa/trainer.py` | `from typing import Optional` | Only `Dict` was used (also removed with UAVIQATrainer) |
+| `src/uav_iqa/trainer.py` | `from .evaluate import compute_srcc, compute_plcc` | Only used by removed `UAVIQATrainer` class |
+| `src/uav_iqa/trainer.py` | `import warnings` | Only used by removed `UAVIQATrainer` class |
+| `scripts/run_m2_benchmark.py` | `per_distortion_metrics` from import | Imported but never called |
+
+### F-String Without Placeholders Fixed
+
+| File | Change |
+|------|--------|
+| `scripts/run_m1_inject.py` | `f"24 distortions × 5 levels = 120 variants per image"` → regular string |
+| `scripts/run_m2_benchmark.py` | `f"Benchmark Complete"` → regular string |
+
+### Public API Cleanup
+
+| File | Change |
+|------|--------|
+| `src/uav_iqa/__init__.py` | Added `__all__` list for explicit re-export (silences F401) |
+
 ### Documentation Updated
 
 | File | Change |
 |------|--------|
-| `CLAUDE.md` | Removed `load_yaml_config` from project structure listing |
+| `CLAUDE.md` | Removed `set_seed` reference; updated `trainer.py` and `utils.py` descriptions |
+| `AGENTS.md` | Updated `trainer.py` description to remove `UAVIQATrainer` |
 
 ### Impact
 
-- Files modified: 13
-- Dependencies removed: 5
-- Lines of code removed: ~20
-- Dependency count reduction: 5 packages from install requirements
+- Files modified: 9 (+2 doc files)
+- Unused classes removed: 1 (~146 lines)
+- Unused functions removed: 1
+- Unused variables removed: 4
+- Unused imports removed: 5
+- Total lines of code removed: ~175
+- F-strings fixed: 2
+- All ruff checks passing
+- All 16 non-slow tests passing
 
 ### Testing
 
-- All 10 existing tests passing
-- Python syntax verified on all modified files
+- Ruff lint: All checks passed (was 24 errors, now 0)
+- Python syntax: Verified on all modified files
+- pytest: 16/16 fast tests passing, 1 slow test skipped
 - No functional changes — only dead code/import cleanup
