@@ -30,7 +30,7 @@ scripts/               # Executable experiment scripts
   run_distortion.py    #   Verify all 24 distortions produce visually plausible outputs
   run_overfit.py       #   Overfit test: train on 100 random images, verify loss → 0
   extract_aircopbench_refs.py # Extract clean reference frames from AirCopBench directory tree
-data/                  # Datasets (gitignored except MotionScape scripts)
+data/                  # Datasets (raw = external inputs, processed = generated artifacts)
 tests/                 # pytest tests (test_distortion.py, test_lightning.py)
 refine-logs/           # Research-refine artifacts (FINAL_PROPOSAL, EXPERIMENT_PLAN, etc.)
 docs/                  # Literature reviews and research roadmap (Chinese + English)
@@ -38,11 +38,11 @@ docs/                  # Literature reviews and research roadmap (Chinese + Engl
 
 ## Data pipeline (scripts in execution order)
 
-1. **`extract_aircopbench_refs.py`** — Extract clean reference frames from AirCopBench (`data/AirCopBench/`) into a flat directory, excluding pre-degraded variants
-2. **`run_m1_inject.py`** — Apply all 24 distortions × 5 intensity levels to reference images → `data/database/distorted/`
-3. **`run_m1_manifest.py`** — Scan distorted directory, generate train/val/test `manifest.json` with placeholder scores
+1. **`extract_aircopbench_refs.py`** — Extract clean reference frames from AirCopBench (`data/raw/AirCopBench/`) → `data/processed/ref_images/`
+2. **`run_m1_inject.py`** — Apply all 24 distortions × 5 intensity levels to reference images → `data/processed/distorted/`
+3. **`run_m1_manifest.py`** — Scan distorted directory, generate train/val/test `manifest.json` with placeholder scores → `data/processed/{train,val,test}/`
 4. **`run_m1_aircopbench.py`** — Alternative M1 pipeline that uses real AirCopBench annotations (Quality/Usability scores) as labels
-5. **`run_m3_train.py`** — Train UAVIQANet on the dataset
+5. **`run_m3_train.py`** — Train UAVIQANet on the dataset (reads `data/processed/`, writes `outputs/training/`)
 6. **`run_m2_benchmark.py`** — Evaluate existing IQA methods (PSNR, SSIM, LPIPS, BRISQUE, CLIP-IQA, MANIQA, etc.) on the test set
 
 ## Setup and development commands
