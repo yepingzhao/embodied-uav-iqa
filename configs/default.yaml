@@ -1,0 +1,44 @@
+# Default configuration for UAV-Embodied-IQA (LightningCLI format)
+# Usage: python scripts/run_m3_train.py fit --config configs/default.yaml
+
+seed_everything: 42
+
+model:
+  class_path: uav_iqa.lightning_model.UAVQALightningModule
+  init_args:
+    backbone: mobilenetv4_conv_small
+    num_tasks: 4
+    use_fab: true
+    use_cbam: true
+    use_task_conditioning: true
+    freeze_backbone_stage: 2
+    lambda_rank: 0.3
+    lambda_cross_task: 0.1
+    lr: 3.0e-4
+    weight_decay: 1.0e-4
+    warmup_epochs: 5
+    total_epochs: 50
+    annotator_stage: vla
+
+data:
+  class_path: uav_iqa.lightning_data.UAVIQDataModule
+  init_args:
+    data_root: data/database
+    batch_size: 64
+    num_workers: 4
+    image_size: 256
+    annotator_stage: vla
+    task: null
+    val_task: null
+    distortion_filter: null
+    leave_out_task: null
+    dry_run: false
+
+trainer:
+  accelerator: auto
+  devices: 1
+  precision: 16-mixed
+  max_epochs: 50
+  gradient_clip_val: 1.0
+  log_every_n_steps: 10
+  enable_progress_bar: true
