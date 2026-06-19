@@ -6,15 +6,15 @@ saves output grid for visual inspection.
 """
 
 import argparse
-import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
 from uav_iqa.distortion import UAVDistortionPipeline
+from uav_iqa.utils import setup_logging
+
+_log = setup_logging(__name__)
 
 
 def create_test_image(size: int = 256) -> np.ndarray:
@@ -34,9 +34,7 @@ def create_test_image(size: int = 256) -> np.ndarray:
 
 
 def verify_distortions(
-    output_dir: str,
-    test_image_path: str = None,
-    grid_size: int = 256,
+    output_dir: str, test_image_path: str = None, grid_size: int = 256
 ):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -50,51 +48,34 @@ def verify_distortions(
         image = create_test_image(grid_size)
 
     uav_dist_names = pipeline.get_uav_distortion_names()
-    generic_dist_names = [
-        "gaussian_blur",
-        "lens_blur",
-        "motion_blur",
-        "brighten_max",
-        "darken_max",
-        "color_diffusion",
-        "color_quantize",
-        "white_noise",
-        "color_noise",
-        "impulse_noise",
-        "multiplicative_noise",
-        "jpeg_compression",
-        "jp2k_compression",
-        "webp_compression",
-        "spatial_warp",
-        "spatial_rotation",
-        "resolution_limit",
-        "sharpness",
-    ]
+    all_dist_names = UAVDistortionPipeline.get_all_distortion_names()
+    generic_dist_names = [n for n in all_dist_names if n not in uav_dist_names]
 
-    print("=" * 60)
-    print("M0-R002: Distortion Verification")
-    print("=" * 60)
-    print(f"Test image shape: {image.shape}")
-    print(f"UAV-specific distortions: {len(uav_dist_names)}")
-    print(f"Generic distortions: {len(generic_dist_names)}")
-    print(f"Total: {len(uav_dist_names) + len(generic_dist_names)}")
-    print(f"Intensity levels: {pipeline.INTENSITY_LEVELS}")
-    print()
+    _log.info("=" * 60)
+    _log.info("M0-R002: Distortion Verification")
+    _log.info("=" * 60)
+    _log.info("Test image shape: %s", image.shape)
+    _log.info("UAV-specific distortions: %d", len(uav_dist_names))
+    _log.info("Generic distortions: %d", len(generic_dist_names))
+    _log.info("Total: %d", len(uav_dist_names) + len(generic_dist_names))
+    _log.info("Intensity levels: %s", pipeline.INTENSITY_LEVELS)
 
     for category, names in [
         ("UAV-Specific", uav_dist_names),
         ("Generic", generic_dist_names),
     ]:
-        print(f"\n--- {category} Distortions ---")
+        _log.info("--- %s Distortions ---", category)
         for name in names:
-            print(f"  Applying {name}...")
+            _log.info("  Applying %s...", name)
             for level in pipeline.INTENSITY_LEVELS:
                 result = pipeline.apply_distortion(image, name, level)
                 basename = f"{name}_L{int(level * 10):02d}.png"
-                cv2.imwrite(str(output_dir / basename), cv2.cvtColor(result, cv2.COLOR_RGB2BGR))
+                cv2.imwrite(
+                    str(output_dir / basename), cv2.cvtColor(result, cv2.COLOR_RGB2BGR)
+                )
 
-    print(f"\nAll distortions saved to: {output_dir}")
-    print("Verification complete.")
+    _log.info("All distortions saved to: %s", output_dir)
+    _log.info("Verification complete.")
 
 
 def main():
@@ -112,10 +93,7 @@ def main():
         help="Path to a test image (uses synthetic if not provided)",
     )
     parser.add_argument(
-        "--grid-size",
-        type=int,
-        default=256,
-        help="Size of the synthetic test image",
+        "--grid-size", type=int, default=256, help="Size of the synthetic test image"
     )
     args = parser.parse_args()
 

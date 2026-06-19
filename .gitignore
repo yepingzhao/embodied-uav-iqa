@@ -72,3 +72,6 @@ lightning_logs/
 
 # Ruff
 .ruff_cache/
+
+# MyPy
+.mypy_cache/

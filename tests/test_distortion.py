@@ -107,6 +107,7 @@ def test_deterministic():
 
 # --- GenericDistortions tests ---
 
+
 def _test_generic_distortion_cat(name, category):
     """Helper: verify a generic distortion produces valid output."""
     img = _make_test_image()
@@ -126,8 +127,14 @@ def test_generic_blur():
 
 
 def test_generic_brightness():
-    for name in ["brighten_max", "brighten_min", "brighten_avg",
-                 "darken_max", "darken_min", "darken_avg"]:
+    for name in [
+        "brighten_max",
+        "brighten_min",
+        "brighten_avg",
+        "darken_max",
+        "darken_min",
+        "darken_avg",
+    ]:
         _test_generic_distortion_cat(name, "brightness")
 
 
@@ -169,5 +176,6 @@ def test_generic_intensity_range():
 
 def test_generic_unknown_distortion_raises():
     import pytest
+
     with pytest.raises(ValueError):
         GenericDistortions("nonexistent_distortion")

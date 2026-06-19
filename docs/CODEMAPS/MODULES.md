@@ -1,66 +1,67 @@
 # Module Codemap
 
-**Last Updated:** 2026-06-19
+**Last Updated:** 2026-06-20
 
 ## Package: `uav_iqa` (src/uav_iqa/)
 
 ### Module Dependency Graph
 
 ```
-                     ┌───────────────┐
-                     │   model.py    │
-                     │  (UAVIQANet)  │
-                     └───────┬───────┘
-                             │ owns
-                             ▼
-              ┌──────────────────────────────┐
-              │       trainer.py             │
-              │  ListMLELoss                 │
-              │  CrossTaskRegularization     │
-              └──────────────────────────────┘
-                      ▲ uses                  ▲ uses
-                      │                        │
-              ┌───────┴────────────┐   ┌───────┴──────────┐
-              │ lightning_model.py │   │  lightning_data.py│
-              │ UAVIQALightning    │   │  UAVIQDataModule  │
-              │ Module             │   └────────┬──────────┘
-              └────────┬───────────┘            │ owns
-                       │ uses                   ▼
-                       ▼              ┌─────────────────┐
-              ┌───────────────┐       │   dataset.py    │
-              │ evaluate.py   │       │ UAVIQADataset   │
-              │ SRCC, PLCC,   │       └─────────────────┘
-              │ RMSE, Kend-τ  │
-              └───────────────┘
-                       ▲
-                       │
-              ┌────────┴────────┐
-              │    callbacks    │
-              │    .py          │
-              │ CurriculumStage │
-              │ MetricsHistory  │
-              └─────────────────┘
-                       ▲ added by
-                       │
-              ┌────────────────┐
-              │    cli.py      │
-              │  UAVIQACLI     │
-              └────────────────┘
-                       │ uses
-                       ▼
-              ┌────────────────┐
-              │   utils.py     │
-              │ count_params   │
-              └────────────────┘
+                      ┌───────────────┐
+                      │   model.py    │
+                      │  (UAVIQANet)  │
+                      └───────┬───────┘
+                              │ owns
+                              ▼
+               ┌──────────────────────────────┐
+               │        losses.py             │
+               │  ListMLELoss                 │
+               │  CrossTaskRegularization     │
+               └──────────────────────────────┘
+                       ▲ uses                  ▲ uses
+                       │                        │
+               ┌───────┴────────────┐   ┌───────┴──────────┐
+               │ lightning_model.py │   │  lightning_data.py│
+               │ UAVIQALightning    │   │  UAVIQDataModule  │
+               │ Module             │   └────────┬──────────┘
+               └────────┬───────────┘            │ owns
+                        │ uses                   ▼
+                        ▼              ┌─────────────────┐
+               ┌───────────────┐       │   dataset.py    │
+               │ evaluate.py   │       │ UAVIQADataset   │
+               │ SRCC, PLCC,   │       └─────────────────┘
+               │ RMSE, Kend-τ  │
+               └───────────────┘
+                        ▲
+                        │
+               ┌────────┴────────────┐
+               │    callbacks.py     │
+               │ SetupRunCallback    │
+               │ CurriculumStage     │
+               │ MetricsHistory      │
+               │ ResultsSaving       │
+               └────────┬───────────┘
+                        │ added by
+                        ▼
+               ┌──────────────────────┐
+               │  main.py (Lightning  │
+               │  CLI — no custom CLI)│
+               └──────────────────────┘
+                        │
+               ┌────────┴────────┐
+               │   utils.py      │
+               │ count_params    │
+               └─────────────────┘
 
 distortion.py (standalone, no internal deps)
-  UAVDistortionPipeline ── uses ── PropellerVibrationBlur
-                                   AtmosphericScatteringHaze
-                                   SixDoFViewpointBlur
-                                   CommunicationPacketLoss
-                                   LowResSuperResolution
-                                   PropellerShadow
-                                   GenericDistortions (18 types)
+
+annotation_utils.py (standalone)
+  build_ref_score_lookup
+  degradation_factor
+  synthetic_ref_scores
+  assign_task_label
+  parse_quality_score
+  parse_usability
 ```
 
 ---
@@ -206,11 +207,11 @@ def forward_all_tasks(self, x: Tensor) -> Tensor
 
 ---
 
-## Module: `trainer.py`
+## Module: `losses.py`
 
-**Purpose:** Custom loss functions for IQA ranking and cross-task regularization.
+**Purpose:** Custom loss functions for IQA ranking and cross-task regularization (replaces former `trainer.py`).
 
-**Location:** `src/uav_iqa/trainer.py`
+**Location:** `src/uav_iqa/losses.py`
 **Lines:** 32
 
 ### Key Classes
@@ -265,16 +266,42 @@ CrossTask: L = -(2/(K*(K-1))) * Σ_{i<j} mean((scores[:,i] - scores[:,j])²)
 
 ## Module: `lightning_model.py`
 
-**Purpose:** LightningModule wrapping UAVIQANet with training/val/test logic.
+**Purpose:** LightningModule wrapping UAVIQANet with training/val/test logic, per-distortion ListMLE ranking, and feature reuse (forward_features).
 
 **Location:** `src/uav_iqa/lightning_model.py`
-**Lines:** 224
+**Lines:** 272
 
 ### Key Class
 
 | Class | Description |
 |-------|-------------|
-| `UAVIQALightningModule` | `L.LightningModule`: flat `__init__` params for LightningCLI compat; owns UAVIQANet, MSE, ListMLE, CrossTaskRegularization; handles training_step (composite loss), validation/test_step (metric collection), configure_optimizers (AdamW + warmup/cosine scheduler) |
+| `UAVIQALightningModule` | `L.LightningModule`: flat `__init__` params for LightningCLI compat; owns UAVIQANet, MSE, ListMLE, CrossTaskRegularization; handles training_step (composite loss + feature sharing via `forward_features`), validation/test_step (per-task + per-distortion metric aggregation), configure_optimizers (AdamW + warmup/cosine scheduler) |
+
+### Key Parameters (LightningCLI-compatible `__init__`)
+
+| Arg | Default | Description |
+|-----|---------|-------------|
+| `backbone` | `mobilenetv4_conv_small` | timm backbone name |
+| `num_tasks` | `4` | Number of task-specific heads |
+| `use_fab` | `True` | Enable FrequencyAwareBranch |
+| `use_cbam` | `True` | Enable CBAM attention |
+| `use_task_conditioning` | `True` | Enable FiLM task heads |
+| `freeze_backbone_stage` | `2` | Freeze stages 0..N-1 |
+| `lambda_rank` | `0.3` | ListMLE loss weight |
+| `lambda_cross_task` | `0.1` | Cross-task regularization weight |
+| `lr` | `3e-4` | AdamW learning rate |
+| `total_epochs` | `50` | Total training epochs |
+| `annotator_stage` | `vla` | Eval annotation source |
+
+### Feature Sharing Optimization
+
+```python
+f = self.model.forward_features(images)  # backbone + FPN + FAB once
+pred = self.model(images, task_ids, features=f)  # reuse features for head
+all_task_scores = self.model.forward_all_tasks(images, features=f)  # cross-task loss
+```
+
+Backbone + FPN + FAB computed once, reused for both quality prediction and cross-task regularization — avoids redundant forward passes.
 
 ### Curriculum Integration
 
@@ -283,13 +310,23 @@ self.curriculum_stage  # Set by CurriculumStageCallback
 # training_step reads batch["{curriculum_stage}_score"] or falls back to batch["score"]
 ```
 
+### Per-Distortion ListMLE Ranking
+
+```python
+# Grouped by distortion name within batch — applies ListMLE per distortion
+for dist in unique_distortions:
+    mask = dist_ids == dist
+    if mask.sum() >= 3:  # need 3+ samples for ranking
+        loss_rank += self.rank_loss(pred[mask], scores[mask])
+```
+
 ### Test Results
 
 ```python
 get_test_results() -> dict {
     "test_metrics": {"srcc": ..., "plcc": ..., "rmse": ...},
-    "per_task": {"tracking": {"srcc": ..., ...}, ...},
-    "per_distortion": {"propeller_vibration_blur_L04": {"SRCC": ..., ...}, ...},
+    "per_task": {"tracking": {"srcc": ..., "plcc": ..., "rmse": ..., "n": ...}, ...},
+    "per_distortion": {"propeller_vibration_blur_L04": {"SRCC": ..., "PLCC": ..., "N": ...}, ...},
     "preds": [...],
     "targets": [...],
 }
@@ -299,6 +336,7 @@ get_test_results() -> dict {
 
 - `lightning` (pytorch-lightning)
 - `torch`, `torch.nn`
+- `numpy`
 
 ---
 
@@ -307,7 +345,7 @@ get_test_results() -> dict {
 **Purpose:** LightningDataModule wrapping UAVIQADataset with manifest filtering.
 
 **Location:** `src/uav_iqa/lightning_data.py`
-**Lines:** 152
+**Lines:** 155
 
 ### Key Class
 
@@ -315,16 +353,20 @@ get_test_results() -> dict {
 |-------|-------------|
 | `UAVIQDataModule` | `L.LightningDataModule`: loads train/val/test manifests; applies task/distortion/leave_out filters; supports dry_run subsampling |
 
-### Filter Parameters
+### Key Parameters
 
-| Param | Effect |
-|-------|--------|
-| `task="tracking"` | Only samples with `task == "tracking"` |
-| `val_task="sar"` | Override val/test task (defaults to `task`) |
-| `distortion_filter="generic"` | Exclude UAV distortions |
-| `distortion_filter="uav_only"` | Exclude generic distortions |
-| `leave_out_task="sar"` | Exclude one task from train (leave-one-out) |
-| `dry_run=True` | Subsampled: train=100, val=50, test=50 |
+| Param | Default | Effect |
+|-------|---------|--------|
+| `data_root` | `data/processed` | Base directory with `{train,val,test}/manifest.json` |
+| `batch_size` | `256` | Per-device batch size |
+| `num_workers` | `16` | Data loading workers |
+| `image_size` | `256` | Image resize dimension |
+| `annotator_stage` | `vla` | Annotation source for eval (vlm/vla/execution) |
+| `task` | `None` | Filter: only samples with this task |
+| `val_task` | `None` | Override val/test task (defaults to `task`) |
+| `distortion_filter` | `None` | `"generic"` → exclude UAV; `"uav_only"` → exclude generic |
+| `leave_out_task` | `None` | Exclude one task from train (leave-one-out) |
+| `dry_run` | `False` | Subsampled: train=100, val=50, test=50 |
 
 ### Dependencies
 
@@ -335,57 +377,100 @@ get_test_results() -> dict {
 
 ## Module: `callbacks.py`
 
-**Purpose:** PyTorch Lightning callbacks for curriculum and history.
+**Purpose:** PyTorch Lightning callbacks for dataset verification, curriculum switching, metric history, and result saving.
 
 **Location:** `src/uav_iqa/callbacks.py`
-**Lines:** 75
+**Lines:** 234
 
 ### Key Classes
 
 | Class | Description |
 |-------|-------------|
+| `SetupRunCallback` | At fit start: computes manifest SHA256 hash for dataset versioning, prints model param count. Exposes `pl_module.manifest_hash` |
 | `CurriculumStageCallback` | Sets `pl_module.curriculum_stage` (vlm/vla/execution) based on epoch boundaries |
-| `MetricsHistoryCallback` | Records train/val metrics per epoch, saves best model by val SRCC, dumps history.json on fit end |
+| `MetricsHistoryCallback` | Records train/val metrics per epoch, saves `history.json` on fit end, exposes `pl_module.best_val_srcc` |
+| `ResultsSavingCallback` | On fit end: loads best checkpoint, runs test, prints & saves results to `results.json` with git commit hash, hparams, data config |
 
-### Default Curriculum Schedule
+### SetupRunCallback
 
-| Stage | Epochs |
-|-------|--------|
+- Computes SHA256 hash of concatenated train/val/test `manifest.json` files (first 16 chars)
+- Useful for verifying dataset version consistency across experiment runs
+- Exposed as `pl_module.manifest_hash`
+
+### CurriculumStageCallback
+
+| Stage | Epochs (default) |
+|-------|------------------|
 | VLM | 1–20 |
 | VLA | 21–40 |
 | Execution | 41–50 |
 
+Configurable via `vlm_epochs`, `vla_epochs`, `execution_epochs` init args.
+
+### MetricsHistoryCallback
+
+Captured series:
+- `train/loss`, `train/mse`, `train/rank`, `train/cross_task`
+- `val/srcc`, `val/plcc`
+- `val/srcc_{tracking|inspection|delivery|sar}` — per-task SRCC
+- `val/srcc_uav`, `val/srcc_generic` — aggregated distortion family SRCC
+
+### ResultsSavingCallback
+
+- Finds best checkpoint from `ModelCheckpoint` (monitors `val/srcc`, mode=max)
+- Runs `trainer.test()` with best checkpoint
+- Saves `results.json` containing:
+  - `seed`, `n_params`, `best_val_srcc`, `test_metrics` (srcc/plcc/rmse)
+  - `per_task` breakdown, `hparams`, `data_config`, `manifest_hash`, `git_commit`
+
 ### Dependencies
 
 - `lightning`
-- `json`, `pathlib`
+- `json`, `pathlib`, `hashlib`, `subprocess`, `yaml`
 
 ---
 
-## Module: `cli.py`
+## Module: `annotation_utils.py`
 
-**Purpose:** Custom LightningCLI with multi-seed support, post-fit test, and result saving.
+**Purpose:** AirCopBench human annotation parsing, degradation factor computation, and synthetic score generation for manifest annotation.
 
-**Location:** `src/uav_iqa/cli.py`
-**Lines:** 97
+**Location:** `src/uav_iqa/annotation_utils.py`
+**Lines:** 155
 
-### Key Class
+### Key Functions
 
-| Class | Description |
-|-------|-------------|
-| `UAVIQACLI` | Extends `LightningCLI`: adds `--output_dir`, `--seed`, `--dry_run` flags; in `before_fit` creates run dir, seeds everything, adds curriculum/history/checkpoint callbacks; in `after_fit` runs best-checkpoint test, prints results, writes results.json |
+| Function | Description |
+|----------|-------------|
+| `parse_quality_score(quality_str)` | Parse `'Good (4/5)'` → 0.8, `'Excellent (5/5)'` → 1.0, etc. |
+| `parse_usability(usability_str)` | Parse `'1 (Available)'` → 1.0, `'3 (Unavailable)'` → 0.25 |
+| `degradation_factor(distortion, task)` | Get degradation at max intensity for (distortion, task) pair |
+| `build_ref_score_lookup(aircopbench_dir)` | Walk AirCopBench Annotations dirs → dict of `{ref_id: {vlm_score, vla_score, execution_score, annotated}}` |
+| `assign_task_label(img_name)` | Deterministic task assignment from image name MD5 hash |
+| `synthetic_ref_scores(ref_id)` | Deterministic synthetic scores via MD5 hash for refs without annotations |
 
-### CLI Args (beyond LightningCLI defaults)
+### DEGRADATION_FACTORS Table
 
-| Arg | Default | Description |
-|-----|---------|-------------|
-| `--output_dir` | `outputs/training` | Base directory for seed subdirs |
-| `--seed` | `42` | Random seed |
-| `--dry_run` | `false` | Fast verification mode |
+155-entry dict mapping 31 distortion names × 4 tasks to degradation coefficients. Example:
+
+```python
+"propeller_vibration_blur": {
+    "tracking": 0.55, "inspection": 0.40, "delivery": 0.70, "sar": 0.50
+}
+```
+
+Lower values = more severe degradation. The `"none"` entry is 0.95 for all tasks.
+
+### Score Synthesis Model
+
+```
+distorted_score = ref_score × (1 - (1 - degradation_factor) × intensity) + noise
+```
+
+Combines real AirCopBench annotations (Quality → vlm, Usability → vla, 0.4Q + 0.6U → execution) with degradation physics.
 
 ### Dependencies
 
-- `lightning.pytorch.cli.LightningCLI`
+- `json`, `hashlib`, `re`, `logging`, `pathlib`
 
 ---
 
@@ -410,24 +495,29 @@ get_test_results() -> dict {
 
 **Location:** `src/uav_iqa/__init__.py`
 
-### Exports (17 total)
+### Exports (22 total)
 
 ```python
 __all__ = [
-    # Distortion models
+    # Distortion models (7)
     "UAVDistortionPipeline",
     "PropellerVibrationBlur", "AtmosphericScatteringHaze",
     "SixDoFViewpointBlur", "CommunicationPacketLoss",
     "LowResSuperResolution", "PropellerShadow",
-    # Model
+    # Model (1)
     "UAVIQANet",
-    # Dataset
+    # Dataset (1)
     "UAVIQADataset",
-    # Metrics
+    # Metrics (3)
     "compute_srcc", "compute_plcc", "evaluate_iqa",
-    # Lightning wrappers
+    # Lightning wrappers (2)
     "UAVIQALightningModule", "UAVIQDataModule",
-    # CLI
-    "UAVIQACLI",
+    # Losses (2)
+    "ListMLELoss", "CrossTaskRegularization",
+    # Annotation utilities (6)
+    "parse_quality_score", "parse_usability",
+    "degradation_factor", "build_ref_score_lookup",
+    "assign_task_label", "synthetic_ref_scores",
 ]
+# Note: UAVIQACLI removed in 2026-06 refactor — use main.py + vanilla LightningCLI
 ```

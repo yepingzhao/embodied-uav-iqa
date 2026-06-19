@@ -6,15 +6,15 @@ Verifies: model implementation is correct, gradients flow, no NaN.
 
 import argparse
 import sys
-from pathlib import Path
 
 import lightning as L
 import torch
 from torch.utils.data import DataLoader
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
 from uav_iqa.lightning_model import UAVIQALightningModule
+from uav_iqa.utils import setup_logging
+
+_log = setup_logging(__name__)
 
 
 class OverfitDataModule(L.LightningDataModule):
@@ -48,6 +48,9 @@ class OverfitDataModule(L.LightningDataModule):
     def train_dataloader(self):
         return DataLoader(self.dataset, batch_size=self.batch_size, shuffle=True)
 
+    def val_dataloader(self):
+        return DataLoader(self.dataset, batch_size=self.batch_size, shuffle=False)
+
 
 def main():
     parser = argparse.ArgumentParser(description="M0-R004: Overfit test")
@@ -58,7 +61,7 @@ def main():
 
     L.seed_everything(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Using device: {device}")
+    _log.info("Using device: %s", device)
 
     model = UAVIQALightningModule(
         backbone="mobilenetv4_conv_small",
@@ -69,7 +72,7 @@ def main():
     )
 
     n_params = sum(p.numel() for p in model.model.parameters())
-    print(f"Model params: {n_params:,}")
+    _log.info("Model params: %s", f"{n_params:,}")
 
     datamodule = OverfitDataModule(n_samples=100, batch_size=args.batch_size)
 
@@ -80,15 +83,20 @@ def main():
         enable_progress_bar=False,
         enable_model_summary=False,
         logger=False,
+        limit_val_batches=0,
     )
 
     trainer.fit(model, datamodule=datamodule)
 
     final_loss = float(trainer.callback_metrics.get("train/loss_epoch", 999))
-    print(f"\nFinal loss: {final_loss:.6f}")
+    _log.info("Final loss: %.6f", final_loss)
 
     overfit_ok = final_loss < 0.001
-    print(f"Overfit check: {'PASSED' if overfit_ok else 'FAILED'} (min_loss={final_loss:.6f} < 0.001)")
+    _log.info(
+        "Overfit check: %s (min_loss=%.6f < 0.001)",
+        "PASSED" if overfit_ok else "FAILED",
+        final_loss,
+    )
 
     return 0 if overfit_ok else 1
 

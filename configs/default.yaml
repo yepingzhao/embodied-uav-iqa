@@ -1,5 +1,6 @@
-# Default configuration for UAV-Embodied-IQA (LightningCLI format)
-# Usage: python scripts/run_m3_train.py fit --config configs/default.yaml
+# Reference config template for UAV-IQANet training.
+# Each experiment has its own self-contained YAML in configs/experiments/.
+# Override via CLI: --seed_everything 100, --trainer.default_root_dir outputs/custom
 
 seed_everything: 42
 
@@ -14,7 +15,7 @@ model:
     freeze_backbone_stage: 2
     lambda_rank: 0.3
     lambda_cross_task: 0.1
-    lr: 3.0e-4
+    lr: 1.2e-3
     weight_decay: 1.0e-4
     warmup_epochs: 5
     total_epochs: 50
@@ -24,8 +25,8 @@ data:
   class_path: uav_iqa.lightning_data.UAVIQDataModule
   init_args:
     data_root: data/processed
-    batch_size: 64
-    num_workers: 4
+    batch_size: 256
+    num_workers: 16
     image_size: 256
     annotator_stage: vla
     task: null
@@ -42,3 +43,25 @@ trainer:
   gradient_clip_val: 1.0
   log_every_n_steps: 10
   enable_progress_bar: true
+  default_root_dir: outputs/default
+  logger:
+    - class_path: swanlab.integration.pytorch_lightning.SwanLabLogger
+      init_args:
+        project: uav-iqa
+    - class_path: lightning.pytorch.loggers.CSVLogger
+      init_args: {}
+  callbacks:
+    - class_path: uav_iqa.callbacks.SetupRunCallback
+    - class_path: uav_iqa.callbacks.CurriculumStageCallback
+      init_args:
+        vlm_epochs: 20
+        vla_epochs: 20
+        execution_epochs: 10
+    - class_path: uav_iqa.callbacks.MetricsHistoryCallback
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: val/srcc
+        mode: max
+        save_top_k: 1
+        filename: best_model
+    - class_path: uav_iqa.callbacks.ResultsSavingCallback

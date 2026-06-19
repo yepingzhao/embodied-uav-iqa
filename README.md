@@ -67,41 +67,42 @@ Categories: blur (3), brightness (5), chromatic (3), noise (4), compression (3),
 ## Project Layout
 
 ```
-src/uav_iqa/               # Core library
+src/uav_iqa/               # Core library (~2.2K LOC)
+  __init__.py              # Public API exports (22 symbols)
   distortion.py            # 24 distortion models (UAVDistortionPipeline)
   model.py                 # UAVIQANet (backbone → FPN → CBAM → FAB → task heads)
   dataset.py               # UAVIQADataset — manifest.json loader
+  losses.py                # ListMLELoss + CrossTaskRegularization
+  annotation_utils.py      # AirCopBench annotation parsing, degradation factors, score synthesis
   lightning_model.py       # LightningModule with MSE + ListMLE + cross-task loss
   lightning_data.py        # LightningDataModule with manifest filtering
-  trainer.py               # ListMLELoss, CrossTaskRegularization
   evaluate.py              # SRCC, PLCC, RMSE, Kendall τ metrics
-  callbacks.py             # CurriculumStageCallback, MetricsHistoryCallback
-  cli.py                   # UAVIQACLI — LightningCLI with multi-seed support
+  callbacks.py             # SetupRunCallback, CurriculumStageCallback, MetricsHistoryCallback, ResultsSavingCallback
   utils.py                 # count_parameters()
-  __init__.py              # Public API exports
 
 scripts/                   # Executable experiment scripts
-  extract_aircopbench_refs.py  # Extract clean ref frames from AirCopBench
-  run_distortion.py            # Visual sanity check of all 24 distortions
-  run_m1_inject.py             # Batch distortion injection (24×5 per ref)
-  run_m1_manifest.py           # Generate train/val/test manifest.json
-  run_m1_aircopbench.py        # Full M1 pipeline with AirCopBench annotations
+  synthesize_data.py           # Unified data synthesis CLI (extract/inject/manifest/annotate/all)
   run_m2_benchmark.py          # Benchmark 15+ existing IQA methods
-  run_m3_train.py              # Training (multi-seed, ablations, cross-task, LOO)
+  run_distortion.py            # Visual sanity check of all 24 distortions
   run_overfit.py               # 100-image overfit test (model correctness)
+  run_c2_correlation.py        # C2 correlation validation
 
 configs/
-  default.yaml                 # LightningCLI configuration
+  default.yaml                 # LightningCLI config template
+  experiments/                 # 21 per-experiment configs (r013–r024c)
 
 tests/
-  test_distortion.py           # 8 tests for distortion models
+  test_distortion.py           # 10 tests for distortion models
   test_lightning.py            # Tests for LightningModule & DataModule
+
+main.py                        # Unified training entry point (LightningCLI)
 
 refine-logs/                   # Research refinement artifacts
   FINAL_PROPOSAL.md            # Method thesis (score 9.0/10)
   EXPERIMENT_PLAN.md           # 33 runs, 6 milestones, 4 claims
   EXPERIMENT_TRACKER.md        # Run-by-run status tracker
   REVIEW_SUMMARY.md            # External review resolution log
+  EXPERIMENT_RESULTS.md        # Experiment results summary
 ```
 
 ---
@@ -133,30 +134,31 @@ uv sync --group dev --extra benchmark
 
 Data is **not** included in the repo. Download AirCopBench from [arXiv 2511.11025](https://arxiv.org/abs/2511.11025).
 
-**Data pipeline (execution order):**
+**Data pipeline:**
 
 ```bash
-# 1. Extract clean reference frames from AirCopBench
-python scripts/extract_aircopbench_refs.py \
-  --aircopbench-root data/AirCopBench \
-  --output-dir data/database/ref_images
+# Full pipeline (all 4 steps at once)
+python scripts/synthesize_data.py all \
+  --dataset aircopbench \
+  --input-root data/raw/AirCopBench \
+  --output-dir data/processed
 
-# 2. Inject all 24 distortions × 5 intensity levels
-python scripts/run_m1_inject.py \
-  --image-dir data/database/ref_images \
-  --output-dir data/database/distorted \
-  --workers 8
+# Or run individual steps:
+python scripts/synthesize_data.py extract \
+  --dataset aircopbench --input-root data/raw/AirCopBench \
+  --output-dir data/processed/ref_images
 
-# 3. Generate train/val/test manifest.json
-python scripts/run_m1_manifest.py \
-  --distorted-dir data/database/distorted \
-  --output-dir data/database
+python scripts/synthesize_data.py inject \
+  --image-dir data/processed/ref_images \
+  --output-dir data/processed/distorted --workers 8
 
-# — Or use the AirCopBench annotation pipeline —
-python scripts/run_m1_aircopbench.py \
-  --data-dir data/AirCopBench \
-  --output-dir outputs/m1_aircopbench \
-  --workers 4
+python scripts/synthesize_data.py manifest \
+  --dataset aircopbench --distorted-dir data/processed/distorted \
+  --output-dir data/processed
+
+python scripts/synthesize_data.py annotate \
+  --dataset aircopbench --manifest-dir data/processed \
+  --input-root data/raw/AirCopBench
 ```
 
 ---
@@ -165,38 +167,53 @@ python scripts/run_m1_aircopbench.py \
 
 ### Training
 
+All hyperparameters live in self-contained YAML configs. Training uses `main.py` (vanilla LightningCLI).
+
 ```bash
-# Standard training with config
-python scripts/run_m3_train.py fit --config configs/default.yaml
+# Standard training (task-conditioned, all components)
+python main.py fit --config configs/experiments/r013_task_cond.yaml
 
-# Multi-seed (3 seeds)
-python scripts/run_m3_train.py --seeds 42 100 200
+# Multi-seed via shell loop
+for seed in 42 100 200; do
+  python main.py fit --config configs/experiments/r013_task_cond.yaml \
+    --seed_everything $seed \
+    --trainer.default_root_dir "outputs/r013_seed${seed}"
+done
 
-# Per-task training (tracking only)
-python scripts/run_m3_train.py --data.init_args.task tracking
+# Per-task training
+python main.py fit --config configs/experiments/r024a_tracking.yaml
+python main.py fit --config configs/experiments/r024a_inspection.yaml
 
 # Leave-one-out (train on 3 tasks, test on SAR)
-python scripts/run_m3_train.py --data.init_args.leave_out_task sar
+python main.py fit --config configs/experiments/r024b_leave_sar.yaml
 
 # Distortion filter (generic only or uav_only)
-python scripts/run_m3_train.py --data.init_args.distortion_filter generic
-python scripts/run_m3_train.py --data.init_args.distortion_filter uav_only
+python main.py fit --config configs/experiments/r021_generic_only.yaml
+python main.py fit --config configs/experiments/r021b_uav_only.yaml
 
-# Dry run (fast verification, 100 train samples)
-python scripts/run_m3_train.py --dry_run true --trainer.max_epochs 3
+# Override any config key from CLI
+python main.py fit --config configs/experiments/r013_task_cond.yaml \
+  --data.init_args.dry_run true \
+  --trainer.max_epochs 3
 ```
 
-### Ablation Study
+### Ablation Studies
+
+Each ablation has its own self-contained config:
 
 ```bash
 # Without Frequency-Aware Branch
-python scripts/run_m3_train.py --model.init_args.use_fab false
+python main.py fit --config configs/experiments/r016_no_fab.yaml
 
 # Without CBAM
-python scripts/run_m3_train.py --model.init_args.use_cbam false
+python main.py fit --config configs/experiments/r018_no_cbam.yaml
 
-# Without task-conditioned heads
-python scripts/run_m3_train.py --model.init_args.use_task_conditioning false
+# Without task conditioning
+python main.py fit --config configs/experiments/r017_no_task_cond.yaml
+
+# Backbone ablations
+python main.py fit --config configs/experiments/r019_mobilevit_s.yaml
+python main.py fit --config configs/experiments/r020_efficientvit_b0.yaml
 ```
 
 ### Benchmark
@@ -204,7 +221,7 @@ python scripts/run_m3_train.py --model.init_args.use_task_conditioning false
 ```bash
 # Run all 15+ methods on the test set
 python scripts/run_m2_benchmark.py \
-  --data-dir data/database \
+  --data-dir data/processed \
   --output-dir outputs/benchmark
 
 # Selected methods only
@@ -246,27 +263,42 @@ Support for per-task and per-distortion evaluation via `evaluate.py`.
 
 ## Configuration
 
-The [default config](configs/default.yaml) controls all aspects:
+The [default config](configs/default.yaml) serves as a reference template. Each experiment has its own self-contained YAML in `configs/experiments/`.
 
 ```yaml
 model:
-  backbone: mobilenetv4_conv_small
-  use_fab: true          # Frequency-Aware Branch
-  use_cbam: true         # CBAM attention
-  use_task_conditioning: true  # FiLM task heads
-  lambda_rank: 0.3       # ListMLE loss weight
-  lambda_cross_task: 0.1  # Cross-task regularization
+  class_path: uav_iqa.lightning_model.UAVIQALightningModule
+  init_args:
+    backbone: mobilenetv4_conv_small
+    use_fab: true          # Frequency-Aware Branch
+    use_cbam: true         # CBAM attention
+    use_task_conditioning: true  # FiLM task heads
+    lambda_rank: 0.3       # ListMLE loss weight
+    lambda_cross_task: 0.1  # Cross-task regularization
+    lr: 1.2e-3
+    annotator_stage: vla
 
 data:
-  data_root: data/database
-  batch_size: 64
-  image_size: 256
-  annotator_stage: vla
+  class_path: uav_iqa.lightning_data.UAVIQDataModule
+  init_args:
+    data_root: data/processed
+    batch_size: 256
+    image_size: 256
+    num_workers: 16
 
 trainer:
+  accelerator: auto
   precision: 16-mixed
   max_epochs: 50
   gradient_clip_val: 1.0
+  logger:
+    - class_path: swanlab.integration.pytorch_lightning.SwanLabLogger
+    - class_path: lightning.pytorch.loggers.CSVLogger
+  callbacks:
+    - class_path: uav_iqa.callbacks.CurriculumStageCallback
+    - class_path: uav_iqa.callbacks.MetricsHistoryCallback
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+    - class_path: uav_iqa.callbacks.ResultsSavingCallback
 ```
 
 ---
@@ -296,10 +328,12 @@ black src/ tests/ scripts/
 
 - **Manifest format:** JSON list of `{path, task, distortion, intensity_level, ref_id, vlm_score, vla_score, execution_score, annotated}`
 - **Distortion naming:** `{name}_L{intensity*10:02d}` (e.g., `propeller_vibration_blur_L04`)
-- **3-stage curriculum:** VLM annotations (epochs 1-20) → VLA (21-40) → Execution (41-50)
-- **Loss layers:** MSE + λ_rank · ListMLE (per-distortion ranking) + λ_cross_task · CrossTaskRegularization
+- **3-stage curriculum:** VLM annotations (epochs 1-20) → VLA (21-40) → Execution (41-50). Annotation source gated by kwargs.
+- **Loss layers:** MSE + λ_rank · ListMLE (per-distortion ranking) + λ_cross_task · CrossTaskRegularization (negative pairwise score variance)
 - **Real-ESRGAN** is optional; falls back to bicubic + sharpen if not installed
 - **openVLA/CARLA** are manual installs (not on PyPI); not needed for basic training/inference
+- **Training entry:** `main.py` (vanilla LightningCLI). `run_m3_train.py` and `UAVIQACLI` were removed in the 2026-06 refactor.
+- **Score annotation:** `annotate_scores.py` applies degradation model: `score = ref_score × degradation_factor(distortion, task, intensity)`
 
 ---
 
@@ -309,9 +343,13 @@ black src/ tests/ scripts/
 |----------|-------------|
 | [CLAUDE.md](CLAUDE.md) | Detailed architecture, data pipeline, commands |
 | [AGENTS.md](AGENTS.md) | Quick reference for development agents |
+| [docs/CODEMAPS/ARCHITECTURE.md](docs/CODEMAPS/ARCHITECTURE.md) | Detailed architecture diagram and data flow |
+| [docs/CODEMAPS/FILES.md](docs/CODEMAPS/FILES.md) | File tree with line counts and dependencies |
+| [docs/CODEMAPS/MODULES.md](docs/CODEMAPS/MODULES.md) | Per-module API documentation |
 | [refine-logs/FINAL_PROPOSAL.md](refine-logs/FINAL_PROPOSAL.md) | Research method thesis (score 9.0/10) |
 | [refine-logs/EXPERIMENT_PLAN.md](refine-logs/EXPERIMENT_PLAN.md) | 33 experiments across 6 milestones |
 | [refine-logs/EXPERIMENT_TRACKER.md](refine-logs/EXPERIMENT_TRACKER.md) | Run-by-run status |
+| [refine-logs/EXPERIMENT_RESULTS.md](refine-logs/EXPERIMENT_RESULTS.md) | Experiment results summary |
 | [refine-logs/REVIEW_SUMMARY.md](refine-logs/REVIEW_SUMMARY.md) | External review resolutions |
 | [docs/](docs/) | Literature reviews & research roadmap |
 

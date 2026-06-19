@@ -36,6 +36,9 @@ vlm = [
 benchmark = [
     "pyiqa>=0.1.0",
 ]
+swanlab = [
+    "swanlab>=0.3.0",
+]
 
 [dependency-groups]
 dev = [

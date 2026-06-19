@@ -1,6 +1,6 @@
 # Architecture Codemap
 
-**Last Updated:** 2026-06-19
+**Last Updated:** 2026-06-20
 
 ## High-Level System Overview
 
@@ -167,13 +167,20 @@ Output: (B,) quality scores ∈ [0, 1]
 │    Epochs 1-20:   vlm_score                  │
 │    Epochs 21-40:  vla_score                  │
 │    Epochs 41-50:  execution_score            │
+│                                              │
+│  Logging: self.log() → SwanLabLogger         │
+│           (cloud: swanlab.cn)                  │
+│           fallback → MetricsHistoryCallback  │
+│           (local: history.json)              │
 └─────────────────────────────────────────────┘
 ```
 
 ## Component Relationships
 
 ```
-UAVIQACLI (LightningCLI)
+LightningCLI (main.py)
+  ├── --config → configs/experiments/<name>.yaml
+  ├── configures → SwanLabLogger + CSVLogger (dual logger)
   ├── calls → UAVIQALightningModule
   │              ├── owns → UAVIQANet
   │              │            ├── owns → MobileNetV4-S (timm)
@@ -187,9 +194,11 @@ UAVIQACLI (LightningCLI)
   │              └── uses → evaluate_iqa
   ├── calls → UAVIQDataModule
   │              └── owns → UAVIQADataset
+  ├── adds → SetupRunCallback
   ├── adds → CurriculumStageCallback
   ├── adds → MetricsHistoryCallback
-  └── adds → ModelCheckpoint
+  ├── adds → ModelCheckpoint (val/srcc, top-1)
+  └── adds → ResultsSavingCallback (post-fit test + results.json)
 ```
 
 ## Key Design Decisions
@@ -203,3 +212,8 @@ UAVIQACLI (LightningCLI)
 | FiLM task conditioning | Enables multi-task with minimal parameter overhead (4-dim embed) |
 | 3-stage curriculum | Progressive supervision: cheap VLM → medium VLA → expensive execution |
 | ListMLE loss | Per-distortion ranking signal improves relative quality ordering |
+| Feature sharing (forward_features) | Backbone+FPN+FAB computed once, reused for pred + cross-task loss |
+| main.py + LightningCLI | Replaces custom UAVIQACLI; self-contained YAML per experiment |
+| SwanLabLogger + CSVLogger | Cloud + local dual logging; no cloud dependency for local runs |
+| SetupRunCallback | Manifests SHA256 hash for dataset versioning on every run |
+| ResultsSavingCallback | Best checkpoint auto-test + structured results.json with git_commit |

@@ -2,14 +2,13 @@
 """M2-R009/R010/R011/R012: Benchmark existing IQA methods.
 
 Runs 15+ existing IQA methods on the UAV-Embodied-IQA test set and computes
-SRCC/PLCC against VLA decision scores.
+SRCC/PLCC against VLA decision scores. Models are cached per method to avoid
+re-instantiation overhead on large test sets.
 
 Supported methods:
   FR: psnr, ssim, ms_ssim, lpips_alex, lpips_vgg, dists, ahiq, topiq_fr
   NR-handcrafted: brisque, niqe, ilniqe
-  NR-deep: maniqa, clip_iqa, q_align
-  NR-frequency: brisque (DCT features)
-  Embodied: ma_eiqa
+  NR-deep: maniqa, clip_iqa, q_align, topiq_nr
 
 Usage:
     python scripts/run_m2_benchmark.py \
@@ -20,19 +19,21 @@ Usage:
 
 import argparse
 import json
-import sys
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
 import torch
 from PIL import Image
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from src.uav_iqa.evaluate import (
+from uav_iqa.evaluate import (
     compute_metrics,
     per_task_metrics,
+    per_distortion_category_metrics,
 )
+from uav_iqa.utils import setup_logging
+
+_log = setup_logging(__name__)
 
 
 def load_manifest(data_dir, split="test"):
@@ -59,186 +60,155 @@ def load_image_and_score(sample, data_dir, image_size=256):
         sample.get("task", "tracking"),
         sample.get("distortion", "unknown"),
         sample.get("intensity_level", 0.0),
+        sample.get("ref_path", ""),
     )
 
 
-class FRMethods:
+# ---------------------------------------------------------------------------
+# IQA method implementations -- single registry with uniform signatures
+# ---------------------------------------------------------------------------
+
+
+class IQAEvaluator:
+    """Registry of IQA methods. Each method receives (data_dir, img_np, img_t, ref_path).
+
+    Deep-learning models are constructed once and cached via lru_cache to avoid
+    per-sample instantiation overhead.
+    """
+
+    def __init__(self, device: torch.device = None):
+        self.device = device or torch.device("cpu")
+
     @staticmethod
-    def psnr(img, ref_path, data_dir):
+    def _load_ref_tensor(ref_path, data_dir):
+        ref_img = Image.open(Path(data_dir) / ref_path).convert("RGB")
+        ref_np = np.array(ref_img).astype(np.float32) / 255.0
+        return torch.from_numpy(ref_np).permute(2, 0, 1).unsqueeze(0)
+
+    # -- Full-reference methods --
+
+    @staticmethod
+    def psnr(data_dir, img_np, img_t, ref_path):
         from skimage.metrics import peak_signal_noise_ratio
 
+        if not ref_path:
+            return 0.0
         ref = np.array(Image.open(Path(data_dir) / ref_path).convert("RGB"))
         return peak_signal_noise_ratio(
-            ref, (img * 255).astype(np.uint8), data_range=255
+            ref, (img_np * 255).astype(np.uint8), data_range=255
         )
 
     @staticmethod
-    def ssim(img, ref_path, data_dir):
+    def ssim(data_dir, img_np, img_t, ref_path):
         from skimage.metrics import structural_similarity
 
+        if not ref_path:
+            return 0.0
         ref = np.array(Image.open(Path(data_dir) / ref_path).convert("RGB"))
         return structural_similarity(
-            ref, (img * 255).astype(np.uint8), channel_axis=2, data_range=255
+            ref, (img_np * 255).astype(np.uint8), channel_axis=2, data_range=255
         )
 
     @staticmethod
-    def ms_ssim(img, ref_path, data_dir):
+    def ms_ssim(data_dir, img_np, img_t, ref_path):
         try:
             from pytorch_msssim import ms_ssim
 
-            ref_img = Image.open(Path(data_dir) / ref_path).convert("RGB")
-            ref_t = torch.from_numpy(np.array(ref_img).astype(np.float32) / 255.0)
-            ref_t = ref_t.permute(2, 0, 1).unsqueeze(0)
-            img_t = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0)
+            if not ref_path:
+                return 0.0
+            ref_t = IQAEvaluator._load_ref_tensor(ref_path, data_dir)
             return float(ms_ssim(img_t, ref_t, data_range=1.0))
         except ImportError:
             return 0.0
 
-    @staticmethod
-    def lpips(img_t, ref_path, data_dir, net="alex"):
+    def lpips_alex(self, data_dir, img_np, img_t, ref_path):
+        return self._lpips(img_t, ref_path, data_dir, net="alex")
+
+    def lpips_vgg(self, data_dir, img_np, img_t, ref_path):
+        return self._lpips(img_t, ref_path, data_dir, net="vgg")
+
+    @lru_cache(maxsize=2)
+    def _get_lpips(self, net: str):
         try:
             import lpips
 
-            loss_fn = lpips.LPIPS(net=net, verbose=False)
-            ref_img = Image.open(Path(data_dir) / ref_path).convert("RGB")
-            ref_t = torch.from_numpy(np.array(ref_img).astype(np.float32) / 255.0)
-            ref_t = ref_t.permute(2, 0, 1).unsqueeze(0)
-            return float(loss_fn(img_t, ref_t).item())
+            return lpips.LPIPS(net=net, verbose=False).to(self.device)
         except ImportError:
+            return None
+
+    def _lpips(self, img_t, ref_path, data_dir, net="alex"):
+        loss_fn = self._get_lpips(net)
+        if loss_fn is None or not ref_path:
             return 0.0
+        ref_t = IQAEvaluator._load_ref_tensor(ref_path, data_dir).to(self.device)
+        return float(loss_fn(img_t.to(self.device), ref_t).item())
 
-
-class NRMethods:
-    @staticmethod
-    def brisque(img_np):
+    @lru_cache(maxsize=8)
+    def _get_pyiqa_metric(self, metric_name: str):
         try:
             import pyiqa
 
-            metric = pyiqa.create_metric("brisque", device=torch.device("cpu"))
-            img_t = torch.from_numpy(img_np).permute(2, 0, 1).unsqueeze(0)
-            return float(metric(img_t).item())
+            return pyiqa.create_metric(metric_name, device=self.device)
         except ImportError:
+            return None
+
+    def _pyiqa_fr(self, data_dir, img_t, ref_path, metric_name):
+        if not ref_path:
             return 0.0
-
-    @staticmethod
-    def niqe(img_np):
-        try:
-            import pyiqa
-
-            metric = pyiqa.create_metric("niqe", device=torch.device("cpu"))
-            img_t = torch.from_numpy(img_np).permute(2, 0, 1).unsqueeze(0)
-            return float(metric(img_t).item())
-        except ImportError:
+        metric = self._get_pyiqa_metric(metric_name)
+        if metric is None:
             return 0.0
+        ref_t = IQAEvaluator._load_ref_tensor(ref_path, data_dir).to(self.device)
+        return float(metric(img_t.to(self.device), ref_t).item())
 
-    @staticmethod
-    def clip_iqa(img_t):
-        try:
-            import pyiqa
-
-            metric = pyiqa.create_metric("clipiqa", device=torch.device("cpu"))
-            return float(metric(img_t).item())
-        except ImportError:
+    def _pyiqa_nr(self, img_t, metric_name):
+        metric = self._get_pyiqa_metric(metric_name)
+        if metric is None:
             return 0.0
+        return float(metric(img_t.to(self.device)).item())
 
-    @staticmethod
-    def maniqa(img_t):
-        try:
-            import pyiqa
+    def ahiq(self, data_dir, img_np, img_t, ref_path):
+        return self._pyiqa_fr(data_dir, img_t, ref_path, "ahiq")
 
-            metric = pyiqa.create_metric("maniqa", device=torch.device("cpu"))
-            return float(metric(img_t).item())
-        except ImportError:
-            return 0.0
+    def topiq_fr(self, data_dir, img_np, img_t, ref_path):
+        return self._pyiqa_fr(data_dir, img_t, ref_path, "topiq_fr")
 
-    @staticmethod
-    def q_align(img_t):
-        try:
-            import pyiqa
+    # -- No-reference methods --
 
-            metric = pyiqa.create_metric("qalign", device=torch.device("cpu"))
-            return float(metric(img_t).item())
-        except ImportError:
-            return 0.0
+    def brisque(self, data_dir, img_np, img_t, ref_path):
+        return self._pyiqa_nr(img_t, "brisque")
 
-    @staticmethod
-    def topiq_nr(img_t):
-        try:
-            import pyiqa
+    def niqe(self, data_dir, img_np, img_t, ref_path):
+        return self._pyiqa_nr(img_t, "niqe")
 
-            metric = pyiqa.create_metric("topiq_nr", device=torch.device("cpu"))
-            return float(metric(img_t).item())
-        except ImportError:
-            return 0.0
+    def clip_iqa(self, data_dir, img_np, img_t, ref_path):
+        return self._pyiqa_nr(img_t, "clipiqa")
 
-    @staticmethod
-    def ahiq(img_t, ref_t):
-        try:
-            import pyiqa
+    def maniqa(self, data_dir, img_np, img_t, ref_path):
+        return self._pyiqa_nr(img_t, "maniqa")
 
-            metric = pyiqa.create_metric("ahiq", device=torch.device("cpu"))
-            return float(metric(img_t, ref_t).item())
-        except ImportError:
-            print("  WARNING: pyiqa not installed — returning 0.0 for ahiq")
-            return 0.0
+    def q_align(self, data_dir, img_np, img_t, ref_path):
+        return self._pyiqa_nr(img_t, "qalign")
 
-    @staticmethod
-    def topiq_fr(img_t, ref_t):
-        try:
-            import pyiqa
-
-            metric = pyiqa.create_metric("topiq_fr", device=torch.device("cpu"))
-            return float(metric(img_t, ref_t).item())
-        except ImportError:
-            print("  WARNING: pyiqa not installed — returning 0.0 for topiq_fr")
-            return 0.0
+    def topiq_nr(self, data_dir, img_np, img_t, ref_path):
+        return self._pyiqa_nr(img_t, "topiq_nr")
 
 
-class FRMethodsExt:
-    """FR methods requiring both distorted and reference images (with ref loading)."""
-
-    @staticmethod
-    def ahiq(img_t, ref_path, data_dir):
-        try:
-            import pyiqa
-
-            ref_img = Image.open(Path(data_dir) / ref_path).convert("RGB")
-            ref_t = torch.from_numpy(np.array(ref_img).astype(np.float32) / 255.0)
-            ref_t = ref_t.permute(2, 0, 1).unsqueeze(0)
-            metric = pyiqa.create_metric("ahiq", device=torch.device("cpu"))
-            return float(metric(img_t, ref_t).item())
-        except ImportError:
-            print("  WARNING: pyiqa not installed — returning 0.0 for ahiq")
-            return 0.0
-
-    @staticmethod
-    def topiq_fr(img_t, ref_path, data_dir):
-        try:
-            import pyiqa
-
-            ref_img = Image.open(Path(data_dir) / ref_path).convert("RGB")
-            ref_t = torch.from_numpy(np.array(ref_img).astype(np.float32) / 255.0)
-            ref_t = ref_t.permute(2, 0, 1).unsqueeze(0)
-            metric = pyiqa.create_metric("topiq_fr", device=torch.device("cpu"))
-            return float(metric(img_t, ref_t).item())
-        except ImportError:
-            print("  WARNING: pyiqa not installed — returning 0.0 for topiq_fr")
-            return 0.0
-
-
+# Registry: name -> (category, needs_instance)
 AVAILABLE_METHODS = {
-    "psnr": ("FR", FRMethods.psnr),
-    "ssim": ("FR", FRMethods.ssim),
-    "ms_ssim": ("FR", FRMethods.ms_ssim),
-    "lpips_alex": ("FR", FRMethods.lpips),
-    "brisque": ("NR", NRMethods.brisque),
-    "niqe": ("NR", NRMethods.niqe),
-    "clip_iqa": ("NR", NRMethods.clip_iqa),
-    "maniqa": ("NR", NRMethods.maniqa),
-    "q_align": ("NR", NRMethods.q_align),
-    "topiq_nr": ("NR", NRMethods.topiq_nr),
-    "ahiq": ("FR", FRMethodsExt.ahiq),
-    "topiq_fr": ("FR", FRMethodsExt.topiq_fr),
+    "psnr": ("FR", False),
+    "ssim": ("FR", False),
+    "ms_ssim": ("FR", False),
+    "lpips_alex": ("FR", True),
+    "lpips_vgg": ("FR", True),
+    "ahiq": ("FR", True),
+    "topiq_fr": ("FR", True),
+    "brisque": ("NR", True),
+    "niqe": ("NR", True),
+    "clip_iqa": ("NR", True),
+    "maniqa": ("NR", True),
+    "q_align": ("NR", True),
+    "topiq_nr": ("NR", True),
 }
 
 
@@ -258,68 +228,66 @@ def main():
     parser.add_argument(
         "--max-samples", type=int, default=0, help="Limit samples (0 = all)"
     )
-    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--device", default="cpu", help="Torch device (cuda, cpu, mps)")
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    device = torch.device(args.device)
+    _log.info("Using device: %s", device)
+
     manifest = load_manifest(data_dir)
     if args.max_samples > 0:
         manifest = manifest[: args.max_samples]
-    print(f"Evaluating {len(manifest)} samples")
+    _log.info("Evaluating %d samples", len(manifest))
 
-    targets, task_ids, distortions, intensities = [], [], [], []
+    targets, task_ids, distortion_labels = [], [], []
     for s in manifest:
         score = s.get("vla_score", 0.0)
         if isinstance(score, list):
             score = np.mean(score)
         targets.append(float(score))
         task_ids.append(s.get("task", "tracking"))
-        distortions.append(s.get("distortion", "unknown"))
-        intensities.append(s.get("intensity_level", 0.0))
+        distortion_labels.append(s.get("distortion", "unknown"))
     targets = np.array(targets)
+
+    evaluator = IQAEvaluator(device=device)
 
     results = {}
     for method_name in args.methods:
         if method_name not in AVAILABLE_METHODS:
-            print(f"  SKIP {method_name}: not available")
+            _log.info("  SKIP %s: not available", method_name)
             continue
 
-        cat, func = AVAILABLE_METHODS[method_name]
-        print(f"  Running {method_name} ({cat})...")
+        cat, needs_instance = AVAILABLE_METHODS[method_name]
+        func = (
+            getattr(evaluator, method_name.replace("-", "_"))
+            if needs_instance
+            else getattr(IQAEvaluator, method_name)
+        )
+        _log.info("  Running %s (%s)...", method_name, cat)
 
         predictions = []
         for i, s in enumerate(manifest):
-            ref_path = s.get("ref_path", "")
-            img_np, img_t, score, task, dist, intens = load_image_and_score(
+            img_np, img_t, score, task, dist, intens, ref_path = load_image_and_score(
                 s, data_dir, args.image_size
             )
 
             try:
-                if cat == "FR" and ref_path:
-                    pred = func(
-                        img_np if method_name in ("psnr", "ssim", "ms_ssim") else img_t,
-                        ref_path,
-                        data_dir,
-                    )
-                elif method_name in ("psnr", "ssim", "ms_ssim"):
-                    pred = 0.0
-                elif cat == "NR":
-                    pred = func(img_np if method_name in ("brisque", "niqe") else img_t)
-                else:
-                    pred = 0.0
+                pred = func(data_dir, img_np, img_t, ref_path)
             except Exception:
                 pred = 0.0
 
             predictions.append(float(pred) if pred is not None else 0.0)
             if (i + 1) % 1000 == 0:
-                print(f"    {i+1}/{len(manifest)}")
+                _log.info("    %d/%d", i + 1, len(manifest))
 
         preds = np.array(predictions)
         metrics = compute_metrics(targets, preds)
         per_task = per_task_metrics(targets, preds, task_ids)
+        per_cat = per_distortion_category_metrics(targets, preds, distortion_labels)
 
         results[method_name] = {
             "category": cat,
@@ -328,21 +296,42 @@ def main():
             "rmse": float(metrics["rmse"]),
             "kendall_tau": float(metrics.get("kendall_tau", 0.0)),
             "per_task": per_task,
+            "per_distortion_category": per_cat,
         }
-        print(f"    SRCC={metrics['srcc']:.4f} PLCC={metrics['plcc']:.4f}")
+        _log.info("    SRCC=%.4f PLCC=%.4f", metrics["srcc"], metrics["plcc"])
 
     with open(output_dir / "benchmark_results.json", "w") as f:
         json.dump({"n_samples": len(manifest), "methods": results}, f, indent=2)
 
-    print(f"\n{'='*60}")
-    print("Benchmark Complete")
-    print(f"{'='*60}")
-    print(f"{'Method':<20} {'Cat':<5} {'SRCC':>8} {'PLCC':>8}")
-    print(f"{'-'*45}")
+    _log.info("=" * 60)
+    _log.info("Benchmark Complete")
+    _log.info("=" * 60)
+    _log.info(
+        "%-20s %-5s %8s %8s %12s %12s",
+        "Method",
+        "Cat",
+        "SRCC",
+        "PLCC",
+        "UAV_SRCC",
+        "Gen_SRCC",
+    )
+    _log.info("-" * 75)
     for name in sorted(results.keys(), key=lambda n: results[n]["srcc"], reverse=True):
         r = results[name]
-        print(f"{name:<20} {r['category']:<5} {r['srcc']:>8.4f} {r['plcc']:>8.4f}")
-    print(f"\nResults: {output_dir / 'benchmark_results.json'}")
+        uav_srcc = r.get("per_distortion_category", {}).get("UAV", {}).get("SRCC", 0)
+        gen_srcc = (
+            r.get("per_distortion_category", {}).get("Generic", {}).get("SRCC", 0)
+        )
+        _log.info(
+            "%-20s %-5s %8.4f %8.4f %12.4f %12.4f",
+            name,
+            r["category"],
+            r["srcc"],
+            r["plcc"],
+            uav_srcc,
+            gen_srcc,
+        )
+    _log.info("Results: %s", output_dir / "benchmark_results.json")
 
 
 if __name__ == "__main__":

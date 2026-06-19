@@ -61,16 +61,18 @@ class TestLightningDataModule:
             split_dir.mkdir(parents=True)
             manifest = []
             for i in range(20):
-                manifest.append({
-                    "path": f"{split}/img_{i:03d}.png",
-                    "task": "tracking",
-                    "vlm_score": 0.5,
-                    "vla_score": 0.6,
-                    "execution_score": 0.7,
-                    "distortion": "blur_L02",
-                    "intensity_level": 0.2,
-                    "ref_id": i,
-                })
+                manifest.append(
+                    {
+                        "path": f"{split}/img_{i:03d}.png",
+                        "task": "tracking",
+                        "vlm_score": 0.5,
+                        "vla_score": 0.6,
+                        "execution_score": 0.7,
+                        "distortion": "blur_L02",
+                        "intensity_level": 0.2,
+                        "ref_id": i,
+                    }
+                )
             with open(split_dir / "manifest.json", "w") as f:
                 json.dump(manifest, f)
         return str(data_root)
@@ -90,5 +92,3 @@ class TestLightningDataModule:
         assert dm.test_dataset is not None
         assert len(dm.train_dataset) == 20
         assert len(dm.val_dataset) == 20
-
-

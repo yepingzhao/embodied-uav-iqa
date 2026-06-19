@@ -27,23 +27,27 @@ python scripts/run_overfit.py
 
 ```
 src/uav_iqa/
-  distortion.py  # 6 UAV + 18 generic distortion models
-  model.py       # UAVIQANet (MobileNetV4-S + PANet FPN + CBAM + FAB + task-conditioned heads)
-  dataset.py     # UAVIQADataset: manifest.json → image/scores/task_id
-  trainer.py     # ListMLELoss + CrossTaskRegularization (ranking & cross-task losses)
-  evaluate.py    # SRCC, PLCC, RMSE, Kendall tau
+  distortion.py       # 6 UAV + 18 generic distortion models
+  model.py            # UAVIQANet (MobileNetV4-S + PANet FPN + CBAM + FAB + task-conditioned heads)
+  dataset.py          # UAVIQADataset: manifest.json → image/scores/task_id
+  losses.py           # ListMLELoss + CrossTaskRegularization (ranking & cross-task losses)
+  annotation_utils.py # AirCopBench annotation parsing, degradation factors, score synthesis
+  data_synthesis.py  # Dataset-agnostic data pipeline (DatasetFormat + DataSynthesisPipeline)
+  evaluate.py         # SRCC, PLCC, RMSE, Kendall tau
+  lightning_model.py  # UAVIQALightningModule (MSE + ListMLE + cross-task loss, curriculum)
+  lightning_data.py   # UAVIQDataModule (manifest filtering, task/distortion/LOO filters)
+  callbacks.py        # CurriculumStageCallback, MetricsHistoryCallback, SetupRunCallback, ResultsSavingCallback
 
 scripts/
-  run_m3_train.py         # Training (multi-seed, ablations, cross-task, leave-one-out)
-  run_m2_benchmark.py     # Benchmark existing IQA methods (pyiqa)
-  run_m1_aircopbench.py   # Full M1 pipeline from AirCopBench
-  run_m1_inject.py        # Batch distortion injection
-  run_m1_manifest.py      # Generate train/val/test manifest.json
-  run_distortion.py       # Visual sanity check of all distortions
-  run_overfit.py          # 100-image overfit test
-  extract_aircopbench_refs.py  # Extract clean ref frames from AirCopBench
+  synthesize_data.py          # Unified data synthesis CLI (extract/inject/manifest/annotate/all)
+  run_m2_benchmark.py         # Benchmark existing IQA methods (pyiqa)
+  run_distortion.py           # Visual sanity check of all distortions
+  run_overfit.py              # 100-image overfit test
+  run_c2_correlation.py       # C2 correlation validation
 
-configs/default.yaml       # Model/data/training/distortion/benchmark config
+configs/default.yaml          # Model/data/training config template
+configs/experiments/          # 21 per-experiment configs (r013–r024c)
+main.py                       # Unified training entry point (LightningCLI)
 ```
 
 ## Gotchas
@@ -53,13 +57,13 @@ configs/default.yaml       # Model/data/training/distortion/benchmark config
 - **Real-ESRGAN is optional** (`LowResSuperResolution` distortion); falls back to bicubic+sharpen if not installed.
 - **openVLA and CARLA are manual installs** (not on PyPI); not needed for basic training/inference.
 - **VLM extras** (`vllm`, `transformers`, `accelerate`) for annotation scoring: `uv sync --group dev --extra vlm`.
-- **Data pipeline order matters**: `extract_refs → inject distortions → generate manifest → train → benchmark`.
+- **Data pipeline order matters**: `extract_refs → inject distortions → generate manifest → annotate scores → train → benchmark`.
 - **3-stage curriculum**: VLM annotations (epochs 1-20) → VLA (21-40) → Execution (41-50). Annotation source gated by kwargs.
 - **Distortion naming**: `{name}_L{intensity*10:02d}` (e.g., `propeller_vibration_blur_L04`).
 - **4 task types**: `tracking=0`, `inspection=1`, `delivery=2`, `sar=3`.
-- **Ablation flags** on `run_m3_train.py`: `--no-fab`, `--no-cbam`, `--no-task-cond`.
+- **Ablation toggles**: use per-experiment config in `configs/experiments/` (e.g., `r016_no_fab.yaml`), or override via CLI: `--model.init_args.use_fab false`.
 - **Test coverage is sparse** (only `test_distortion.py` and `test_lightning.py` exist). Add tests to `tests/` when implementing new functionality.
-- **configs/experiment/** is a placeholder directory (currently empty).
+- **Training entry point**: `main.py` (vanilla LightningCLI). `run_m3_train.py` and `UAVIQACLI` were removed in 2026-06 refactor.
 
 ## Research context
 
