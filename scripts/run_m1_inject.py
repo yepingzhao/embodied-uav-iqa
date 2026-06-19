@@ -82,7 +82,7 @@ def main():
         print(f"[DRY RUN] Processing {len(images)} images")
 
     print(f"Found {len(images)} reference images")
-    print(f"24 distortions × 5 levels = 120 variants per image")
+    print("24 distortions × 5 levels = 120 variants per image")
     print(f"Total expected pairs: {len(images) * 120}")
     print(f"Output: {output_dir}")
 

@@ -31,7 +31,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.uav_iqa.evaluate import (
     compute_metrics,
-    per_distortion_metrics,
     per_task_metrics,
 )
 
@@ -180,6 +179,7 @@ class NRMethods:
             metric = pyiqa.create_metric("ahiq", device=torch.device("cpu"))
             return float(metric(img_t, ref_t).item())
         except ImportError:
+            print("  WARNING: pyiqa not installed — returning 0.0 for ahiq")
             return 0.0
 
     @staticmethod
@@ -190,6 +190,39 @@ class NRMethods:
             metric = pyiqa.create_metric("topiq_fr", device=torch.device("cpu"))
             return float(metric(img_t, ref_t).item())
         except ImportError:
+            print("  WARNING: pyiqa not installed — returning 0.0 for topiq_fr")
+            return 0.0
+
+
+class FRMethodsExt:
+    """FR methods requiring both distorted and reference images (with ref loading)."""
+
+    @staticmethod
+    def ahiq(img_t, ref_path, data_dir):
+        try:
+            import pyiqa
+
+            ref_img = Image.open(Path(data_dir) / ref_path).convert("RGB")
+            ref_t = torch.from_numpy(np.array(ref_img).astype(np.float32) / 255.0)
+            ref_t = ref_t.permute(2, 0, 1).unsqueeze(0)
+            metric = pyiqa.create_metric("ahiq", device=torch.device("cpu"))
+            return float(metric(img_t, ref_t).item())
+        except ImportError:
+            print("  WARNING: pyiqa not installed — returning 0.0 for ahiq")
+            return 0.0
+
+    @staticmethod
+    def topiq_fr(img_t, ref_path, data_dir):
+        try:
+            import pyiqa
+
+            ref_img = Image.open(Path(data_dir) / ref_path).convert("RGB")
+            ref_t = torch.from_numpy(np.array(ref_img).astype(np.float32) / 255.0)
+            ref_t = ref_t.permute(2, 0, 1).unsqueeze(0)
+            metric = pyiqa.create_metric("topiq_fr", device=torch.device("cpu"))
+            return float(metric(img_t, ref_t).item())
+        except ImportError:
+            print("  WARNING: pyiqa not installed — returning 0.0 for topiq_fr")
             return 0.0
 
 
@@ -204,8 +237,8 @@ AVAILABLE_METHODS = {
     "maniqa": ("NR", NRMethods.maniqa),
     "q_align": ("NR", NRMethods.q_align),
     "topiq_nr": ("NR", NRMethods.topiq_nr),
-    "ahiq": ("FR", NRMethods.ahiq),
-    "topiq_fr": ("FR", NRMethods.topiq_fr),
+    "ahiq": ("FR", FRMethodsExt.ahiq),
+    "topiq_fr": ("FR", FRMethodsExt.topiq_fr),
 }
 
 
@@ -273,15 +306,11 @@ def main():
                     )
                 elif method_name in ("psnr", "ssim", "ms_ssim"):
                     pred = 0.0
-                elif method_name == "ahiq":
-                    pred = func(img_t, None)
-                elif method_name == "topiq_fr":
-                    pred = func(img_t, None)
                 elif cat == "NR":
                     pred = func(img_np if method_name in ("brisque", "niqe") else img_t)
                 else:
                     pred = 0.0
-            except Exception as e:
+            except Exception:
                 pred = 0.0
 
             predictions.append(float(pred) if pred is not None else 0.0)
@@ -306,7 +335,7 @@ def main():
         json.dump({"n_samples": len(manifest), "methods": results}, f, indent=2)
 
     print(f"\n{'='*60}")
-    print(f"Benchmark Complete")
+    print("Benchmark Complete")
     print(f"{'='*60}")
     print(f"{'Method':<20} {'Cat':<5} {'SRCC':>8} {'PLCC':>8}")
     print(f"{'-'*45}")

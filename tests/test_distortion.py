@@ -4,6 +4,7 @@ import numpy as np
 
 from uav_iqa.distortion import (
     UAVDistortionPipeline,
+    GenericDistortions,
     PropellerVibrationBlur,
     AtmosphericScatteringHaze,
     SixDoFViewpointBlur,
@@ -102,3 +103,71 @@ def test_deterministic():
     r1 = pipeline1.apply_distortion(img, "propeller_vibration_blur", 0.5)
     r2 = pipeline2.apply_distortion(img, "propeller_vibration_blur", 0.5)
     assert np.array_equal(r1, r2)
+
+
+# --- GenericDistortions tests ---
+
+def _test_generic_distortion_cat(name, category):
+    """Helper: verify a generic distortion produces valid output."""
+    img = _make_test_image()
+    dist = GenericDistortions(name, seed=42)
+    result = dist.apply(img, 0.5)
+    assert result.shape == img.shape, f"{name}: shape mismatch"
+    assert result.dtype == np.uint8, f"{name}: dtype mismatch"
+    assert result.min() >= 0, f"{name}: min < 0"
+    assert result.max() <= 255, f"{name}: max > 255"
+    assert dist.name == name
+    assert dist.CATEGORIES[name] == category
+
+
+def test_generic_blur():
+    for name in ["gaussian_blur", "lens_blur", "motion_blur"]:
+        _test_generic_distortion_cat(name, "blur")
+
+
+def test_generic_brightness():
+    for name in ["brighten_max", "brighten_min", "brighten_avg",
+                 "darken_max", "darken_min", "darken_avg"]:
+        _test_generic_distortion_cat(name, "brightness")
+
+
+def test_generic_chromatic():
+    for name in ["color_diffusion", "color_shift", "color_quantize"]:
+        _test_generic_distortion_cat(name, "chromatic")
+
+
+def test_generic_noise():
+    for name in ["white_noise", "color_noise", "impulse_noise", "multiplicative_noise"]:
+        _test_generic_distortion_cat(name, "noise")
+
+
+def test_generic_compression():
+    for name in ["jpeg_compression", "jp2k_compression", "webp_compression"]:
+        _test_generic_distortion_cat(name, "compression")
+
+
+def test_generic_spatial():
+    for name in ["spatial_warp", "spatial_rotation", "spatial_scale", "spatial_shear"]:
+        _test_generic_distortion_cat(name, "spatial")
+
+
+def test_generic_other():
+    for name in ["resolution_limit", "grayscale", "sharpness", "contrast"]:
+        _test_generic_distortion_cat(name, "other")
+
+
+def test_generic_intensity_range():
+    """Verify all generic distortions work across all intensity levels."""
+    img = _make_test_image()
+    for name in GenericDistortions.CATEGORIES:
+        dist = GenericDistortions(name, seed=42)
+        for level in [0.2, 0.4, 0.6, 0.8, 1.0]:
+            result = dist.apply(img, level)
+            assert result.shape == img.shape
+            assert result.dtype == np.uint8
+
+
+def test_generic_unknown_distortion_raises():
+    import pytest
+    with pytest.raises(ValueError):
+        GenericDistortions("nonexistent_distortion")
