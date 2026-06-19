@@ -8,7 +8,7 @@ M1 AirCopBench-specific pipeline:
 
 Usage:
     python scripts/run_m1_aircopbench.py \
-        --data-dir data/AirCopBench \
+        --data-dir data/raw/AirCopBench \
         --output-dir outputs/m1_aircopbench \
         --dry-run --workers 4
 """
@@ -139,7 +139,7 @@ def assign_task_label(entry, img_rel_path):
 
 def main():
     parser = argparse.ArgumentParser(description="M1 AirCopBench pipeline")
-    parser.add_argument("--data-dir", default="data/AirCopBench",
+    parser.add_argument("--data-dir", default="data/raw/AirCopBench",
                         help="Path to AirCopBench data directory")
     parser.add_argument("--output-dir", default="outputs/m1_aircopbench",
                         help="Output directory")

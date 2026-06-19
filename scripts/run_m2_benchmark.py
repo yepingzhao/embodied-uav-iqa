@@ -13,7 +13,7 @@ Supported methods:
 
 Usage:
     python scripts/run_m2_benchmark.py \
-        --data-dir data/database \
+        --data-dir data/processed \
         --output-dir outputs/benchmark \
         --methods psnr ssim lpips_alex brisque clip_iqa
 """
@@ -244,7 +244,7 @@ AVAILABLE_METHODS = {
 
 def main():
     parser = argparse.ArgumentParser(description="Benchmark existing IQA methods")
-    parser.add_argument("--data-dir", default="data/database", help="Database root")
+    parser.add_argument("--data-dir", default="data/processed", help="Database root")
     parser.add_argument(
         "--output-dir", default="outputs/benchmark", help="Output directory"
     )

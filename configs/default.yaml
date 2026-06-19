@@ -23,7 +23,7 @@ model:
 data:
   class_path: uav_iqa.lightning_data.UAVIQDataModule
   init_args:
-    data_root: data/database
+    data_root: data/processed
     batch_size: 64
     num_workers: 4
     image_size: 256

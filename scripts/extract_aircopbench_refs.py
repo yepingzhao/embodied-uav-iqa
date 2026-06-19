@@ -7,8 +7,8 @@ into a unified flat directory ready for distortion injection.
 
 Usage:
     python scripts/extract_aircopbench_refs.py \
-        --aircopbench-root data/AirCopBench \
-        --output-dir data/database/ref_images
+        --aircopbench-root data/raw/AirCopBench \
+        --output-dir data/processed/ref_images
 """
 
 import argparse
@@ -57,7 +57,7 @@ def main():
     )
     parser.add_argument(
         "--output-dir",
-        default="data/database/ref_images",
+        default="data/processed/ref_images",
         help="Output directory for unified reference images",
     )
     parser.add_argument(

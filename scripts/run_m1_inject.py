@@ -6,8 +6,8 @@ reference images, saving distorted variants to the database directory.
 
 Usage:
     python scripts/run_m1_inject.py \
-        --image-dir data/AirCopBench/Sim_3_UAVs/Samples/images/scene_001 \
-        --output-dir data/database/distorted \
+        --image-dir data/raw/AirCopBench/Sim_3_UAVs/Samples/images/scene_001 \
+        --output-dir data/processed/distorted \
         --workers 8
 
 Dry run (process 5 images only):
@@ -65,7 +65,7 @@ def process_image(args_tuple):
 def main():
     parser = argparse.ArgumentParser(description="M1-R005: Batch distortion injection")
     parser.add_argument("--image-dir", required=True, help="Directory of reference images")
-    parser.add_argument("--output-dir", default="data/database/distorted", help="Output directory")
+    parser.add_argument("--output-dir", default="data/processed/distorted", help="Output directory")
     parser.add_argument("--workers", type=int, default=4, help="Parallel workers")
     parser.add_argument("--dry-run", action="store_true", help="Process first 5 images only")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")

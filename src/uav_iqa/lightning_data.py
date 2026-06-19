@@ -16,7 +16,7 @@ class UAVIQDataModule(L.LightningDataModule):
 
     def __init__(
         self,
-        data_root: str = "data/database",
+        data_root: str = "data/processed",
         batch_size: int = 64,
         num_workers: int = 4,
         image_size: int = 256,
