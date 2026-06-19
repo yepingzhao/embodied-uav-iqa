@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""M0-R004: Overfit test — train UAV-QANet on 100 images until loss → 0.
+"""M0-R004: Overfit test — train UAV-IQANet on 100 images until loss → 0.
 
 Verifies: model implementation is correct, gradients flow, no NaN.
 """
@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from uav_iqa.lightning_model import UAVQALightningModule
+from uav_iqa.lightning_model import UAVIQALightningModule
 
 
 class OverfitDataModule(L.LightningDataModule):
@@ -60,7 +60,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
-    model = UAVQALightningModule(
+    model = UAVIQALightningModule(
         backbone="mobilenetv4_conv_small",
         lambda_rank=0.0,
         lambda_cross_task=0.0,

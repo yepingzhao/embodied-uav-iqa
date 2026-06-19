@@ -46,7 +46,7 @@
 - **Key differentiator**: 6 UAV-specific distortion types with physically-motivated mathematical models
 - **Scale**: ~3,000 reference images, ~180,000 annotated pairs, 4 UAV task categories
 - **Annotation**: VLM (cognitive) + VLA (decision) + CARLA-Air Execution, 3-stage curriculum
-- **Baseline model**: UAV-QANet, <5.5M params, frequency-aware + task-conditioned (no novelty claimed)
+- **Baseline model**: UAV-IQANet, <5.5M params, frequency-aware + task-conditioned (no novelty claimed)
 - **Validation**: 50-flight real-UAV sequential validation protocol
 - **Timeline**: 11 months, ~1,700 GPU-hours
 

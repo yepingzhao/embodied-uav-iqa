@@ -24,7 +24,7 @@ This is the critical dimension. The proposal has **two parallel contributions** 
 
 **(a) UAV-Embodied-IQA Database**: Genuinely novel. First UAV-specific IQA database. The 6 UAV distortion types with mathematical models are a real contribution. But database papers (even good ones like Embodied-IQA 2505.16815) rely on scale, thoroughness, and community adoption — the proposal's 1,500 reference images is ~22× smaller than Embodied-IQA's 36,900 pairs. The database alone may not be sufficient for a top venue without significantly larger scale or a more compelling cross-embodiment story.
 
-**(b) UAV-QANet Model**: The Frequency-Aware Branch (FAB) is positioned as the main novelty, but frequency-domain IQA features have been used since at least BRISQUE (2012, NSS features in DCT domain) and more recently in deep IQA (e.g., DeepFIQA uses DCT, MANIQA uses Swin Transformer which implicitly captures frequency). The proposal does not cite ANY prior frequency-aware IQA work. The FAB may genuinely add value for UAV-specific distortions, but the claim that it's a novel mechanism is undermined by not positioning against prior frequency-domain IQA methods.
+**(b) UAV-IQANet Model**: The Frequency-Aware Branch (FAB) is positioned as the main novelty, but frequency-domain IQA features have been used since at least BRISQUE (2012, NSS features in DCT domain) and more recently in deep IQA (e.g., DeepFIQA uses DCT, MANIQA uses Swin Transformer which implicitly captures frequency). The proposal does not cite ANY prior frequency-aware IQA work. The FAB may genuinely add value for UAV-specific distortions, but the claim that it's a novel mechanism is undermined by not positioning against prior frequency-domain IQA methods.
 
 The TCRH with FiLM modulation is a standard technique (FiLM, Perez et al. 2018). Applying it to task-conditioned IQA is reasonable but incremental.
 
@@ -83,7 +83,7 @@ Weighted calculation:
 
 ## Simplification Opportunities
 
-1. **Choose ONE contribution type**: Either (A) make it purely a database paper — remove the model novelty claims, treat UAV-QANet as a strong baseline, and expand database scale; or (B) make it purely a method paper — treat the database construction as infrastructure, and strengthen the model's novelty. Having both contributions in one paper dilutes focus and makes neither strong enough.
+1. **Choose ONE contribution type**: Either (A) make it purely a database paper — remove the model novelty claims, treat UAV-IQANet as a strong baseline, and expand database scale; or (B) make it purely a method paper — treat the database construction as infrastructure, and strengthen the model's novelty. Having both contributions in one paper dilutes focus and makes neither strong enough.
 
 2. **Merge or remove the cross-attention gate**: The gating mechanism `α = σ(W_g · [f_s, f_f])` adds complexity. A simpler concatenation + MLP would likely perform similarly. Ablate this before including it.
 
@@ -107,7 +107,7 @@ Weighted calculation:
 
 **PARTIAL drift detected.** The Problem Anchor states the bottleneck is predicting visual input adequacy for UAV tasks under SWaP constraints. However, the proposal's dominant contribution becomes the database construction (annotating 180K image pairs with VLM/VLA labels), which is a prerequisite infrastructure activity — not the solution itself. A database enables future solutions but does not itself solve the bottleneck.
 
-The anchor check: "Can a UAV use this work to decide whether its current visual input is adequate?" Only the model (UAV-QANet) answers this. The database alone cannot. If the paper's main contribution is the database, the Problem Anchor should be reframed as "No training/evaluation resource exists for UAV IQA" rather than "No method exists to predict visual input adequacy."
+The anchor check: "Can a UAV use this work to decide whether its current visual input is adequate?" Only the model (UAV-IQANet) answers this. The database alone cannot. If the paper's main contribution is the database, the Problem Anchor should be reframed as "No training/evaluation resource exists for UAV IQA" rather than "No method exists to predict visual input adequacy."
 
 ---
 

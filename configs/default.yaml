@@ -4,7 +4,7 @@
 seed_everything: 42
 
 model:
-  class_path: uav_iqa.lightning_model.UAVQALightningModule
+  class_path: uav_iqa.lightning_model.UAVIQALightningModule
   init_args:
     backbone: mobilenetv4_conv_small
     num_tasks: 4

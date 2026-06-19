@@ -14,7 +14,7 @@
 |---|-------|------|----------------|-----------------------------|---------------|
 | C1 | UAV-specific distortions produce distinct VLA performance degradation patterns vs. generic distortions | Primary | Core differentiator — without this, the database is just another IQA dataset | ≥4/6 UAV distortion curves are separable from the generic distortion pool (mean shift > 1σ); at least 2 distortions show task-dependent degradation ordering | B1 (DQUS), B5 (QUFD) |
 | C2 | Synthetic UAV distortions correlate with real-world UAV distortion effects | Primary | If synthetic distortions don't match reality, the whole database is invalid | Overall SRCC > 0.6 between synthetic and real distortion impact on VLA behavior; gate-check SRCC > 0.5 at 20 flights | B2 (D2RB) |
-| C3 | Existing IQA methods fail to predict UAV task performance; database enables training effective UAV-IQA models | Primary | Justifies the need for the database — a benchmark result that defines the problem space | All 15+ existing methods SRCC < 0.5; UAV-QANet trained on this database achieves SRCC > 0.65; statistically significant gap (p < 0.01) | B3 (B4H), B4 (ABL) |
+| C3 | Existing IQA methods fail to predict UAV task performance; database enables training effective UAV-IQA models | Primary | Justifies the need for the database — a benchmark result that defines the problem space | All 15+ existing methods SRCC < 0.5; UAV-IQANet trained on this database achieves SRCC > 0.65; statistically significant gap (p < 0.01) | B3 (B4H), B4 (ABL) |
 | C4 | Multi-task training enables cross-task quality generalization | Supporting | Broader impact — task-conditioned IQA transfers beyond single-task training | Cross-task SRCC within 0.05 of single-task; task embedding removal drops > 0.03 SRCC | B4 (XTG) |
 
 ### Anti-Claims to Rule Out
@@ -138,7 +138,7 @@
 | Deep NR | MANIQA, Q-Align, CLIP-IQA, LIQE | NR |
 | Frequency-aware | BRISQUE (DCT features), DeepFIQA | NR |
 | Embodied baseline | MA-EIQA (zero-shot), MA-EIQA (fine-tuned) | NR |
-| **UAV baseline (ours)** | UAV-QANet (task-conditioned), UAV-QANet (task-agnostic) | NR |
+| **UAV baseline (ours)** | UAV-IQANet (task-conditioned), UAV-IQANet (task-agnostic) | NR |
 
 Total: 19 configs (15 distinct methods + 4 variants).
 
@@ -148,16 +148,16 @@ Total: 19 configs (15 distinct methods + 4 variants).
 
 **Setup details**:
 - Ground truth: VLA ensemble mean decision score (3-model average)
-- UAV-QANet training: 3-stage curriculum (VLM epochs 1-20 → VLA epochs 21-40 → Execution epochs 41-50), AdamW, lr=3e-4, batch=64, cosine schedule
+- UAV-IQANet training: 3-stage curriculum (VLM epochs 1-20 → VLA epochs 21-40 → Execution epochs 41-50), AdamW, lr=3e-4, batch=64, cosine schedule
 - MA-EIQA fine-tuning: same data split, 50 epochs, default hyperparameters from paper
 - Zero-shot methods evaluated directly on test set
 - Statistical testing: pairwise Wilcoxon signed-rank with Holm-Bonferroni correction (p < 0.01)
 
-**Success criterion**: All existing methods SRCC < 0.5; UAV-QANet (task-conditioned) SRCC > 0.65; gap between best existing and UAV-QANet > 0.15 SRCC and statistically significant.
+**Success criterion**: All existing methods SRCC < 0.5; UAV-IQANet (task-conditioned) SRCC > 0.65; gap between best existing and UAV-IQANet > 0.15 SRCC and statistically significant.
 
-**Failure interpretation**: If any existing method > 0.5 SRCC → database is not hard enough for the benchmark claim. If UAV-QANet < 0.55 → database may be too noisy for supervised training. If gap < 0.10 → insufficient practical improvement over existing methods. Mitigation: increase distortion intensity range, add compound distortions, or curate harder test split.
+**Failure interpretation**: If any existing method > 0.5 SRCC → database is not hard enough for the benchmark claim. If UAV-IQANet < 0.55 → database may be too noisy for supervised training. If gap < 0.10 → insufficient practical improvement over existing methods. Mitigation: increase distortion intensity range, add compound distortions, or curate harder test split.
 
-**Table / figure target**: Table 3 (main results, SRCC/PLCC for all methods on all tasks + average); Figure 4 (scatter: predicted vs. ground-truth for top-3 methods + UAV-QANet).
+**Table / figure target**: Table 3 (main results, SRCC/PLCC for all methods on all tasks + average); Figure 4 (scatter: predicted vs. ground-truth for top-3 methods + UAV-IQANet).
 
 **Priority**: MUST-RUN
 
@@ -226,7 +226,7 @@ Total: 19 configs (15 distinct methods + 4 variants).
 
 **B5a — Frequency Signatures**: Compute per-distortion power spectra averaged over 100 random images. Show log-polar FFT magnitude for each UAV distortion vs. nearest generic counterpart. Expected: UAV distortions show structured frequency patterns (e.g., propeller vibration → directional streak in spectrum; packet loss → block-boundary harmonics).
 
-**B5b — Per-Distortion Error Breakdown**: SRCC per distortion type for top-5 existing methods + UAV-QANet. Bar chart identifying which distortions cause the largest gap. Expected: Methods without frequency features fail worst on vibration and 6DoF blur (frequency-domain distortions); handcrafted methods fail worst on scattering (requires learned features).
+**B5b — Per-Distortion Error Breakdown**: SRCC per distortion type for top-5 existing methods + UAV-IQANet. Bar chart identifying which distortions cause the largest gap. Expected: Methods without frequency features fail worst on vibration and 6DoF blur (frequency-domain distortions); handcrafted methods fail worst on scattering (requires learned features).
 
 **B5c — Hard Case Gallery**: Select 10-15 images with extreme prediction error (|predicted - ground truth| > 2σ). Show image + distortion label + all method predictions. Identify failure patterns (e.g., all methods fail on extreme haze; human-centric metrics overestimate low-res quality).
 
@@ -251,7 +251,7 @@ Total: 19 configs (15 distinct methods + 4 variants).
 | M0: Sanity | Data pipeline + quick validation | R001-R004 | 1-3 | ~20 | All data downloadable; all 6 distortions produce plausible outputs; annotation pipeline outputs valid scores; overfit converges | Data access changes, VLA weights unavailable |
 | M1: Database | Full database construction + annotation | R005-R008 | 3-8 | ~500 | ≥170K annotated pairs pass QC; VLA inter-model SRCC documented; execution layer complete on 5% subset | VLA models unavailable (mitigation: OpenVLA backup); SITL fidelity low |
 | M2: Baselines | Run all existing IQA methods | R009-R012 | 6-10 | ~300 | All baselines run; MA-EIQA fine-tuning converges | Some methods require per-image computation (mitigation: batch preprocessing) |
-| M3: Main Model | Train UAV-QANet, produce benchmark table | R013-R015 | 8-12 | ~150 | UAV-QANet SRCC > 0.65; main table complete | SRCC below target (mitigation: hyperparameter sweep R015A) |
+| M3: Main Model | Train UAV-IQANet, produce benchmark table | R013-R015 | 8-12 | ~150 | UAV-IQANet SRCC > 0.65; main table complete | SRCC below target (mitigation: hyperparameter sweep R015A) |
 | M4: Ablations | Ablation studies + cross-task | R016-R024 | 10-14 | ~250 | ≥2 ablations show meaningful SRCC drop; cross-task generalization confirmed or characterized | Ablations inconclusive (mitigation: train smaller variant to amplify differences, R023A) |
 | M5: Real UAV | Real-world validation flights | R025-R028 | 8-18 (async) | ~0 | Gate (20 flights): SRCC > 0.5 → proceed; Full (50): SRCC > 0.6 → claim validated | Weather, equipment, permits (mitigation: 2× flight buffer, indoor calibration) |
 | M6: Polish | Qualitative analysis + paper figures | R029-R033 | 14-18 | ~30 | All figures ready for paper | None (post-hoc analysis) |
@@ -273,7 +273,7 @@ M5 is fully parallel to M1-M4. M1 is on the critical path. M2 can start once M1 
 | Pre-start VLA gate | Before M0 | ≥2 target VLA models have public weights | Activate OpenVLA-7B × 3 backup; add 2 weeks for fine-tuning |
 | M0 completion | End of Week 3 | All 6 distortions visually plausible; annotation pipeline valid | Fix distortion models or annotation code before proceeding |
 | M5 gate check | After 20 flights | SRCC > 0.5 | Recalibrate distortion models; repeat 10-flight gate |
-| M3 completion | End of Week 12 | UAV-QANet SRCC > 0.55 | Abandon database-only paper; reconsider model novelty contribution |
+| M3 completion | End of Week 12 | UAV-IQANet SRCC > 0.55 | Abandon database-only paper; reconsider model novelty contribution |
 
 ---
 
@@ -286,7 +286,7 @@ M5 is fully parallel to M1-M4. M1 is on the critical path. M2 can start once M1 
 | VLA annotation | ~200 | 180K pairs × 3 VLAs × sliding-window protocol; trajectory-level evaluation |
 | Execution annotation | ~50 | 5% subset (~9K pairs) in CARLA-Air SITL; 2 tasks (tracking, inspection) |
 | Baseline benchmarking | ~300 | 15+ methods inference; some require per-image optimization (BRISQUE, NIQE) |
-| UAV-QANet training | ~100 | Full 3-stage curriculum, 50 epochs/stage; 3 seeds |
+| UAV-IQANet training | ~100 | Full 3-stage curriculum, 50 epochs/stage; 3 seeds |
 | Ablation runs | ~250 | 10+ variants × 3 seeds × 50 epochs each |
 | Qualitative analysis | ~30 | Post-hoc; FFT computation, VLA ensemble analysis |
 | **Total** | **~1,280** | Within 1,700 budget; ~420 GPU-hours margin for retries and sweeps |
@@ -311,7 +311,7 @@ M5 is fully parallel to M1-M4. M1 is on the critical path. M2 can start once M1 
 | VLA inter-model agreement too low (SRCC < 0.2) for reliable labels | High | Low | Increase VLA ensemble to 5 models (add Qwen2.5-VL-7B converted to agent); use execution-layer SITL scores as primary ground truth for the 5% subset; report agreement transparently |
 | CARLA-Air SITL integration broken or too slow | Medium | Medium | Test SITL integration during M0 sanity; if unreliable, fall back to trajectory-level VLA evaluation (no per-frame SITL) and document limitation |
 | Real-UAV validation SRCC < 0.4 | High | Low-Medium | Gate design prevents wasting all 50 flights; recalibrate distortion intensity mapping from telemetry; add multi-distortion compound cases to match real complexity |
-| UAV-QANet SRCC below target (< 0.55) | Critical | Low-Medium | Hyperparameter sweep (lr, weight decay, CBAM reduction ratio); try deeper MobileNetV4 backbone; consider knowledge distillation from VLM features (deferred from reviewer suggestion) |
+| UAV-IQANet SRCC below target (< 0.55) | Critical | Low-Medium | Hyperparameter sweep (lr, weight decay, CBAM reduction ratio); try deeper MobileNetV4 backbone; consider knowledge distillation from VLM features (deferred from reviewer suggestion) |
 | Weather prevents real flights within timeline | Medium | Medium | Buffer 2× flight window; schedule during historically stable season; indoor controlled-environment flights as fallback for vibration + 6DoF types |
 | Existing method achieves SRCC > 0.5 on our database | Medium | Low | Increase distortion intensity ceiling; add compound distortion types (e.g., haze + vibration); curate harder test split with only highest-intensity samples |
 | Database scale insufficient for training (> 180K pairs needed) | Low | Low | Current 180K pairs with data augmentation is adequate for < 5.5M param models; if not, add AirSim drone scenarios or Waymo/UAV cross-domain data |

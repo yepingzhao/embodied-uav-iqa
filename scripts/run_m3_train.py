@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""M3-R013/R014/R015: Full training pipeline for UAV-QANet using LightningCLI.
+"""M3-R013/R014/R015: Full training pipeline for UAV-IQANet using LightningCLI.
 
 Supports:
 - Multi-seed training (--seeds 42 100 200)
@@ -37,12 +37,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.uav_iqa.cli import UAVIQACLI
 from src.uav_iqa.lightning_data import UAVIQDataModule
-from src.uav_iqa.lightning_model import UAVQALightningModule
+from src.uav_iqa.lightning_model import UAVIQALightningModule
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Train UAV-QANet with LightningCLI (multi-seed wrapper)",
+        description="Train UAV-IQANet with LightningCLI (multi-seed wrapper)",
         add_help=False,
     )
     parser.add_argument("--seeds", nargs="+", type=int, default=[42], help="Random seeds")
@@ -70,7 +70,7 @@ def main():
         ]
 
         _cli = UAVIQACLI(
-            UAVQALightningModule,
+            UAVIQALightningModule,
             UAVIQDataModule,
             args=seed_argv,
         )

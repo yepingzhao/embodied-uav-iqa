@@ -341,7 +341,7 @@ class PropellerShadow(BaseDistortion):
 
 
 class GenericDistortions:
-    """18 generic distortion types from Embodied-IQA catalog, applied via Albumentations."""
+    """27 generic distortion types from Embodied-IQA catalog, applied via Albumentations."""
 
     CATEGORIES = {
         "gaussian_blur": "blur",
@@ -440,7 +440,6 @@ class GenericDistortions:
                 p=1.0,
             )
         elif name == "color_noise":
-            var_limit = (intensity * 0.05, intensity * 0.15)
             transform = A.ISONoise(
                 color_shift=(0.01, intensity * 0.1),
                 intensity=(intensity * 0.1, intensity * 0.3),
@@ -521,7 +520,6 @@ class GenericDistortions:
 
 def _inject_one_image_mp(img_path: str, output_dir: str, compress: bool, seed: int) -> dict:
     """Pickle-safe worker for ProcessPoolExecutor. Creates its own pipeline instance."""
-    import cv2
     from pathlib import Path
 
     local_results = {"distorted": 0, "failed": 0, "errors": []}

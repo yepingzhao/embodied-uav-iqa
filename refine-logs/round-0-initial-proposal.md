@@ -66,7 +66,7 @@ This is a mechanism-level claim: the frequency branch + task-conditioned regress
 
 - **Dominant contribution**: The first UAV-Embodied-IQA database that (a) defines 6 UAV-specific distortion types with mathematical models, (b) provides VLM+VLA task-performance annotations across 4 UAV task categories, and (c) establishes the first benchmark for UAV-specific NR-IQA.
 
-- **Optional supporting contribution**: UAV-QANet — a <10M parameter frequency-aware task-conditioned NR-IQA model that achieves SRCC > 0.7 on UAV task performance prediction and runs at <10ms on Jetson Orin.
+- **Optional supporting contribution**: UAV-IQANet — a <10M parameter frequency-aware task-conditioned NR-IQA model that achieves SRCC > 0.7 on UAV task performance prediction and runs at <10ms on Jetson Orin.
 
 - **Explicit non-contributions**: 
   - We do NOT claim novelty in the annotation pipeline (reuses Embodied-IQA's three-stage protocol)
@@ -242,7 +242,7 @@ TCRH details (per task):
 
 At inference time:
 ```
-Camera Frame → UAV-QANet (frequency + spatial branches)
+Camera Frame → UAV-IQANet (frequency + spatial branches)
                     ↓
             {q_track, q_inspect, q_deliver, q_SAR}
                     ↓
@@ -297,7 +297,7 @@ The model is deployed as an ONNX Runtime graph on Jetson Orin, running asynchron
 ## Claim-Driven Validation Sketch
 
 ### Claim 1: UAV-specific distortions are necessary for predicting UAV task performance
-- **Minimal experiment**: Train two versions of UAV-QANet — one with all 24 distortion types, one with only 18 generic types. Compare SRCC on real UAV test data (AirCopBench real subset + MotionScape).
+- **Minimal experiment**: Train two versions of UAV-IQANet — one with all 24 distortion types, one with only 18 generic types. Compare SRCC on real UAV test data (AirCopBench real subset + MotionScape).
 - **Baselines / ablations**: Full model vs. generic-only model; also test zero-shot transfer of MA-EIQA (trained on EPD) to UAV data.
 - **Metric**: SRCC / PLCC between predicted quality scores and VLA decision deviation (trajectory error).
 - **Expected evidence**: Full model SRCC at least 0.10 higher than generic-only model; MA-EIQA zero-shot SRCC < 0.3 on UAV data.

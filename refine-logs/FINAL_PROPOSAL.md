@@ -25,7 +25,7 @@ The UAV-Embodied-IQA database bridges these three lines: AirCopBench task protoc
 2. ~3,000 reference images from AirCopBench, CARLA-Air, MotionScape, MDMT, spanning 4 UAV task categories
 3. ~180,000 distorted+annotated image pairs with VLM (cognitive), VLA (decision), and CARLA-Air Execution quality scores
 4. Comprehensive benchmark of 15+ existing NR-IQA and FR-IQA methods on UAV data
-5. Strong baseline model (UAV-QANet, <5.5M params) demonstrating database utility
+5. Strong baseline model (UAV-IQANet, <5.5M params) demonstrating database utility
 
 ## Database Design
 
@@ -57,7 +57,7 @@ Verify ≥2 target VLA models have public weights. If not, activate OpenVLA-7B �
 - Sequential protocol: 20 flights (scattering + vibration) → gate check → 30 flights (remaining 4 types)
 - SRCC target: >0.6 between real and synthetic distortion effects on VLA behavior
 
-## Baseline Model: UAV-QANet
+## Baseline Model: UAV-IQANet
 
 Architecture: MobileNetV4-S backbone → PANet FPN → CBAM attention → frequency-aware branch (patch FFT + tiny CNN) → task embedding concatenation → shared regression MLP. Total: ~5.4M params (3.5M trainable), INT8 quantized ~1.4MB.
 
@@ -65,7 +65,7 @@ Positioned as a strong baseline — no architectural novelty claimed. Benchmarke
 
 ## Benchmark Design
 
-15+ methods evaluated: FR-IQA (PSNR, SSIM, LPIPS, DISTS, AHIQ, TOPIQ), NR-IQA (BRISQUE, NIQE, MANIQA, Q-Align, CLIP-IQA), Frequency-aware (BRISQUE/DCT, DeepFIQA), Embodied (MA-EIQA zero-shot and fine-tuned), UAV baseline (UAV-QANet with ablations).
+15+ methods evaluated: FR-IQA (PSNR, SSIM, LPIPS, DISTS, AHIQ, TOPIQ), NR-IQA (BRISQUE, NIQE, MANIQA, Q-Align, CLIP-IQA), Frequency-aware (BRISQUE/DCT, DeepFIQA), Embodied (MA-EIQA zero-shot and fine-tuned), UAV baseline (UAV-IQANet with ablations).
 
 ## Key Claims
 1. UAV-specific distortions produce distinct VLA performance degradation patterns vs. generic distortions

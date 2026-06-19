@@ -30,7 +30,7 @@
 
 - **Dominant contribution after revision**: The UAV-Embodied-IQA database. One clear contribution: the first IQA database for aerial embodied intelligence, with (a) 6 UAV-specific distortion models, (b) VLM+VLA task-performance annotations across 4 UAV task categories, and (c) a benchmark establishing that existing IQA methods fail on UAV data.
 - **Components removed or merged**: 
-  - Model novelty claims removed entirely — UAV-QANet is now a "strong baseline" described in the database paper
+  - Model novelty claims removed entirely — UAV-IQANet is now a "strong baseline" described in the database paper
   - FAB and TCRH are now described as "design rationale for the baseline" rather than "proposed novel components"
   - Cross-attention gate: kept but noted as an ablation candidate (does simple concatenation work as well?)
   - The "Contribution Focus" section now has only ONE entry: the database
@@ -44,7 +44,7 @@
 ### 1. Contribution Focus: Database ONLY (CRITICAL)
 
 - **Reviewer said**: "Two parallel contributions (database + model) dilute focus. Choose one."
-- **Action**: Removed all model novelty claims. UAV-QANet is now a strong baseline described in the database paper. The model-focused contribution is deferred to Phase 3 as a separate paper. The paper type is now explicitly a "database + benchmark paper."
+- **Action**: Removed all model novelty claims. UAV-IQANet is now a strong baseline described in the database paper. The model-focused contribution is deferred to Phase 3 as a separate paper. The paper type is now explicitly a "database + benchmark paper."
 - **Reasoning**: The user's research roadmap already splits Phase 2 (database) and Phase 3 (model) into separate papers. This proposal now correctly scopes to Phase 2 only. The model's architectural choices (FAB, TCRH) remain in the method section but as "baseline design rationale," not as "proposed novel contributions."
 - **Impact on core method**: Simplifies the contribution story from 2 claims to 1. The success condition now focuses on the database establishing that existing IQA fails on UAV data (SRCC < 0.5 on strong baselines) rather than the model achieving SRCC > 0.7.
 
@@ -154,7 +154,7 @@ This is a resource contribution claim, not a method claim. The claim is falsifia
   2. **Multi-task VLM+VLA annotations** across 4 UAV task categories (tracking, inspection, delivery, SAR), following Embodied-IQA's three-stage pipeline
   3. **Benchmark results** establishing that existing NR-IQA methods (including embodied IQA) fail on UAV data (SRCC < 0.5), creating a clear research challenge
 
-- **Optional supporting contribution**: A strong baseline NR-IQA model (UAV-QANet) that achieves SRCC > 0.65 with <10M parameters — demonstrating the database enables model development. This is NOT claimed as a novel architecture; it's a baseline that combines known techniques (MobileNetV4 backbone, frequency-aware branch, task-conditioned heads).
+- **Optional supporting contribution**: A strong baseline NR-IQA model (UAV-IQANet) that achieves SRCC > 0.65 with <10M parameters — demonstrating the database enables model development. This is NOT claimed as a novel architecture; it's a baseline that combines known techniques (MobileNetV4 backbone, frequency-aware branch, task-conditioned heads).
 
 - **Explicit non-contributions**: 
   - We do NOT claim novelty in the annotation pipeline (reuses Embodied-IQA's three-stage protocol)
@@ -330,7 +330,7 @@ This maps the VLA ensemble output to execution success rate, providing a ground-
 
 ### Baseline Model Design (Strong Baseline, NOT Contribution)
 
-The following describes a strong baseline model (UAV-QANet) included to demonstrate the database's utility. We claim NO architectural novelty.
+The following describes a strong baseline model (UAV-IQANet) included to demonstrate the database's utility. We claim NO architectural novelty.
 
 **Architecture** (assembly of known components):
 
@@ -411,12 +411,12 @@ Evaluate 15+ existing IQA methods on the database:
 | FR-IQA (full-reference) | PSNR, SSIM, LPIPS, DISTS, AHIQ, TOPIQ-FR |
 | NR-IQA (generic) | BRISQUE, NIQE, MANIQA, TOPIQ-NR, Q-Align (zero-shot), CLIP-IQA |
 | NR-IQA (embodied) | MA-EIQA (EPD-trained), MA-EIQA (Embodied-IQA-trained) |
-| Our baselines | UAV-QANet (MobileNetV4-S), UAV-QANet (MobileViT-S), UAV-QANet (EfficientViT-B0) |
-| Ablations | UAV-QANet w/o FAB, UAV-QANet w/o TCRH, UAV-QANet w/o UAV-specific distortions |
+| Our baselines | UAV-IQANet (MobileNetV4-S), UAV-IQANet (MobileViT-S), UAV-IQANet (EfficientViT-B0) |
+| Ablations | UAV-IQANet w/o FAB, UAV-IQANet w/o TCRH, UAV-IQANet w/o UAV-specific distortions |
 
 **Metrics**: SRCC, PLCC, KRCC (per-task and macro-averaged). Per-distortion-type breakdown for 6 UAV-specific vs. 18 generic distortions.
 
-**Expected finding**: Existing IQA methods achieve SRCC < 0.5 on UAV data. MA-EIQA (best embodied IQA model) achieves SRCC < 0.4 on UAV-specific distortions (zero-shot transfer failure). The UAV-QANet baseline achieves SRCC > 0.65 after training on the database.
+**Expected finding**: Existing IQA methods achieve SRCC < 0.5 on UAV data. MA-EIQA (best embodied IQA model) achieves SRCC < 0.4 on UAV-specific distortions (zero-shot transfer failure). The UAV-IQANet baseline achieves SRCC > 0.65 after training on the database.
 
 ## Claim-Driven Validation Sketch
 

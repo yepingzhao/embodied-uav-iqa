@@ -5,7 +5,7 @@ First, check whether the original Problem Anchor is still preserved.
 Second, judge whether the method is now more concrete, more focused, and more current.
 
 Key changes:
-1. **CRITICAL: Chose ONE contribution type** — Database is now the sole dominant contribution. Model (UAV-QANet) is explicitly a strong baseline with NO novelty claims. The FAB and TCRH are described as "design rationale for the baseline" rather than "proposed novel components."
+1. **CRITICAL: Chose ONE contribution type** — Database is now the sole dominant contribution. Model (UAV-IQANet) is explicitly a strong baseline with NO novelty claims. The FAB and TCRH are described as "design rationale for the baseline" rather than "proposed novel components."
 2. **Added frequency IQA prior art positioning** — Explicit comparison to BRISQUE (DCT, spatially local), DeepFIQA (DCT input), ViT-based IQA (implicit frequency). Justifies why log-polar FFT is appropriate for UAV (rotation/scale invariant for 6DoF ego-motion).
 3. **Added real-UAV validation** — ~50 DJI Mini flights to validate synthetic distortion models against real degradation. Compare VLA behavior on synthetic vs. real distorted images; target SRCC > 0.6.
 4. **Added ViT backbone baselines** — MobileViT-S and EfficientViT-B0 now evaluated alongside MobileNetV4-S in the benchmark.

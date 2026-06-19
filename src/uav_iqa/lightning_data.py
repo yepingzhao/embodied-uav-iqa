@@ -6,19 +6,13 @@ import lightning as L
 from torch.utils.data import DataLoader
 
 from .dataset import UAVIQADataset
+from .distortion import UAVDistortionPipeline
 
 
 class UAVIQDataModule(L.LightningDataModule):
     """LightningDataModule wrapping UAVIQADataset with manifest filtering."""
 
-    UAV_DISTORTIONS = {
-        "propeller_vibration_blur",
-        "atmospheric_scattering_haze",
-        "six_dof_viewpoint_blur",
-        "communication_packet_loss",
-        "low_res_super_resolution",
-        "propeller_shadow",
-    }
+    UAV_DISTORTIONS = set(UAVDistortionPipeline.get_uav_distortion_names())
 
     def __init__(
         self,

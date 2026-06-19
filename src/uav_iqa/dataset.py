@@ -33,6 +33,7 @@ class UAVIQADataset(Dataset):
         self.image_size = image_size
         self.num_tasks = num_tasks
         self.augment = augment
+        self._augment_fn = self._build_augment() if augment else None
 
         if samples is not None:
             self.samples = samples
@@ -86,14 +87,17 @@ class UAVIQADataset(Dataset):
 
         return result
 
-    def _augment(self, image: torch.Tensor) -> torch.Tensor:
+    @staticmethod
+    def _build_augment():
         from torchvision import transforms as T
 
-        aug = T.Compose([
+        return T.Compose([
             T.RandomHorizontalFlip(p=0.5),
             T.ColorJitter(brightness=0.1, contrast=0.1),
         ])
-        return aug(image)
+
+    def _augment(self, image: torch.Tensor) -> torch.Tensor:
+        return self._augment_fn(image)
 
     @staticmethod
     def collate_fn(batch: list) -> dict:

@@ -1,16 +1,17 @@
 from typing import Dict, List, Optional
 
 import lightning as L
+import numpy as np
 import torch
 import torch.nn as nn
 
 from .evaluate import compute_metrics, evaluate_iqa, per_distortion_metrics, per_task_metrics
-from .model import UAVQANet
+from .model import UAVIQANet
 from .trainer import CrossTaskRegularization, ListMLELoss
 
 
-class UAVQALightningModule(L.LightningModule):
-    """LightningModule wrapping UAVQANet with MSE + ListMLE + cross-task loss.
+class UAVIQALightningModule(L.LightningModule):
+    """LightningModule wrapping UAVIQANet with MSE + ListMLE + cross-task loss.
 
     All __init__ parameters are flat basic types for jsonargparse/LightningCLI compatibility.
     """
@@ -42,7 +43,7 @@ class UAVQALightningModule(L.LightningModule):
             use_task_conditioning=use_task_conditioning,
             freeze_backbone_stage=freeze_backbone_stage,
         )
-        self.model = UAVQANet(**model_cfg)
+        self.model = UAVIQANet(**model_cfg)
 
         self.mse_loss = nn.MSELoss()
         self.rank_loss = ListMLELoss()
@@ -57,10 +58,10 @@ class UAVQALightningModule(L.LightningModule):
         self.annotator_stage = annotator_stage
         self.curriculum_stage = "vlm"
 
-        self._val_preds: List[torch.Tensor] = []
-        self._val_targets: List[torch.Tensor] = []
-        self._test_preds: List[torch.Tensor] = []
-        self._test_targets: List[torch.Tensor] = []
+        self._val_preds: List[np.ndarray] = []
+        self._val_targets: List[np.ndarray] = []
+        self._test_preds: List[np.ndarray] = []
+        self._test_targets: List[np.ndarray] = []
         self._test_tasks: List[int] = []
         self._test_distortions: List[str] = []
 
@@ -80,11 +81,14 @@ class UAVQALightningModule(L.LightningModule):
         loss_rank = torch.tensor(0.0, device=self.device)
         distortions = batch.get("distortion")
         if distortions:
-            unique_dists = set(distortions)
-            for dist in unique_dists:
-                mask = torch.tensor(
-                    [d == dist for d in distortions], device=self.device
-                )
+            # Build a tensor of distortion indices for batched mask construction
+            unique_dists = list(set(distortions))
+            dist_to_idx = {d: i for i, d in enumerate(unique_dists)}
+            dist_ids = torch.tensor(
+                [dist_to_idx[d] for d in distortions], device=self.device
+            )
+            for idx, dist in enumerate(unique_dists):
+                mask = dist_ids == idx
                 if mask.sum() >= 3:
                     loss_rank = loss_rank + self.rank_loss(pred[mask], scores[mask])
 
@@ -114,15 +118,15 @@ class UAVQALightningModule(L.LightningModule):
 
         pred = self.model(images, task_ids)
 
-        self._val_preds.append(pred)
-        self._val_targets.append(scores)
+        self._val_preds.append(pred.detach().cpu().numpy())
+        self._val_targets.append(scores.detach().cpu().numpy())
 
     def on_validation_epoch_end(self) -> None:
         if not self._val_preds:
             return
 
-        preds = torch.cat(self._val_preds).cpu().numpy()
-        targets = torch.cat(self._val_targets).cpu().numpy()
+        preds = np.concatenate(self._val_preds)
+        targets = np.concatenate(self._val_targets)
 
         metrics = evaluate_iqa(preds, targets)
         self.log("val/srcc", metrics["SRCC"], prog_bar=True)
@@ -141,8 +145,8 @@ class UAVQALightningModule(L.LightningModule):
 
         pred = self.model(images, task_ids)
 
-        self._test_preds.append(pred.cpu())
-        self._test_targets.append(scores.cpu())
+        self._test_preds.append(pred.detach().cpu().numpy())
+        self._test_targets.append(scores.detach().cpu().numpy())
         self._test_tasks.extend(batch["task_id"].cpu().tolist())
         self._test_distortions.extend(batch.get("distortion", []) or [])
 
@@ -150,8 +154,8 @@ class UAVQALightningModule(L.LightningModule):
         if not self._test_preds:
             return
 
-        all_preds = torch.cat(self._test_preds).numpy()
-        all_targets = torch.cat(self._test_targets).numpy()
+        all_preds = np.concatenate(self._test_preds)
+        all_targets = np.concatenate(self._test_targets)
 
         metrics = evaluate_iqa(all_preds, all_targets)
         self.log("test/srcc", metrics["SRCC"])

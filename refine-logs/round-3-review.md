@@ -85,7 +85,7 @@ These are observations, not action items:
 
 2. Consider a cross-embodiment section in the paper: show that MA-EIQA (trained on ground manipulator) fails not just because of different distortions but because of a fundamental perceptual gap — ground robots care about geometric precision (grasp coordinates), UAVs care about motion continuity (tracking trajectories). This strengthens the "why a new database is needed" argument.
 
-3. The Phase 3 model paper (UAV-QANet as a novel contribution) can reuse this database and the baseline model as a starting point. The clean separation in this proposal (database = contribution, model = baseline) makes the Phase 3 paper's novelty clear: "we improve upon the baseline from UAV-Embodied-IQA."
+3. The Phase 3 model paper (UAV-IQANet as a novel contribution) can reuse this database and the baseline model as a starting point. The clean separation in this proposal (database = contribution, model = baseline) makes the Phase 3 paper's novelty clear: "we improve upon the baseline from UAV-Embodied-IQA."
 
 ---
 

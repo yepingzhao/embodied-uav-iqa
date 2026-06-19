@@ -1,3 +1,4 @@
+import logging
 import math
 from typing import Optional
 
@@ -125,15 +126,14 @@ class FrequencyAwareBranch(nn.Module):
         r_idx = radius.clamp(0, self.radial_bins - 1).long()
         a_idx = angle.clamp(0, self.angular_bins - 1).long()
 
-        lp = torch.zeros(B, C, self.angular_bins, self.radial_bins, device=magnitude.device)
-        for b in range(B):
-            for c in range(C):
-                lp[b, c].index_put_(
-                    (a_idx.reshape(-1), r_idx.reshape(-1)),
-                    magnitude[b, c].reshape(-1),
-                    accumulate=True,
-                )
-        return lp
+        # Vectorized scatter: (B, C, H, W) → (B, C, angular_bins * radial_bins)
+        flat_idx = (a_idx * self.radial_bins + r_idx).view(-1)  # (H*W,)
+        flat_idx = flat_idx.unsqueeze(0).unsqueeze(0).expand(B, C, -1)  # (B, C, H*W)
+        flat_mag = magnitude.reshape(B, C, -1)  # (B, C, H*W)
+
+        lp_flat = torch.zeros(B, C, self.angular_bins * self.radial_bins, device=magnitude.device)
+        lp_flat.scatter_add_(2, flat_idx, flat_mag)
+        return lp_flat.view(B, C, self.angular_bins, self.radial_bins)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
@@ -146,21 +146,14 @@ class FrequencyAwareBranch(nn.Module):
         n_patches = n_h * n_w
         patches = patches.contiguous().view(B, n_patches, self.patch_size, self.patch_size)
 
-        patches_padded = F.pad(patches.float(), (0, 0, 0, 0))
-
         fft = torch.fft.fft2(patches.float())
         magnitude = torch.abs(fft)
         magnitude = torch.fft.fftshift(magnitude, dim=(-2, -1))
 
-        lp_list = []
-        for p in range(n_patches):
-            lp_patch = self._log_polar(
-                magnitude[:, p : p + 1, :, :]
-            )
-            lp_list.append(lp_patch)
-
-        lp = torch.stack(lp_list, dim=1)
-        lp = lp.mean(dim=1)
+        # Process all patches at once: (B, n_patches, H, W) → (B*n_patches, 1, H, W)
+        mag_all = magnitude.reshape(B * n_patches, 1, self.patch_size, self.patch_size)
+        lp_all = self._log_polar(mag_all)  # (B*n_patches, 1, angular_bins, radial_bins)
+        lp = lp_all.view(B, n_patches, self.angular_bins, self.radial_bins).mean(dim=1)
 
         lp = lp.view(B, 1, self.angular_bins, self.radial_bins)
 
@@ -222,8 +215,8 @@ class TaskConditionedHead(nn.Module):
         return q.squeeze(-1)
 
 
-class UAVQANet(nn.Module):
-    """UAV-QANet: frequency-aware task-conditioned lightweight NR-IQA model.
+class UAVIQANet(nn.Module):
+    """UAV-IQANet: frequency-aware task-conditioned lightweight NR-IQA model.
 
     Architecture:
         MobileNetV4-S backbone → PANet FPN → CBAM → f_s ∈ R^256
@@ -271,8 +264,12 @@ class UAVQANet(nn.Module):
                 features_only=True,
                 out_indices=(2, 3, 4),
             )
-        except Exception:
-            print(f"Warning: Could not load pretrained {backbone}, using random init.")
+        except Exception as e:
+            _log = logging.getLogger(__name__)
+            _log.warning(
+                f"Could not load pretrained weights for {backbone}: {e}. "
+                f"Falling back to random initialization — results may differ."
+            )
             self.backbone = timm.create_model(
                 backbone,
                 pretrained=False,
@@ -320,13 +317,20 @@ class UAVQANet(nn.Module):
             self._freeze_backbone_stages(freeze_backbone_stage)
 
     def _freeze_backbone_stages(self, num_stages: int):
+        frozen_count = 0
         for name, param in self.backbone.named_parameters():
             if any(f"stages.{i}" in name for i in range(num_stages)):
                 param.requires_grad = False
+                frozen_count += 1
+        if frozen_count == 0:
+            _log = logging.getLogger(__name__)
+            _log.warning(
+                f"No parameters matched freeze pattern 'stages.N' — "
+                f"backbone {self.backbone.__class__.__name__} may use different naming."
+            )
 
-    def forward(
-        self, x: torch.Tensor, task_ids: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
+    def _extract_fused_features(self, x: torch.Tensor) -> torch.Tensor:
+        """Shared backbone → FPN → CBAM → FAB → gate pipeline."""
         feats = self.backbone(x)
         feats = self.fpn(feats)
 
@@ -340,9 +344,13 @@ class UAVQANet(nn.Module):
         if self.use_fab:
             f_f = self.fab(x)
             f_f = self.gate(f_s, f_f)
-            f = torch.cat([f_s, f_f], dim=-1)
-        else:
-            f = f_s
+            return torch.cat([f_s, f_f], dim=-1)
+        return f_s
+
+    def forward(
+        self, x: torch.Tensor, task_ids: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        f = self._extract_fused_features(x)
 
         if self.use_task_conditioning:
             if task_ids is None:
@@ -352,22 +360,7 @@ class UAVQANet(nn.Module):
             return self.shared_head(f).squeeze(-1)
 
     def forward_all_tasks(self, x: torch.Tensor) -> torch.Tensor:
-        feats = self.backbone(x)
-        feats = self.fpn(feats)
-
-        x_spatial = self.fpn_proj(feats[0])
-        if self.use_cbam:
-            x_spatial = self.cbam(x_spatial)
-
-        x_spatial = self.spatial_pool(x_spatial).flatten(1)
-        f_s = self.spatial_proj(x_spatial)
-
-        if self.use_fab:
-            f_f = self.fab(x)
-            f_f = self.gate(f_s, f_f)
-            f = torch.cat([f_s, f_f], dim=-1)
-        else:
-            f = f_s
+        f = self._extract_fused_features(x)
 
         if self.use_task_conditioning:
             B = x.shape[0]
