@@ -30,8 +30,14 @@ Usage:
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
+
+# Override broken hf-mirror.com with the main HF endpoint for pretrained backbone weights.
+# The mirror (hf-mirror.com) returns 308 redirects that timm/huggingface_hub can't follow.
+if os.environ.get("HF_ENDPOINT", "").startswith("https://hf-mirror.com"):
+    os.environ["HF_ENDPOINT"] = "https://huggingface.co"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -52,7 +58,7 @@ def main():
     cli_args, remaining = parser.parse_known_args()
 
     if cli_args.dry_run:
-        remaining.extend(["--data.init_args.dry_run", "true"])
+        remaining.extend(["--data.dry_run", "true"])
 
     output_dir = Path(cli_args.output_dir)
     all_results = {}

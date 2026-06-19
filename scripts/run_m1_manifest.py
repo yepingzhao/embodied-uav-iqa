@@ -8,8 +8,8 @@ ref_id, and placeholder scores.
 
 Usage:
     python scripts/run_m1_manifest.py \
-        --distorted-dir data/database/distorted \
-        --output-dir data/database \
+        --distorted-dir data/processed/distorted \
+        --output-dir data/processed \
         --split 0.8 0.1 0.1
 """
 
@@ -26,10 +26,18 @@ UAVDistortionPipeline = None  # populated after sys.path setup
 
 
 def parse_distortion_key(key: str):
-    """Parse 'propeller_vibration_blur_L04' → (name, intensity)."""
-    parts = key.rsplit("_L", 1)
+    """Parse '{ref_id}__{dist_name}_L{NN}' → (dist_name, intensity)."""
+    # Strip ref_id prefix (separated by __)
+    if "__" in key:
+        dist_part = key.rsplit("__", 1)[1]
+    else:
+        dist_part = key
+    parts = dist_part.rsplit("_L", 1)
     if len(parts) == 2:
-        return parts[0], int(parts[1]) / 10.0
+        try:
+            return parts[0], int(parts[1]) / 10.0
+        except ValueError:
+            return None, None
     return None, None
 
 
@@ -76,7 +84,7 @@ def split_samples(samples: list, ratios: List[float], seed: int = 42):
 def main():
     parser = argparse.ArgumentParser(description="M1-R006: Generate manifest + splits")
     parser.add_argument("--distorted-dir", required=True, help="Distorted images directory")
-    parser.add_argument("--output-dir", default="data/database", help="Output for manifest files")
+    parser.add_argument("--output-dir", default="data/processed", help="Output for manifest files")
     parser.add_argument("--split", nargs=3, type=float, default=[0.8, 0.1, 0.1],
                         help="Train/val/test ratios (sum to 1.0)")
     parser.add_argument("--seed", type=int, default=42, help="Split random seed")

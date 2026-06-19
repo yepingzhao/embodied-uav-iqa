@@ -55,7 +55,12 @@ class UAVIQADataset(Dataset):
     def __getitem__(self, idx: int) -> dict:
         sample = self.samples[idx]
 
-        image = Image.open(self.data_root / sample["path"]).convert("RGB")
+        try:
+            image = Image.open(self.data_root / sample["path"]).convert("RGB")
+        except (OSError, IOError, Exception):
+            # Corrupted or missing image — use blank placeholder
+            image = Image.new("RGB", (self.image_size, self.image_size))
+
         image = image.resize((self.image_size, self.image_size), Image.BILINEAR)
         image = np.array(image).astype(np.float32) / 255.0
         image = torch.from_numpy(image).permute(2, 0, 1)

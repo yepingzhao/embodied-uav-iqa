@@ -24,10 +24,11 @@ class UAVIQACLI(LightningCLI):
 
         L.seed_everything(seed, workers=True)
 
+        max_epochs = self.trainer.max_epochs or 50
         curriculum_cb = CurriculumStageCallback(
             vlm_epochs=20,
             vla_epochs=20,
-            execution_epochs=self.trainer.max_epochs - 40,
+            execution_epochs=max(0, max_epochs - 40),
         )
         history_cb = MetricsHistoryCallback(output_dir=str(run_dir))
         checkpoint_cb = L.pytorch.callbacks.ModelCheckpoint(
