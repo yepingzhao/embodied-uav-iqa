@@ -1,0 +1,100 @@
+% sections/limitations_conclusion.tex
+% Included from main.tex via \input{sections/limitations_conclusion}
+
+\section{Limitations and Future Work}
+\label{sec:limitations}
+
+The current release of CARLA-Air is validated for the workflows presented in
+Section~\ref{sec:apps}: single- and dual-drone aerial operations over
+moderate-density urban traffic scenes.
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Actor density.}
+  Joint simulation performance is characterized at moderate traffic loads;
+  high-density scenes with large simultaneous actor populations remain an
+  active engineering target.
+
+  \item \textbf{Environment resets.}
+  Map switching requires a full process restart due to independent actor
+  lifecycle management in each simulator backend; staged in-session resets are
+  planned for a future release.
+
+  \item \textbf{Multi-drone scale.}
+  Configurations beyond two drones are functional but not yet formally
+  validated across a wide range of scenarios; expanded multi-drone
+  characterization will be documented once inter-agent behavior has been fully
+  profiled.
+\end{itemize}
+
+\noindent None of these constraints affect the workflows in
+Section~\ref{sec:apps}, all of which operate within the current boundaries.
+
+Because CARLA-Air inherits and extends AirSim's aerial
+capabilities---whose upstream development has been archived---long-term
+maintenance of the aerial stack is managed within the CARLA-Air project
+itself. Bug fixes, compatibility updates, and feature extensions to the aerial
+subsystem are released as part of CARLA-Air's regular update cycle, ensuring
+that the flight simulation capabilities continue to evolve independently of
+the original upstream repository.
+
+Looking ahead, near-term work will address physics-state synchronization
+between the two engines and a ROS\,2~\cite{ros2} bridge that republishes both
+simulator streams as standard topics for broader ecosystem integration.
+Longer-term, we aim to support GPU-parallel multi-environment execution in the
+spirit of Isaac Lab~\cite{isaaclab} and OmniDrones~\cite{omnidrones}, bringing
+CARLA-Air closer to the episode throughput required for large-scale
+reinforcement learning.
+
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+Simulation platforms for autonomous systems have historically fragmented along
+domain boundaries, forcing researchers whose work spans ground and aerial
+domains to maintain inter-process bridge infrastructure or accept capability
+compromises.
+CARLA-Air resolves this fragmentation by integrating CARLA~\cite{carla} and
+AirSim~\cite{airsim} within a single Unreal Engine process~\cite{ue4},
+exposing both native Python APIs concurrently over a shared physics tick and
+rendering pipeline.
+
+\paragraph{Technical contributions.}
+The central technical contribution is a principled resolution of the
+single-GameMode constraint through a composition-based design:
+\texttt{CARLAAirGameMode} inherits CARLA's ground simulation subsystems while
+composing AirSim's aerial flight actor as a standard world entity, with
+modifications to exactly two upstream source files.
+This design yields three properties unavailable in bridge-based approaches: a
+shared physics tick that eliminates inter-process clock drift, a shared
+rendering pipeline that guarantees consistent weather and lighting across all
+sensor viewpoints, and full preservation of both upstream Python APIs.
+
+\paragraph{Platform capabilities.}
+Building on this architecture, CARLA-Air provides a photorealistic, physically
+coherent simulation world with rule-compliant traffic, socially-aware
+pedestrians, and aerodynamically consistent multirotor dynamics.
+Up to 18 sensor modalities can be synchronously captured across aerial and
+ground platforms at each simulation tick.
+The platform directly supports four research directions in air-ground embodied
+intelligence: air-ground cooperation, embodied navigation and vision-language
+action, multi-modal perception and dataset construction, and
+reinforcement-learning-based policy training.
+
+\paragraph{Validation.}
+The platform is validated through performance benchmarks demonstrating stable
+operation at ${\approx}20$\,FPS under joint workloads, a 3-hour continuous
+stability run with zero crashes across 357 reset cycles, and five
+representative workflows that exercise the platform's core capabilities.
+A consolidated feature comparison with representative platforms is provided in
+Table~\ref{tab:platform_comparison} (Section~\ref{sec:related}).
+
+\paragraph{Broader impact.}
+By providing a shared world state for aerial and ground agents, CARLA-Air
+enables research directions that are structurally inaccessible in single-domain
+platforms: paired aerial-ground perception datasets from physically consistent
+viewpoints, coordination policies over joint multi-modal observation spaces,
+and embodied navigation grounded in cross-view visual and linguistic input.
+By also inheriting and extending the aerial simulation capabilities of
+AirSim---whose upstream development has been archived---CARLA-Air ensures that
+this widely adopted flight stack continues to evolve within a modern, actively
+maintained infrastructure.

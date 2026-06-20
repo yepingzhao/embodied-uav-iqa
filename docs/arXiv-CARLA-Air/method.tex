@@ -1,0 +1,140 @@
+% sections/architecture.tex
+% Included from main.tex via \input{sections/architecture}
+
+\section{System Architecture}
+\label{sec:architecture}
+
+CARLA-Air integrates CARLA~\cite{carla} and AirSim~\cite{airsim} within a
+single Unreal Engine~\cite{ue4} process through a minimal bridging layer that
+resolves a fundamental engine-level initialization conflict while preserving
+both platforms' native APIs, physics engines, and rendering pipelines intact.
+Fig.~\ref{fig:arch_overview} presents the high-level runtime structure; the
+following subsections elaborate each design decision.
+
+\input{figures/fig_arch_overview}
+
+\subsection{Plugin and Dependency Structure}
+\label{sec:arch:plugins}
+
+The system comprises two plugin modules that load sequentially during engine
+startup.
+The ground simulation plugin initializes first, establishing its world
+management subsystems before any game logic executes.
+The aerial simulation plugin declares a compile-time dependency on the ground
+plugin, enabling \texttt{CARLAAirGameMode} to access the ground platform's
+initialization interfaces during its own startup phase.
+This dependency is strictly one-directional: no ground-platform source file
+references any aerial component, preserving the upstream CARLA codebase's
+update path without modification.
+Two independent RPC servers run concurrently within the single
+process---one per simulator---allowing the native Python clients of each
+platform to connect without modification.
+
+Version compatibility across the two upstream codebases, network configuration,
+and port assignments are documented in Appendix~\ref{app:config}.
+
+\subsection{The GameMode Conflict and Its Resolution}
+\label{sec:arch:gamemode}
+
+UE4 enforces a strict invariant: each world may have exactly one active game
+mode.
+CARLA's game mode orchestrates episode management, weather control, traffic
+simulation, the actor lifecycle, and the RPC interface through a deep
+inheritance chain.
+AirSim's game mode performs a separate startup sequence---reading configuration
+files, adjusting rendering settings, and spawning its flight actor.
+Because the two game modes are unrelated by inheritance, assigning either to the
+world map silently skips the other's initialization, rendering a large portion
+of its API surface inoperative.
+
+\paragraph{Architectural asymmetry.}
+A structural difference between the two systems makes resolution tractable and
+constitutes the central design insight of CARLA-Air.
+CARLA's subsystems are tightly coupled to its game mode through inheritance and
+privileged class relationships; they cannot be relocated outside the game mode
+slot without invasive upstream refactoring.
+AirSim's flight logic, by contrast, resides in a class derived from the
+generic \emph{actor} base---not the game mode base---and can therefore be
+spawned as a regular world actor at any point after world initialization.
+
+\paragraph{Solution: single inheritance plus composition.}
+We introduce \texttt{CARLAAirGameMode}, which inherits from CARLA's game mode
+base and occupies the single available slot.
+All ground simulation subsystems are thereby acquired through the standard UE4
+lifecycle.
+The aerial flight actor is then \emph{composed} into the world during the
+engine's \textsc{BeginPlay} phase, after ground initialization is complete, and
+never competes for the game mode slot.
+Fig.~\ref{fig:gamemode_design} contrasts the naive conflict with this adopted
+solution.
+
+\input{figures/fig_gamemode_design}
+
+\paragraph{Source footprint.}
+The integration modifies exactly two files in the upstream CARLA source tree:
+two previously private members are promoted to protected visibility and one
+privileged class declaration is added.
+All remaining integration code resides within the aerial plugin as purely
+additive content.
+The complete modification summary is provided in Appendix~\ref{app:source_mods}.
+
+\subsection{Coordinate System Mapping}
+\label{sec:arch:coords}
+
+CARLA and AirSim employ incompatible spatial reference frames that must be
+reconciled to co-register aerial and ground sensor data.
+CARLA inherits UE4's left-handed system with X forward, Y right, and Z up, in
+centimeters.
+AirSim adopts a right-handed North-East-Down (NED) frame with X north, Y east,
+and Z down, in meters.
+Fig.~\ref{fig:coord_frames} illustrates both frames and their geometric
+relationship.
+
+\input{figures/fig_coord_frames}
+
+Let $\mathbf{p} \in \mathbb{R}^3$ denote a point in the UE4 world frame and
+$\mathbf{o}$ the shared world origin established during initialization.
+The equivalent NED position is
+%
+\begin{equation}
+  \mathbf{p}_{\mathrm{NED}}
+  \;=\; \frac{1}{100}
+  \begin{pmatrix} p_x - o_x \\ p_y - o_y \\ -(p_z - o_z) \end{pmatrix},
+  \label{eq:pos_transform}
+\end{equation}
+%
+\noindent where the scale factor converts centimeters to meters and the sign
+reversal on the third component reflects the Z-axis inversion.
+Because the X and Y axes are directionally aligned, no axis permutation is
+required.
+
+For orientation, let $q = (w, q_x, q_y, q_z)$ denote a unit quaternion in the
+UE4 frame.
+The equivalent NED quaternion is
+%
+\begin{equation}
+  q_{\mathrm{NED}} \;=\; \bigl(w,\; q_x,\; q_y,\; -q_z\bigr),
+  \label{eq:rot_transform}
+\end{equation}
+%
+\noindent where negating $q_z$ accounts for the Z-axis reversal and the
+associated change of frame handedness.
+Eqs.~(\ref{eq:pos_transform}) and~(\ref{eq:rot_transform}) together fully
+specify the pose transform, enabling consistent fusion of drone attitude from
+the aerial API with vehicle heading from the ground API across all joint
+simulation workflows.
+
+\subsection{Asset Import Pipeline}
+\label{sec:arch:assets}
+
+CARLA-Air provides an extensible asset import pipeline that allows researchers
+to bring custom robot platforms, UAV models, vehicles, and environment assets
+into the shared simulation world. Imported assets are fully integrated into the
+joint simulation environment: they participate in the same physics tick and
+rendering pass as all built-in actors, respond to both ground and aerial API
+calls, and are visible to all sensor modalities across both simulation
+backends. This capability enables evaluation of custom hardware designs---such
+as novel multirotor configurations or application-specific ground
+robots---within realistic air-ground scenarios without modifying the core
+CARLA-Air codebase. Fig.~\ref{fig:custom_assets} shows two examples of
+user-imported assets operating within the platform.

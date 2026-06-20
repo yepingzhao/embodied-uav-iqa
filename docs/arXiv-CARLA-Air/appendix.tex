@@ -1,0 +1,150 @@
+% sections/appendix.tex
+% Included from main.tex via \input{sections/appendix}
+
+\appendix
+\section{Appendix}
+\subsection{System Configuration}
+\label{app:config}
+
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\columnwidth, height=0.3\textheight, keepaspectratio]{figures/asset.jpg}
+\caption{%
+  Custom assets imported into CARLA-Air through the extensible asset pipeline.
+  \textbf{Top:} a four-wheeled mobile robot with onboard LiDAR, imported from
+  an external FBX model.
+  \textbf{Bottom:} a custom electric sport car with user-defined vehicle
+  dynamics.
+  Both assets operate within the shared simulation world alongside all
+  built-in CARLA traffic and AirSim aerial agents, and are visible to all
+  sensor modalities.%
+}
+\label{fig:custom_assets}
+\end{figure}
+
+
+\paragraph{Reference hardware.}
+All experiments in this report were conducted on the following configuration:
+Ubuntu 20.04/22.04~LTS, NVIDIA RTX~A4000 (16\,GB GDDR6), AMD Ryzen~7 5800X
+(8-core, 4.7\,GHz), 32\,GB DDR4-3200.
+
+\paragraph{Software stack.}
+CARLA~0.9.16, AirSim~1.8.1 (final stable open-source release),
+Unreal Engine~4.26, Python~3.8+.
+
+\paragraph{Network configuration.}
+Table~\ref{tab:ports} lists the default port assignments.
+Both RPC servers bind to \texttt{localhost} by default; remote connections
+require explicit IP configuration.
+
+\begin{table}[!htbp]
+\centering
+\caption{Default network port assignments.}
+\label{tab:ports}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{@{}llr@{}}
+\toprule
+\textbf{Service} & \textbf{Protocol} & \textbf{Port} \\
+\midrule
+CARLA RPC Server   & TCP & 2000  \\
+CARLA Streaming    & UDP & 2001  \\
+AirSim RPC Server  & TCP & 41451 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Distribution.}
+The prebuilt binary package is approximately 19\,GB and includes a one-command
+launcher (\texttt{CarlaAir.sh}).
+The source distribution is approximately 651\,MB and is released under the MIT
+license.
+
+
+\subsubsection{API Compatibility Summary}
+\label{app:api}
+
+Table~\ref{tab:api_compat} summarizes the API compatibility status and test
+coverage of the current CARLA-Air release.
+All 89 automated CARLA API tests pass without modification; the full AirSim
+flight control and sensor access API has been verified through manual and
+scripted testing.
+A total of 63 ROS\,2 topics are published across both simulation backends.
+
+\begin{table}[!htbp]
+\centering
+\caption{API compatibility and test coverage.}
+\label{tab:api_compat}
+\small
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.08}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lp{4.5cm}@{}}
+\toprule
+\textbf{Component} & \textbf{Status} \\
+\midrule
+CARLA API           & 89/89 automated tests passing \\
+AirSim API          & Full flight control and sensor access verified \\
+ROS\,2 topics       & 63 total (43 CARLA + 14 AirSim + 6 generic) \\
+\midrule
+\multicolumn{2}{@{}l}{\textit{Key upstream scripts confirmed working}} \\
+\texttt{manual\_control.py}    & CARLA manual driving interface \\
+\texttt{automatic\_control.py} & CARLA autopilot demonstration \\
+\texttt{dynamic\_weather.py}   & CARLA weather preset cycling \\
+\texttt{hello\_drone.py}       & AirSim basic flight demonstration \\
+\bottomrule
+\end{tabular}}%
+\end{table}
+
+
+\subsection{Upstream Source Modifications}
+\label{app:source_mods}
+
+CARLA-Air is designed to minimize modifications to the upstream CARLA codebase.
+The integration touches only two header files and one source file, totaling
+approximately 35 lines of changes.
+All other integration code is purely additive, residing within the aerial
+simulation plugin as the \texttt{CARLAAirGameMode} class
+(${\sim}1{,}405$ lines of C++).
+Table~\ref{tab:source_mods} provides the complete modification summary.
+
+
+
+\begin{table}[!htbp]
+\centering
+\caption{Upstream CARLA source modifications.}
+\label{tab:source_mods}
+\small
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.08}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lp{4.8cm}@{}}
+\toprule
+\textbf{File} & \textbf{Modification} \\
+\midrule
+\texttt{CarlaGameModeBase.h}
+  & \texttt{friend} declaration for \texttt{CARLAAirGameMode} \\
+\texttt{CarlaEpisode.h}
+  & Sensor tagging visibility: \texttt{private} $\to$ \texttt{protected} \\
+\texttt{CarlaGameModeBase.cpp}
+  & State flag assignment (1 line) \\
+\midrule
+\multicolumn{2}{@{}l}{\textit{New integration layer (no upstream modification)}} \\
+\texttt{CARLAAirGameMode}
+  & Unified game mode class; ${\sim}1{,}405$ lines C++ \\
+\bottomrule
+\end{tabular}}%
+\end{table}
+
+\subsection{Custom Asset Import}
+\label{app:assets}
+
+CARLA-Air supports importing custom 3D assets (robot platforms, vehicles, UAV
+models, and environment objects) through an asset pipeline built on Unreal
+Engine's content framework. Imported assets are registered as spawnable actor
+classes and become accessible through the standard CARLA Python API
+(\texttt{world.spawn\_actor()}). Once registered, custom assets share the same
+physics tick, rendering pass, and sensor visibility as all built-in actors,
+ensuring full consistency within the joint simulation environment. 

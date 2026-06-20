@@ -40,8 +40,8 @@ from PIL import Image
 
 from uav_iqa.metrics import (
     evaluate_iqa,
-    per_task_metrics,
     per_distortion_category_metrics,
+    per_task_metrics,
 )
 from uav_iqa.utils import load_image_tensor, load_manifest, setup_logging
 

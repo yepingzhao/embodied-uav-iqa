@@ -1,0 +1,136 @@
+\documentclass[10pt,twocolumn]{article}
+% ============================================================
+% Packages
+% ============================================================
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{times}
+\usepackage{microtype}
+\usepackage{graphicx}
+\graphicspath{{figures/}}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\usepackage{xcolor}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{multirow}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.17}
+\usetikzlibrary{shapes,arrows,positioning,fit,backgrounds,calc}
+\usepackage[margin=1in]{geometry}
+\usepackage{adjustbox}
+\usepackage{makecell}
+\usepackage{enumitem}
+\usepackage{tabularx}
+\usepackage{url}
+\usepackage{float}
+\usepackage{etoolbox}
+\usepackage{cuted}
+
+% ============================================================
+% Metadata
+% ============================================================
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!70!black,
+    citecolor=green!50!black,
+    urlcolor=blue!70!black,
+}
+
+% ============================================================
+% Custom commands
+% ============================================================
+\newcommand{\carlaair}{\textsc{Carla-Air}}
+\newcommand{\carla}{\textsc{Carla}}
+\newcommand{\airsim}{\textsc{AirSim}}
+\newcommand{\ue}{\textsc{Unreal Engine}}
+
+% ============================================================
+% Title and Authors
+% ============================================================
+\title{\carlaair{}: Fly Drones Inside a CARLA World\\
+A Unified Infrastructure for Air-Ground Embodied Intelligence}
+
+\author{
+    Tianle Zeng$^{1}$ \quad
+    Yanci Wen$^{1}$ \quad
+    Hong Zhang$^{1,\dagger}$
+}
+
+\date{}
+
+% ============================================================
+% Teaser figure injection
+% ============================================================
+\makeatletter
+\apptocmd{\maketitle}{%
+    % --- author footnote ---
+    {%
+        \let\thefootnote\relax
+        \footnotetext{%
+
+            $^{\dagger}$Corresponding author (hzhang@sustech.edu.cn).
+            
+            $^{1}$Shenzhen Key Laboratory of Robotics and Computer Vision,
+            Southern University of Science and Technology.
+
+            For questions and technical inquiries, please contact
+            \texttt{louiszeng16@163.com}.%
+        }%
+    }%
+    % --- teaser figure ---
+    \begin{strip}
+        \centering
+        \vspace*{-25mm}
+        \includegraphics[width=\textwidth]{teaser_final.jpg}
+        \captionof{figure}{Overview of \textbf{CARLA-Air}, a unified simulation
+        infrastructure for air-ground embodied intelligence. The examples shown
+        here illustrate representative capabilities of the platform, including
+        unified air-ground simulation, multi-modal sensing, embodied navigation,
+        asset adaptation, and diverse urban scenarios within a single physically
+        coherent environment.}
+        \label{fig:teaser}
+        \vspace*{-2mm}
+    \end{strip}
+    \setcounter{figure}{1}
+    \thispagestyle{empty}
+}{}{}
+\makeatother
+
+% ============================================================
+% Document
+% ============================================================
+\begin{document}
+\sloppy
+\raggedbottom
+\hbadness=10000
+\vbadness=10000
+
+\maketitle
+
+\input{abstract}
+\input{introduction}
+\input{relativework}
+\input{method}
+\input{performance}
+\input{application}
+\input{limitation_conclusion}
+
+% ============================================================
+% Bibliography
+% ============================================================
+\bibliographystyle{plain}
+\bibliography{references}
+
+% ============================================================
+% Appendices
+% ============================================================
+\appendix
+\input{appendix}
+
+\end{document}

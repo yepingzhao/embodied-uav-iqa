@@ -23,9 +23,9 @@ from uav_iqa.annotations import (
     compute_synthetic_score,
 )
 from uav_iqa.metrics import (
-    compute_srcc,
     compute_plcc,
     compute_rmse,
+    compute_srcc,
     per_distortion_category_metrics,
 )
 from uav_iqa.utils import load_manifest, setup_logging

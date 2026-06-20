@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""M0-R002: Verify all 24 distortion types produce visually plausible outputs.
+"""M0-R002: Verify all 36 distortion types produce visually plausible outputs.
 
 Loads 10 test images, applies each distortion at 5 intensity levels,
 saves output grid for visual inspection.

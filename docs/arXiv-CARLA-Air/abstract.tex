@@ -1,0 +1,45 @@
+% sections/abstract.tex
+% Included from main.tex via \input{sections/abstract}
+
+\begin{abstract}
+The convergence of low-altitude economies, embodied intelligence, and
+air-ground cooperative systems creates a growing need for simulation
+infrastructure capable of jointly modeling aerial and ground agents within a
+single physically coherent environment.
+Existing open-source platforms remain domain-segregated: urban driving
+simulators provide rich traffic populations but no aerial dynamics, while
+multirotor simulators offer physics-accurate flight but lack realistic ground
+scenes.
+Bridge-based co-simulation can connect heterogeneous backends, yet introduces
+synchronization overhead and cannot guarantee the strict spatial-temporal
+consistency required by modern perception and learning pipelines.
+
+We present \textbf{CARLA-Air}, an open-source infrastructure that unifies
+high-fidelity urban driving and physics-accurate multirotor flight within a
+single Unreal Engine process, providing a practical simulation foundation for
+air-ground embodied intelligence research.
+The platform preserves both CARLA and AirSim native Python APIs and
+ROS\,2 interfaces, enabling zero-modification reuse of existing codebases.
+Within a shared physics tick and rendering pipeline, CARLA-Air delivers
+photorealistic urban and natural environments populated with rule-compliant
+traffic flow, socially-aware pedestrians, and aerodynamically consistent UAV
+dynamics, while synchronously capturing up to 18 sensor modalities---including
+RGB, depth, semantic segmentation, LiDAR, radar, IMU, GNSS, and
+barometry---across all aerial and ground platforms at each simulation tick.
+Building on this foundation, the platform provides out-of-the-box support for
+representative air-ground embodied intelligence workloads, spanning air-ground
+cooperation, embodied navigation and vision-language action, multi-modal
+perception and dataset construction, and reinforcement-learning-based policy
+training.
+An extensible asset pipeline further allows researchers to integrate custom
+robot platforms, UAV configurations, and environment maps into the shared
+simulation world.
+By inheriting and extending the aerial simulation capabilities of
+AirSim---whose upstream development has been archived---CARLA-Air also ensures
+that this widely adopted flight stack continues to evolve within a modern,
+actively maintained infrastructure.
+
+CARLA-Air is released with both prebuilt binaries and full source code to
+support immediate adoption:
+\url{https://github.com/louiszengCN/CarlaAir}
+\end{abstract}

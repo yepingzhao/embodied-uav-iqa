@@ -1,0 +1,150 @@
+% sections/performance.tex
+% Included from main.tex via \input{sections/performance}
+
+\section{Performance Evaluation}
+\label{sec:perf}
+
+This section evaluates CARLA-Air under representative joint air-ground
+workloads across three experiments: frame-rate and resource scaling
+(Section~\ref{sec:perf:fps}), memory stability under sustained operation
+(Section~\ref{sec:perf:vram}), and communication latency
+(Section~\ref{sec:perf:rpc}).
+Full configuration parameters and raw data are deferred to
+Appendix~\ref{app:config}.
+
+\paragraph{Reference hardware.}
+All measurements are collected on a workstation equipped with an NVIDIA
+RTX~A4000 (16\,GB GDDR6), AMD Ryzen~7 5800X (8-core, 4.7\,GHz), and 32\,GB
+DDR4-3200, running Ubuntu~20.04~LTS.
+The simulator runs in Epic quality mode with Town10HD loaded unless stated
+otherwise.
+All aerial experiments use the built-in SimpleFlight controller with default
+PID gains.
+CPU affinity and GPU power limits are left at system defaults to reflect
+realistic research deployment conditions.
+
+%% ---------------------------------------------------------------
+\subsection{Benchmark Methodology}
+\label{sec:perf:method}
+
+Reliable performance measurement requires eliminating startup
+transients---map-loading jitter, first-frame shader compilation, and actor
+lifecycle initialization must be discarded before steady-state sampling begins.
+Algorithm~\ref{alg:bench} formalizes the benchmark harness used throughout this
+section.
+
+\input{figures/alg_bench}
+
+Each profile uses $T_w = 200$ warm-up ticks and $T_m = 2{,}000$ measurement
+ticks.
+VRAM is sampled every 60\,s.
+All reported frame rates are the harmonic mean of $\mathbf{f}$---the
+appropriate central tendency for rate quantities---with standard deviations
+alongside.
+The latency benchmark issues 500 warm-up calls followed by 5\,000 measurement
+calls; actor spawn calls are each paired with an immediate destroy to prevent
+scene-state accumulation from contaminating subsequent measurements.
+
+%% ---------------------------------------------------------------
+\subsection{Experiment~1: Frame Rate and Resource Scaling}
+\label{sec:perf:fps}
+
+\paragraph{Workload design.}
+Under synchronous-mode operation, per-tick wall time is bounded by the slowest
+of three concurrent contributors: the rendering thread (GPU-bound), the
+ground-actor dispatch loop (CPU-bound), and the aerial physics engine
+(CPU-bound, asynchronous at ${\approx}1{,}000$\,Hz on a dedicated thread).
+Sensor rendering dominates at high resolution due to GPU memory bandwidth
+saturation; actor population contributes via per-mesh draw calls.
+These relationships motivate the workload stratification in
+Table~\ref{tab:fps_scaling}.
+
+\input{figures/tab_fps_scaling}
+
+\paragraph{Analysis.}
+The moderate joint configuration---combining ground traffic, an aerial agent,
+and a full sensor suite---sustains $19.8 \pm 1.1$\,FPS, sufficient for
+closed-loop policy evaluation at standard RL episode lengths.
+Comparing the standalone ground baseline ($28.4$\,FPS) against the moderate
+joint profile ($19.8$\,FPS) quantifies total integration overhead at
+$8.6$\,FPS (30.3\%), of which $2.1$\,FPS is attributable to ground co-hosting
+and the remaining $6.5$\,FPS to the aerial physics engine.
+Crucially, this aerial overhead manifests entirely in CPU utilization ($54\%$
+vs.\ $38\%$) rather than GPU memory: VRAM differs by only 39\,MiB between
+ground-only and moderate-joint profiles.
+The traffic surveillance profile retains comparable throughput ($20.1$\,FPS)
+despite doubling the vehicle count, confirming that sensor rendering---not
+actor population---is the dominant cost driver at $1920\times1080$.
+The 3-hour endurance profile ($19.7 \pm 1.3$\,FPS) confirms that throughput
+does not degrade under sustained operation.
+
+%% ---------------------------------------------------------------
+\subsection{Experiment~2: Memory Stability}
+\label{sec:perf:vram}
+
+\paragraph{Steady-state VRAM profile.}
+The base map asset load accounts for approximately 3\,702\,MiB at idle
+(Town10HD, Epic quality); each additional ground sensor contributes
+4--10\,MiB at $1280\times720$.
+A transient peak of approximately 5\,000\,MiB occurs during map loading and
+resolves within 30\,s.
+All steady-state profiles remain within 3\,878\,MiB, retaining approximately
+12\,506\,MiB (76\%) of the 16\,GB device budget for co-located workloads such
+as GPU-based policy training.
+
+\paragraph{Leak verification.}
+Table~\ref{tab:stability} summarises the 3-hour endurance run across 357 actor
+spawn-and-destroy cycles.
+A linear regression of VRAM against cycle index yields a slope of
+$0.49$\,MiB/cycle with $R^2 = 0.11$, indicating no statistically significant
+accumulation trend.
+Fig.~\ref{fig:vram_timeseries} visualises the VRAM trace: the negligible
+early-to-late drift ($3{,}868 \to 3{,}878$\,MiB, approximately 10\,MiB over
+327 cycles) is attributable to residual render-target caching rather than
+lifecycle leakage.
+
+\input{figures/fig_vram_timeseries}
+\input{figures/tab_stability}
+
+Zero API errors and zero simulation crashes across 357 cycles validate the
+robustness of the joint environment under the repeated agent-reset patterns
+typical of reinforcement-learning training.
+
+%% ---------------------------------------------------------------
+\subsection{Experiment~3: Communication Latency}
+\label{sec:perf:rpc}
+
+Both simulation APIs operate within the same process on the loopback interface,
+eliminating inter-process serialization overhead.
+The two RPC servers use distinct wire protocols and port assignments (detailed
+in Appendix~\ref{app:config}).
+Table~\ref{tab:rpc_latency} reports round-trip latency for representative API
+calls.
+
+\input{figures/tab_rpc_latency}
+
+\paragraph{Analysis.}
+Lightweight state queries complete in 280--490\,$\mu$s, well below the per-tick
+budget at 20\,FPS (50\,ms), confirming that API overhead does not contribute
+meaningfully to frame-time variance.
+Actor spawn latency (1\,850\,$\mu$s) reflects a one-time GPU synchronization
+point for render-asset registration at episode reset.
+Image capture latency (3\,200\,$\mu$s) covers the full sensor
+pipeline---rendering, buffer readback, and serialization---and is overlapped
+with the rendering thread at synchronous tick rates.
+All measured values fall below the lower bound of bridge-based cross-process
+synchronization costs reported in~\cite{transimhub}
+(1\,000--5\,000\,$\mu$s per frame).
+
+\paragraph{Tick-rate reconciliation.}
+The aerial physics engine advances at ${\approx}1{,}000$\,Hz on its dedicated
+thread, while the rendering tick runs at ${\approx}20$\,Hz under the moderate
+joint workload.
+Sensor callbacks read the aerial state at rendering tick boundaries, so each
+ground-aerial sensor frame pair reflects the drone's integrated physical state
+over ${\approx}50$ aerial physics steps.
+Ground actor states are also resolved at tick boundaries, ensuring temporal
+co-registration across all sensor modalities within a single tick.
+Applications requiring finer aerial state resolution should reduce the fixed
+simulation delta-time accordingly; the throughput trade-off follows from
+Table~\ref{tab:fps_scaling}.

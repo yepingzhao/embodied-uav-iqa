@@ -1,0 +1,341 @@
+% sections/applications.tex
+% Included from main.tex via \input{sections/applications}
+
+\section{Representative Applications}
+\label{sec:apps}
+
+CARLA-Air is validated through five representative workflows that collectively
+exercise the platform's core capabilities across the four research directions
+identified in Section~\ref{sec:introduction}: air-ground cooperation, embodied
+navigation and vision-language action, multi-modal perception and dataset
+construction, and reinforcement-learning-based policy training.
+Table~\ref{tab:workflows_summary} provides a structured overview; detailed
+descriptions follow in Sections~\ref{sec:apps:coop}--\ref{sec:apps:rl}.
+
+\input{figures/tab_workflows_summary}
+
+All workflows share a common dual-client architecture: both API clients execute
+within the same Python process and operate on the same world state without
+inter-process communication.
+The following minimal pattern is common to every workflow:
+
+{\footnotesize
+\begin{verbatim}
+ground = carla.Client('localhost', 2000)
+aerial = airsim.MultirotorClient()
+world  = ground.get_world()  # shared
+aerial.enableApiControl(True)
+\end{verbatim}
+}
+
+\input{figures/fig_workflow_arch}
+
+%% ---------------------------------------------------------------
+\subsection{W1: Air-Ground Cooperative Precision Landing}
+\label{sec:apps:coop}
+
+Autonomous precision landing of a UAV on a moving ground vehicle is a
+representative and challenging scenario for air-ground cooperation, with
+direct applications in drone-assisted logistics, mobile recharging, and
+multi-agent coordination.
+This workflow demonstrates real-time cross-domain coordination within
+CARLA-Air's tick-synchronous control loop: the drone must continuously track
+the vehicle's position, plan a descent trajectory, and execute a smooth
+touchdown---all while the vehicle is in motion through urban traffic.
+
+\paragraph{Setup.}
+A ground vehicle follows an autopilot route through Town10HD at moderate
+speed.
+A drone starts at ${\approx}12$\,m altitude above the vehicle and is tasked
+with landing on the vehicle's roof.
+At each synchronous tick, the vehicle's 3D pose is queried via the ground API,
+transformed into the aerial NED frame using the coordinate mapping from
+Section~\ref{sec:arch:coords}, and used to compute a descent command issued
+to the aerial flight controller.
+
+\paragraph{Control architecture.}
+The landing controller operates in three phases: \emph{approach}
+(horizontal alignment with the vehicle), \emph{descent} (controlled altitude
+reduction while maintaining horizontal tracking), and \emph{touchdown}
+(final landing).
+Let $\mathbf{q}_k \in \mathbb{R}^2$ denote the vehicle's horizontal position
+at tick $k$ in the NED frame.
+The drone's commanded horizontal target tracks the vehicle continuously:
+%
+\begin{equation}
+\hat{\mathbf{q}}_k = \mathbf{q}_k + \mathbf{d},
+\qquad
+\hat{z}_k = z_k^{\mathrm{ref}},
+\label{eq:landing_control}
+\end{equation}
+%
+where $\mathbf{d}$ is the coordinate origin offset from
+Eq.~\eqref{eq:coord_offset} and $z_k^{\mathrm{ref}}$ decreases according to
+a smooth descent profile from the initial altitude to ground level.
+
+\paragraph{Results.}
+Fig.~\ref{fig:w1_coop} shows the complete landing sequence.
+The drone descends from ${\approx}12$\,m to touchdown over ${\approx}20$\,s,
+with horizontal convergence error decreasing from ${\approx}6$\,m to within
+the $\pm 0.5$\,m tolerance band.
+The 3D trajectory overview confirms that the UAV trajectory converges smoothly
+onto the vehicle trajectory throughout the descent.
+Table~\ref{tab:coop_results} summarizes the landing performance.
+
+\input{figures/tab_coop_results}
+
+\begin{figure*}[!htbp]
+\centering
+\includegraphics[width=\textwidth, height=0.38\textheight, keepaspectratio]{figures/landing.jpg}
+\caption{%
+  W1: Air-ground cooperative precision landing on a moving vehicle.
+  \textbf{(a)}~Time-lapse sequence ($t_1$--$t_5$) showing the drone
+  (red box) descending toward and landing on a moving ground vehicle
+  through approach, descent, and touchdown phases.
+  \textbf{(b)}~3D trajectory overview: the UAV trajectory (blue) converges
+  onto the vehicle trajectory (orange), with the ground projection
+  (dashed) showing horizontal alignment.
+  \textbf{(c)}~Altitude profile over time, illustrating smooth descent from
+  12\,m to ground level.
+  \textbf{(d)}~Horizontal convergence error, decreasing from
+  ${\approx}6$\,m to within the $\pm 0.5$\,m tolerance band.
+  All data are recorded within CARLA-Air's synchronous tick loop.%
+}
+\vspace{-2mm}
+\label{fig:w1_coop}
+\end{figure*}
+
+%% ---------------------------------------------------------------
+\subsection{W2: Embodied Navigation and VLN/VLA Data Generation}
+\label{sec:apps:vln}
+
+Vision-language navigation (VLN) and vision-language action (VLA) are among the
+most active research directions in embodied intelligence, requiring agents to
+navigate and act in realistic environments grounded in natural language
+instructions and visual observations.
+A key bottleneck is the availability of large-scale, diverse training data that
+pairs language instructions with rich visual observations from multiple
+viewpoints.
+CARLA-Air provides a natural data generation infrastructure for this purpose:
+its photorealistic urban environments, socially-aware pedestrians, dynamic
+traffic, and simultaneous aerial-ground sensing enable the construction of
+VLN/VLA datasets with cross-view visual grounding that single-domain platforms
+cannot provide.
+
+\paragraph{Platform capabilities for VLN/VLA.}
+CARLA-Air supports VLN/VLA data generation through several platform-level
+features:
+(i)~both aerial and ground agents can be equipped with egocentric RGB, depth,
+and semantic segmentation cameras, providing paired bird's-eye and street-level
+visual observations along any navigation trajectory;
+(ii)~the ground API exposes waypoint-based route planning with lane-level
+precision, which can serve as the basis for generating language-grounded
+navigation instructions;
+(iii)~the shared rendering pipeline guarantees that all visual observations are
+captured under identical weather, lighting, and scene conditions at each tick;
+and (iv)~the aerial overview provides a natural ``oracle view'' for generating
+spatial referring expressions and verifying navigation progress.
+
+
+
+\begin{figure*}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/vln.jpg}
+\caption{%
+  W2: Embodied navigation with aerial reasoning.
+  A UAV autonomously tracks a pedestrian (red box, bottom) through an urban
+  environment using bird's-eye visual observations.
+  Each frame is annotated with the drone's chain-of-thought reasoning, illustrating how the agent interprets the scene,
+  anticipates occlusions, and adjusts its flight path to maintain persistent
+  visual contact with the target.
+  All frames are rendered within CARLA-Air's shared simulation world under
+  consistent lighting and physics.%
+}
+\label{fig:w2_vln}
+\end{figure*}
+
+%% ---------------------------------------------------------------
+\subsection{W3: Synchronized Multi-Modal Dataset Collection}
+\label{sec:apps:dataset}
+
+Generating large-scale paired aerial-ground datasets is a bottleneck for
+training and evaluating cooperative perception models.
+Manual synchronization across separate simulator processes introduces alignment
+errors that corrupt correspondence annotations.
+CARLA-Air eliminates this bottleneck: because both sensor suites are driven by
+the same tick counter, the resulting dataset records carry guaranteed per-tick
+correspondence with zero interpolation overhead.
+
+\paragraph{Setup.}
+Eight ground sensors (RGB, semantic segmentation, depth, LiDAR, radar, GNSS,
+IMU, collision) and four aerial sensors (RGB, depth, IMU, GPS) are attached
+concurrently.
+The simulation runs in synchronous mode at a fixed timestep; all 12 sensor
+callbacks are registered before the first tick advance.
+Ground traffic is populated with 30 autopilot vehicles and 10 pedestrians.
+
+\paragraph{Dataset structure.}
+Each record $\mathcal{R}_k$ at tick $k$ contains all 12 sensor observations
+sharing a common tick index, plus vehicle and drone pose in the unified world
+frame.
+Records are serialized to disk in a flat per-tick directory structure with
+metadata in JSON.
+No timestamp interpolation is required: the shared tick index serves as the
+alignment key.
+
+\paragraph{Results.}
+Over 1\,000 ticks, the workflow produces 1\,000 fully synchronized 12-stream
+records at a mean collection rate of ${\approx}17$\,Hz.
+The maximum observed tick-alignment deviation across all 12 streams is one tick
+(occurring transiently under disk-write saturation).
+Table~\ref{tab:dataset_results} summarizes collection performance.
+
+\input{figures/tab_dataset_results}
+
+
+% Replace the W3 figure placeholder in sections/applications.tex with:
+
+\begin{figure*}[!htbp]
+\centering
+\includegraphics[width=\textwidth]{figures/datasets.jpg}
+\caption{%
+  W3: Synchronized multi-modal dataset collection at a single simulation tick.
+  \textbf{Top row} (vehicle perspective): RGB, semantic segmentation, depth,
+  LiDAR bird's-eye view, surface normals, and instance segmentation.
+  \textbf{Bottom row} (drone perspective): the same six modalities captured
+  simultaneously from the aerial viewpoint.
+  All 12 sensor streams share an identical tick index and are rendered under
+  the same lighting and weather conditions through CARLA-Air's shared
+  rendering pipeline, guaranteeing per-tick spatial-temporal correspondence
+  without interpolation.%
+}
+\label{fig:w3_dataset}
+\end{figure*}
+
+%% ---------------------------------------------------------------
+\subsection{W4: Air-Ground Cross-View Perception}
+\label{sec:apps:perception}
+
+Cross-view perception---fusing aerial bird's-eye observations with ground-level
+sensing---is an emerging research direction for cooperative autonomous driving,
+urban scene understanding, and 3D reconstruction.
+This workflow demonstrates CARLA-Air's ability to provide spatially and
+temporally co-registered multi-modal sensor streams from both aerial and ground
+viewpoints within a single shared environment.
+
+\paragraph{Setup.}
+A drone equipped with a depth camera hovers above a road segment while a ground
+ego vehicle equipped with a semantic segmentation camera traverses the same
+segment.
+Both sensors are queried at each synchronous tick.
+
+\paragraph{Sensor co-registration.}
+Co-registration leverages the coordinate mapping from
+Section~\ref{sec:arch:coords}.
+The origin offset $\mathbf{d} \in \mathbb{R}^3$ between the aerial NED frame
+and the ground world frame is computed once at initialization:
+%
+\begin{equation}
+\mathbf{d} = T\!\left(\mathbf{p}_{\mathrm{spawn}}^{\mathrm{world}}\right)
+  - \mathbf{p}_{\mathrm{spawn}}^{\mathrm{NED}},
+\label{eq:coord_offset}
+\end{equation}
+%
+where $T(\cdot)$ applies the scale conversion and axis remapping.
+When the drone spawns at the world origin, $\mathbf{d} = \mathbf{0}$.
+
+\paragraph{Weather consistency.}
+To verify rendering consistency across both sensor layers, the workflow iterates
+through all 14 official weather presets.
+For each preset involving significant illumination change, the mean pixel
+intensity of the aerial RGB frame shifts by more than 5\% relative to the
+previous preset, confirming single-pass weather propagation.
+Because both sensors share the same rendering pipeline, temporal alignment is
+guaranteed:
+%
+\begin{equation}
+\epsilon_k = \bigl|t_k^{\mathrm{gnd}} - t_k^{\mathrm{air}}\bigr| = 0,
+\label{eq:sensor_alignment}
+\end{equation}
+%
+a property that bridge-based architectures cannot provide.
+
+\paragraph{Results.}
+Over 500 ticks, the workflow produces 500 co-registered aerial-depth /
+ground-segmentation pairs at ${\approx}18$\,Hz with zero RPC errors.
+All 14 weather presets pass the illumination consistency assertion.
+Table~\ref{tab:perception_results} summarizes the measured outcomes.
+
+\input{figures/tab_perception_results}
+
+
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=\textwidth, height=0.32\textheight, keepaspectratio]{figures/w4.jpg}
+\caption{%
+  W4: Air-ground cross-view perception across diverse environments and weather
+  conditions. Each row shows an aerial RGB view from the drone across six
+  representative CARLA maps (Town\,01--05 and Town\,10HD); each column
+  corresponds to a different weather preset (Clear Noon, Cloudy Noon, Dense
+  Fog, Hard Rain, Night, Soft Rain, and Sunset).%
+}
+\label{fig:w4_perception}
+\end{figure*}
+
+%% ---------------------------------------------------------------
+\subsection{W5: Reinforcement Learning Training Environment}
+\label{sec:apps:rl}
+
+Reinforcement learning in air-ground cooperative settings requires a simulation
+environment that provides closed-loop interaction, consistent state
+observations across heterogeneous agents, and stable long-horizon episode
+execution without memory leaks or synchronization drift.
+CARLA-Air's single-process architecture naturally satisfies these requirements,
+and the stability results from Section~\ref{sec:perf:vram} (zero crashes and
+zero memory accumulation over 357 reset cycles) directly validate its
+suitability as an RL training environment.
+
+\paragraph{Platform capabilities for RL.}
+CARLA-Air supports RL training workflows through several platform-level
+features:
+(i)~synchronous stepping mode provides deterministic state transitions
+compatible with standard Gym-style training loops;
+(ii)~both aerial and ground agents expose programmatic control interfaces (velocity
+commands, waypoint targets, autopilot toggles) that can serve as action spaces;
+(iii)~the full sensor suite (RGB, depth, segmentation, LiDAR, IMU, GPS)
+provides rich observation spaces for both state-based and vision-based policies;
+(iv)~episode resets via actor spawn/destroy are validated for stability across
+hundreds of consecutive cycles (Section~\ref{sec:perf:vram});
+and (v)~the shared world state ensures that reward signals computed from
+cross-domain interactions (e.g., aerial-ground relative positioning) are
+physically consistent.
+
+\paragraph{Example: cooperative positioning.}
+As a representative RL scenario, consider a drone learning to maintain an
+optimal aerial observation position relative to a moving ground vehicle under
+varying traffic conditions.
+The observation space comprises the drone's pose, the vehicle's pose, and
+surrounding traffic state; the action space is a 3D velocity command; the reward
+encodes lateral tracking error and altitude maintenance.
+This scenario exercises the full air-ground control loop within CARLA-Air's
+synchronous tick, and can be implemented using standard RL libraries (e.g.,
+Stable-Baselines3, RLlib) with minimal wrapper code.
+
+
+\begin{figure*}[!htbp]
+\centering
+\includegraphics[width=\textwidth, height=0.35\textheight, keepaspectratio]{figures/RL.jpg}
+\caption{%
+  W5: Reinforcement learning training environment.
+  \textbf{Top:} a drone learns to maintain an optimal aerial observation
+  position above a moving ground vehicle within CARLA-Air's urban traffic
+  environment.
+  \textbf{Bottom:} the closed-loop RL pipeline. At each synchronous tick,
+  CARLA-Air provides an observation space (drone and vehicle poses, relative
+  distance, surrounding traffic state) to the policy network, which outputs
+  3D velocity commands as actions. The reward signal encodes tracking
+  accuracy, altitude maintenance, and collision avoidance.%
+}
+\label{fig:w5_rl}
+\end{figure*}

@@ -1,0 +1,120 @@
+% sections/related.tex
+% Included from main.tex via \input{sections/related}
+
+\section{Related Work}
+\label{sec:related}
+
+Simulation platforms relevant to autonomous systems span autonomous driving,
+aerial robotics, joint co-simulation, and embodied AI.
+From the perspective of air-ground embodied intelligence, the central question
+is not whether a platform supports driving or flight in isolation, but whether
+aerial and ground agents can be jointly simulated within a unified, physically
+coherent, and practically usable environment.
+As illustrated in Fig.~\ref{fig:platform_positioning} and
+Table~\ref{tab:platform_comparison}, existing open-source platforms largely
+remain separated by domain focus, and none simultaneously provides realistic
+urban traffic, socially-aware pedestrians, physics-based multirotor flight,
+preserved native APIs, and single-process execution in one shared simulation
+world.
+
+\subsection{Autonomous Driving Simulators}
+\label{sec:related:driving}
+
+Autonomous driving simulators provide strong support for realistic urban
+scenes, traffic agents, and ground-vehicle perception.
+CARLA~\cite{carla}, built on Unreal Engine~\cite{ue4}, has become the de facto
+open-source platform for urban driving research due to its photorealistic
+environments, rich actor library, and mature Python API.
+LGSVL~\cite{lgsvl} offers full-stack integration with Autoware and Apollo on
+the Unity engine.
+SUMO~\cite{sumo} provides lightweight microscopic traffic flow modeling.
+MetaDrive~\cite{metadrive} enables procedural environment generation for
+generalizable RL, and VISTA~\cite{vista} supports data-driven sensor-view
+synthesis for autonomous vehicles.
+These platforms collectively cover a broad range of ground-autonomy research
+needs, but none natively supports physics-based UAV flight, leaving air-ground
+cooperative workloads outside their scope.
+
+\subsection{Aerial Vehicle Simulators}
+\label{sec:related:uav}
+
+Aerial simulators provide the complementary capability: accurate multirotor
+dynamics, onboard aerial sensing, and UAV-oriented control interfaces.
+AirSim~\cite{airsim} remains one of the most widely adopted open-source UAV
+simulators, offering physics-accurate multirotor flight and a comprehensive
+sensor suite on Unreal Engine, though its upstream development has since been
+archived.
+Flightmare~\cite{flightmare} combines Unity-based photorealistic rendering
+with highly parallel dynamics for fast RL training.
+FlightGoggles~\cite{flightgoggles} provides photogrammetry-based environments
+for perception-driven aerial robotics.
+Gazebo~\cite{gazebo}, together with MAV-specific packages such as
+RotorS~\cite{rotorsim}, offers a mature ROS-integrated simulation stack for
+multi-rotor control and state estimation.
+OmniDrones~\cite{omnidrones} and
+gym-pybullet-drones~\cite{pybulletdrones} target scalable, GPU-accelerated or
+lightweight RL-oriented multi-agent UAV training.
+While these systems are well suited to aerial autonomy in isolation, they
+generally lack realistic urban traffic populations, pedestrian interactions, and
+richly populated ground environments, limiting their use as infrastructure for
+air-ground cooperation or cross-domain data collection.
+
+\subsection{Joint and Co-Simulation Platforms}
+\label{sec:related:joint}
+
+The most relevant prior efforts attempt to combine aerial and ground simulation
+through co-simulation.
+TranSimHub~\cite{transimhub} connects CARLA with SUMO and aerial agents via a
+multi-process architecture supporting synchronized multi-view rendering.
+Other representative approaches include ROS-based pairings of AirSim with
+Gazebo~\cite{airsim,gazebo,ros2}.
+These systems demonstrate that heterogeneous simulation backends can be
+functionally connected, but their integration typically depends on bridges, RPC
+layers, or message-passing middleware across independent processes.
+As summarized in Table~\ref{tab:related_arch}, such designs do not preserve a
+single rendering pipeline, do not provide strict shared-tick execution, and
+often require adapting existing code to new interfaces.
+By contrast, CARLA-Air integrates both simulation backends within a single
+Unreal Engine process, preserving both native APIs while maintaining a shared
+world state, shared renderer, and synchronized sensing---a system-level
+distinction detailed in Section~\ref{sec:architecture}.
+
+\subsection{Embodied AI and Robot Learning Platforms}
+\label{sec:related:embodied}
+
+Embodied AI platforms prioritize a different design objective: scalable policy
+training rather than realistic urban air-ground infrastructure.
+Isaac Lab~\cite{isaaclab} and Isaac Gym~\cite{isaacgym} emphasize massively
+parallel GPU-accelerated reinforcement learning for locomotion and
+manipulation.
+Habitat~\cite{habitat} and SAPIEN~\cite{sapien} target indoor navigation and
+articulated object interaction, while RoboSuite~\cite{robosuite} focuses on
+tabletop manipulation benchmarks.
+These platforms are valuable for embodied intelligence research, but they do
+not provide the urban traffic realism, socially-aware pedestrian populations,
+or integrated aerial-ground simulation required by low-altitude cooperative
+robotics.
+In this sense, they address complementary research needs and are not direct
+substitutes for CARLA-Air.
+
+\subsection{Summary}
+\label{sec:related:summary}
+
+Fig.~\ref{fig:platform_positioning} positions CARLA-Air and representative
+platforms along two principal design axes: simulation fidelity and agent domain
+breadth.
+Driving simulators provide realistic urban ground environments without aerial
+dynamics; UAV simulators provide flight realism without populated ground
+worlds; joint simulators generally rely on multi-process bridging that
+sacrifices interface compatibility or synchronization fidelity; and embodied AI
+platforms focus on scalable learning rather than air-ground infrastructure.
+CARLA-Air is designed to sit at the intersection of these domains, combining
+realistic urban traffic, socially-aware pedestrians, physics-based multirotor
+flight, preserved native APIs, and single-process execution within one unified
+simulation environment.
+Table~\ref{tab:platform_comparison} provides a detailed feature-level comparison
+across all platforms discussed above.
+
+\input{figures/fig_platform_positioning}
+\input{figures/tab_platform_comparison}
+\input{figures/tab_related_arch}

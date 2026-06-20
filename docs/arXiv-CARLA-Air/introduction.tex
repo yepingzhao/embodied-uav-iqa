@@ -1,0 +1,124 @@
+% sections/introduction.tex
+% Included from main.tex via \input{sections/introduction}
+
+\section{Introduction}
+\label{sec:introduction}
+
+Three converging frontiers are reshaping autonomous systems research.
+The \emph{low-altitude economy} demands scalable infrastructure for urban air
+mobility, drone logistics, and aerial inspection.
+\emph{Embodied intelligence} requires agents that perceive and act in shared
+physical environments through vision, language, and control.
+\emph{Air-ground cooperative systems} bring these threads together, calling for
+heterogeneous robots that operate jointly across aerial and ground domains.
+Simulation is essential for advancing all three frontiers, as real-world
+deployment is costly, safety-critical, and difficult to scale.
+Yet no widely adopted open-source platform provides a unified infrastructure
+capable of jointly modeling aerial and ground agents within a single physically
+coherent environment.
+CARLA-Air is designed to fill this gap.
+
+\paragraph{The simulation landscape and its gap.}
+Existing open-source simulators address complementary domains without overlap.
+CARLA~\cite{carla}, built on Unreal Engine~4~\cite{ue4}, has become the de
+facto standard for urban autonomous driving research, offering photorealistic
+environments, rich traffic populations, and a mature Python API.
+AirSim~\cite{airsim}, also built on UE4, provides physics-accurate multirotor
+simulation with high-frequency dynamics and a comprehensive aerial sensor suite.
+The limitation of each platform is precisely the strength of the other: CARLA
+lacks aerial agents, while AirSim lacks realistic ground traffic and pedestrian
+interactions.
+Meanwhile, AirSim's upstream development has been archived by its original
+maintainers, leaving a widely adopted flight simulation stack without an active
+evolution path.
+Other simulators across driving, UAV, and embodied AI domains similarly remain
+confined to a single agent modality (see Section~\ref{sec:related} for a
+comprehensive survey).
+As a result, emerging workloads that span both air and ground
+domains---air-ground cooperation, cross-domain embodied navigation, joint
+multi-modal data collection, and cooperative reinforcement learning---lack a
+shared simulation foundation.
+
+\paragraph{Why not bridge-based co-simulation?}
+A common workaround connects heterogeneous simulators through bridge-based
+co-simulation, typically via ROS\,2~\cite{ros2} or custom message-passing
+interfaces.
+While functionally viable, such approaches introduce inter-process
+synchronization complexity, communication overhead, and duplicated rendering
+pipelines.
+More critically, independent simulation processes cannot guarantee strict
+spatial-temporal consistency across sensor streams---a requirement for
+perception, learning, and evaluation in embodied intelligence systems.
+Fig.~\ref{fig:ipc_overhead} quantifies the per-frame inter-process overhead
+contrast between bridge-based co-simulation and the single-process design
+adopted by CARLA-Air.
+
+\input{figures/ipc_plot}
+
+\paragraph{CARLA-Air: a unified infrastructure for air-ground embodied intelligence.}
+We present \textbf{CARLA-Air}, an open-source platform that integrates CARLA
+and AirSim within a single Unreal Engine process, purpose-built as a practical
+simulation foundation for air-ground embodied intelligence research.
+By inheriting and extending AirSim's aerial simulation capabilities within a
+modern, actively maintained infrastructure, CARLA-Air also provides a
+sustainable evolution path for the large body of existing AirSim-based research.
+Key capabilities of the platform include:
+
+\begin{enumerate}[leftmargin=*, label=(\roman*)]
+
+\item \textbf{Single-process air-ground integration.}
+CARLA-Air resolves a fundamental engine-level conflict---UE4 permits only one
+active game mode per world---through a composition-based design that inherits
+all ground simulation subsystems from CARLA while spawning AirSim's aerial
+flight actor as a regular world entity.
+This yields a shared physics tick, a shared rendering pipeline, and strict
+spatial-temporal consistency across all sensor viewpoints.
+
+\item \textbf{Full API compatibility and zero-modification code migration.}
+Both CARLA and AirSim native Python APIs and ROS\,2 interfaces are fully
+preserved, allowing existing research codebases to run on CARLA-Air without
+modification.
+
+\item \textbf{Photorealistic, physically coherent simulation world.}
+The platform delivers rich urban and natural environments populated with
+rule-compliant traffic flow, socially-aware pedestrians, and aerodynamically
+consistent multirotor dynamics, with synchronized capture of up to 18 sensor
+modalities across all aerial and ground platforms at each simulation tick.
+
+\item \textbf{Extensible asset pipeline.}
+Researchers can import custom robot platforms, UAV configurations, vehicles,
+and environment maps into the shared simulation world, enabling flexible
+construction of diverse air-ground interaction scenarios.
+
+\end{enumerate}
+
+\noindent Building on these capabilities, CARLA-Air provides out-of-the-box
+support for representative air-ground embodied intelligence workloads across
+four research directions:
+
+\begin{enumerate}[leftmargin=*, label=(\alph*)]
+
+\item \textbf{Air-ground cooperation}---heterogeneous aerial and ground agents
+coordinate within a shared environment for tasks such as cooperative
+surveillance, escort, and search-and-rescue.
+
+\item \textbf{Embodied navigation and vision-language action}---agents navigate
+and act grounded in visual and linguistic input, leveraging both aerial
+overview and ground-level detail.
+
+\item \textbf{Multi-modal perception and dataset construction}---synchronized
+aerial-ground sensor streams are collected at scale to build paired datasets
+for cross-view perception, 3D reconstruction, and scene understanding.
+
+\item \textbf{Reinforcement-learning-based policy training}---agents learn
+cooperative or individual policies through closed-loop interaction in
+physically consistent air-ground environments.
+
+\end{enumerate}
+
+\noindent As a lightweight and practical infrastructure, CARLA-Air lowers the
+barrier for developing and evaluating air-ground embodied intelligence systems,
+and provides a unified simulation foundation for emerging applications in
+low-altitude robotics, cross-domain autonomy, and large-scale embodied AI
+research.
+
