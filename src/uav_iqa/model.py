@@ -262,19 +262,26 @@ class UAVIQANet(nn.Module):
 
         import timm
 
-        valid_mobilenetv4 = timm.list_models("*mobilenetv4*")
-        if backbone not in valid_mobilenetv4:
+        # Validate backbone exists in timm
+        if backbone not in timm.list_models():
             raise ValueError(
-                f"Backbone {backbone} not found in timm. "
-                f"Available MobileNetV4 variants: {valid_mobilenetv4}"
+                f"Backbone '{backbone}' not found in timm. "
+                f"Use timm.list_models() to see available backbones."
             )
+
+        # Probe number of feature stages, then select last 3 as multi-scale output
+        probe = timm.create_model(backbone, pretrained=False, features_only=True)
+        with torch.no_grad():
+            n_stages = len(probe(torch.randn(1, 3, 256, 256)))
+        del probe
+        out_indices = tuple(range(max(0, n_stages - 3), n_stages))
 
         try:
             self.backbone = timm.create_model(
                 backbone,
                 pretrained=True,
                 features_only=True,
-                out_indices=(2, 3, 4),
+                out_indices=out_indices,
             )
         except Exception as e:
             _log = logging.getLogger(__name__)
@@ -286,7 +293,7 @@ class UAVIQANet(nn.Module):
                 backbone,
                 pretrained=False,
                 features_only=True,
-                out_indices=(2, 3, 4),
+                out_indices=out_indices,
             )
 
         dummy_in = torch.randn(1, 3, 256, 256)
