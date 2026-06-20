@@ -3,14 +3,14 @@
 import numpy as np
 
 from uav_iqa.distortion import (
-    UAVDistortionPipeline,
-    GenericDistortions,
-    PropellerVibrationBlur,
     AtmosphericScatteringHaze,
-    SixDoFViewpointBlur,
     CommunicationPacketLoss,
+    GenericDistortions,
     LowResSuperResolution,
     PropellerShadow,
+    PropellerVibrationBlur,
+    SixDoFViewpointBlur,
+    UAVDistortionPipeline,
 )
 
 
@@ -23,7 +23,7 @@ def _make_test_image(h=128, w=128):
 def test_pipeline_has_all_distortions():
     pipeline = UAVDistortionPipeline()
     all_names = pipeline.get_all_distortion_names()
-    assert len(all_names) >= 24  # 6 UAV + 18+ generic from Embodied-IQA catalog
+    assert len(all_names) >= 36  # 6 UAV + 30 generic (updated from 24)
     uav_names = pipeline.get_uav_distortion_names()
     assert len(uav_names) == 6
     assert "propeller_vibration_blur" in uav_names
@@ -129,7 +129,6 @@ def test_generic_blur():
 def test_generic_brightness():
     for name in [
         "brighten_max",
-        "brighten_min",
         "brighten_avg",
         "darken_max",
         "darken_min",
@@ -144,7 +143,14 @@ def test_generic_chromatic():
 
 
 def test_generic_noise():
-    for name in ["white_noise", "color_noise", "impulse_noise", "multiplicative_noise"]:
+    for name in [
+        "white_noise",
+        "color_noise",
+        "impulse_noise",
+        "multiplicative_noise",
+        "gaussian_denoise",
+        "cnn_denoise",
+    ]:
         _test_generic_distortion_cat(name, "noise")
 
 
@@ -154,7 +160,7 @@ def test_generic_compression():
 
 
 def test_generic_spatial():
-    for name in ["spatial_warp", "spatial_rotation", "spatial_scale", "spatial_shear"]:
+    for name in ["spatial_warp", "spatial_scale", "clock_jittering"]:
         _test_generic_distortion_cat(name, "spatial")
 
 
