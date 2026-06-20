@@ -15,24 +15,24 @@
 | **M2: Baseline Benchmark** |
 | R009-012 | M2 | All baseline methods | PSNR, SSIM, BRISQUE, NIQE, CLIP-IQA, etc. | 4,304 test | SRCC, PLCC, RMSE | MUST | RUNNING | CPU benchmark; 12 methods x 4304 imgs; pyiqa downloads may need HF_ENDPOINT fix |
 | **M3: Main Model Training** |
-| R013 | M3 | UAV-IQANet full training (seed 42,100,200) | UAV-IQANet (task-conditioned, 3-stage) | 34,425/4,303/4,304 | SRCC, PLCC, RMSE | MUST | RUNNING | GPU 1, batch=64, ~1.6 it/s; pretrained backbone FIXED (hf-mirror→huggingface.co); VLM stage SRCC=-0.086 early |
-| R014 | M3 | UAV-IQANet task-agnostic (3 seeds) | UAV-IQANet (w/o task embedding) | Same split, 3 seeds | SRCC, PLCC, RMSE | MUST | TODO | Queued after R013; --model.init_args.use_task_conditioning false |
+| R013 | M3 | UAV-IQANet full training (seed 42,100,200) | UAV-IQANet (task-conditioned, 3-stage) | 34,425/4,303/4,304 | SRCC, PLCC, RMSE | MUST | DEPLOYED | Full rerun via run_all_experiments.sh; outputs/r013_task_cond_seed<N>; SwanLab project=uav-iqa |
+| R014 | M3 | UAV-IQANet task-agnostic (3 seeds) | UAV-IQANet (w/o task embedding) | Same split, 3 seeds | SRCC, PLCC, RMSE | MUST | DEPLOYED | Full rerun via run_all_experiments.sh; outputs/r014_task_agnostic_seed<N> |
 | R015 | M3 | Main benchmark compilation | Merge R009-R014 results | — | All methods SRCC/PLCC/RMSE, significance tests | MUST | TODO | Only after R009-R014 complete |
-| R015A | M3 | Hyperparameter sweep | UAV-IQANet: lr ∈ {1e-4, 3e-4, 1e-3}, wd ∈ {0, 1e-5, 1e-4} | 80/20, 1 seed | Validation SRCC | NICE | TODO | Only if R013 SRCC < 0.55; cli args support exists |
+| R015A | M3 | Hyperparameter sweep | UAV-IQANet: lr ∈ {1e-4, 3e-4, 1e-3}, wd ∈ {0, 1e-5, 1e-4} | 80/20, 1 seed | Validation SRCC | NICE | TODO | Only if R013 SRCC < 0.55 |
 | **M4: Ablation Studies** |
-| R016 | M4 | W/o frequency branch (FAB) | UAV-IQANet minus FAB (patch FFT + tiny CNN) | Same split, 3 seeds | SRCC, PLCC (drop from R013) | MUST | CODE | --no-fab flag |
-| R017 | M4 | W/o task embedding | UAV-IQANet minus task embedding concatenation | Same split, 3 seeds | SRCC, PLCC (drop from R013) | MUST | CODE | --no-task-cond flag |
-| R018 | M4 | W/o CBAM attention | UAV-IQANet minus CBAM spatial-channel attention | Same split, 3 seeds | SRCC, PLCC (drop from R013) | MUST | CODE | --no-cbam flag |
-| R019 | M4 | MobileViT-S backbone | UAV-IQANet with MobileViT-S backbone (param-matched) | Same split, 3 seeds | SRCC, PLCC (vs. R013) | MUST | CODE | --backbone mobilevit_s |
-| R020 | M4 | EfficientViT-B0 backbone | UAV-IQANet with EfficientViT-B0 backbone (param-matched) | Same split, 3 seeds | SRCC, PLCC (vs. R013) | MUST | CODE | --backbone efficientvit_b0 |
-| R021 | M4 | Train on 18 generic only | UAV-IQANet trained on 18 generic distortions only | Same split, 3 seeds | SRCC, PLCC (drop from R013) | MUST | CODE | --distortion-filter generic |
-| R021b | M4 | Train on 6 UAV only | UAV-IQANet trained on 6 UAV distortions only | Same split, 3 seeds | SRCC, PLCC (ratio to R013) | MUST | CODE | --distortion-filter uav_only |
-| R022 | M4 | VLM-only curriculum | UAV-IQANet trained with VLM labels only (50 epochs) | Same split, 3 seeds | SRCC, PLCC (vs. R013) | NICE | CODE | --annotator-stage VLM only (skip 3-stage) |
-| R022b | M4 | VLA-only curriculum | UAV-IQANet trained with VLA labels only (50 epochs) | Same split, 3 seeds | SRCC, PLCC (vs. R013) | NICE | CODE | --annotator-stage VLA only |
-| R023 | M4 | W/o execution layer | UAV-IQANet trained without SITL execution stage | Same split, 3 seeds | SRCC, PLCC (drop from R013) | NICE | CODE | Shorter 3-stage curriculum without exec stage |
-| R024a | M4 | Cross-task zero-shot gen. | Train task A → test B/C/D (4×3 matrix, 3 seeds) | Per-task splits | SRCC matrix | MUST | CODE | --task <name> --val-task <name> |
-| R024b | M4 | Leave-one-task-out | Train 3 tasks → test 4th (×4, 3 seeds each) | Per-config split | SRCC per held-out task | MUST | CODE | --leave-out <task> |
-| R024c | M4 | Multi-task joint training | Train all 4 tasks jointly | 80/20 stratified, 3 seeds | Average SRCC | MUST | CODE | Default mode (no --task flag) |
+| R016 | M4 | W/o frequency branch (FAB) | UAV-IQANet minus FAB (patch FFT + tiny CNN) | Same split, 3 seeds | SRCC, PLCC (drop from R013) | MUST | DEPLOYED | Full rerun via run_all_experiments.sh; outputs/r016_no_fab_seed<N> |
+| R017 | M4 | W/o task embedding | UAV-IQANet minus task embedding concatenation | Same split, 3 seeds | SRCC, PLCC (drop from R013) | MUST | DEPLOYED | Full rerun via run_all_experiments.sh; outputs/r017_no_task_cond_seed<N> |
+| R018 | M4 | W/o CBAM attention | UAV-IQANet minus CBAM spatial-channel attention | Same split, 3 seeds | SRCC, PLCC (drop from R013) | MUST | DEPLOYED | Full rerun via run_all_experiments.sh; outputs/r018_no_cbam_seed<N> |
+| R019 | M4 | MobileViT-S backbone | UAV-IQANet with MobileViT-S backbone (param-matched) | Same split, 3 seeds | SRCC, PLCC (vs. R013) | MUST | DEPLOYED | Full rerun via run_all_experiments.sh; outputs/r019_mobilevit_s_seed<N> |
+| R020 | M4 | EfficientViT-B0 backbone | UAV-IQANet with EfficientViT-B0 backbone (param-matched) | Same split, 3 seeds | SRCC, PLCC (vs. R013) | MUST | DEPLOYED | Full rerun via run_all_experiments.sh; outputs/r020_efficientvit_b0_seed<N> |
+| R021 | M4 | Train on 18 generic only | UAV-IQANet trained on 18 generic distortions only | Same split, 3 seeds | SRCC, PLCC (drop from R013) | MUST | DEPLOYED | Full rerun via run_all_experiments.sh; outputs/r021_generic_only_seed<N> |
+| R021b | M4 | Train on 6 UAV only | UAV-IQANet trained on 6 UAV distortions only | Same split, 3 seeds | SRCC, PLCC (ratio to R013) | MUST | DEPLOYED | Full rerun via run_all_experiments.sh; outputs/r021b_uav_only_seed<N> |
+| R022 | M4 | VLM-only curriculum | UAV-IQANet trained with VLM labels only (50 epochs) | Same split, 3 seeds | SRCC, PLCC (vs. R013) | NICE | DEPLOYED | --all mode; outputs/r022_vlm_only_seed<N> |
+| R022b | M4 | VLA-only curriculum | UAV-IQANet trained with VLA labels only (50 epochs) | Same split, 3 seeds | SRCC, PLCC (vs. R013) | NICE | DEPLOYED | --all mode; outputs/r022b_vla_only_seed<N> |
+| R023 | M4 | W/o execution layer | UAV-IQANet trained without SITL execution stage | Same split, 3 seeds | SRCC, PLCC (drop from R013) | NICE | DEPLOYED | --all mode; outputs/r023_no_exec_seed<N> |
+| R024a | M4 | Cross-task zero-shot gen. | Train task A → test B/C/D (4×3 matrix, 3 seeds) | Per-task splits | SRCC matrix | MUST | DEPLOYED | Full rerun via run_all_experiments.sh; outputs/r024a_<task>_seed<N> |
+| R024b | M4 | Leave-one-task-out | Train 3 tasks → test 4th (×4, 3 seeds each) | Per-config split | SRCC per held-out task | MUST | DEPLOYED | Full rerun via run_all_experiments.sh; outputs/r024b_leave_<task>_seed<N> |
+| R024c | M4 | Multi-task joint training | Train all 4 tasks jointly | 80/20 stratified, 3 seeds | Average SRCC | MUST | DEPLOYED | Full rerun via run_all_experiments.sh; outputs/r024c_multitask_seed<N> |
 | **M5: Real-UAV Validation (parallel)** |
 | R025 | M5 | Gate: 20 flights | Scattering (10 flights) + vibration (10 flights) | Real vs. synthetic pairs | SRCC (synthetic vs. real ΔVLA) | MUST | TODO | Gate criterion: SRCC > 0.5 to proceed |
 | R026 | M5 | Full: 30 flights | 6DoF blur, packet loss, SR artifacts, propeller shadow | Real vs. synthetic pairs | SRCC per distortion, overall SRCC | MUST | TODO | Only if R025 gate passes |
