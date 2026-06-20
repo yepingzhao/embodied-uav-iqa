@@ -96,9 +96,7 @@ class IQAEvaluator:
         if not ref_path:
             return 0.0
         ref = np.array(Image.open(Path(data_dir) / ref_path).convert("RGB"))
-        return peak_signal_noise_ratio(
-            ref, (img_np * 255).astype(np.uint8), data_range=255
-        )
+        return peak_signal_noise_ratio(ref, (img_np * 255).astype(np.uint8), data_range=255)
 
     @staticmethod
     def ssim(data_dir, img_np, img_t, ref_path):
@@ -197,19 +195,20 @@ class IQAEvaluator:
 
 
 # Registry: name -> (category, needs_instance, can_finetune)
+# can_finetune=True means scripts/finetune_baselines.py supports it (NR methods via pyiqa)
 AVAILABLE_METHODS = {
     "psnr": ("FR", False, False),
     "ssim": ("FR", False, False),
     "ms_ssim": ("FR", False, False),
-    "lpips_alex": ("FR", True, True),
-    "lpips_vgg": ("FR", True, True),
-    "ahiq": ("FR", True, True),
-    "topiq_fr": ("FR", True, True),
+    "lpips_alex": ("FR", True, False),
+    "lpips_vgg": ("FR", True, False),
+    "ahiq": ("FR", True, False),
+    "topiq_fr": ("FR", True, False),
     "brisque": ("NR", True, True),
     "niqe": ("NR", True, True),
     "clip_iqa": ("NR", True, True),
     "maniqa": ("NR", True, True),
-    "q_align": ("NR", True, True),
+    "q_align": ("NR", True, False),
     "topiq_nr": ("NR", True, True),
 }
 
@@ -256,7 +255,7 @@ def load_finetuned_checkpoint(ckpt_path: str, device: torch.device):
     model_state = {}
     for k, v in state_dict.items():
         if k.startswith("model."):
-            model_state[k[len("model."):]] = v
+            model_state[k[len("model.") :]] = v
 
     if not model_state:
         _log.warning("  Checkpoint has no 'model.*' keys")
@@ -359,22 +358,22 @@ def run_benchmark(
             "per_task": per_task,
             "per_distortion_category": per_cat,
         }
-        _log.info(
-            "    Zero-shot  SRCC=%.4f PLCC=%.4f", metrics["srcc"], metrics["plcc"]
-        )
+        _log.info("    Zero-shot  SRCC=%.4f PLCC=%.4f", metrics["srcc"], metrics["plcc"])
 
         # --- Fine-tuned (if available) ---
         if method_name in finetuned_models:
             _log.info("  Running %s (%s, fine-tuned)...", method_name, cat)
             ft_model = finetuned_models[method_name]
-            is_fr = (cat == "FR")
+            is_fr = cat == "FR"
 
             ft_preds = []
             with torch.no_grad():
                 for i, s in enumerate(manifest):
-                    img_t = load_image_tensor(
-                        Path(data_dir) / s["path"], image_size
-                    ).unsqueeze(0).to(device)
+                    img_t = (
+                        load_image_tensor(Path(data_dir) / s["path"], image_size)
+                        .unsqueeze(0)
+                        .to(device)
+                    )
 
                     ref_t = None
                     if is_fr:
@@ -382,7 +381,9 @@ def run_benchmark(
                         if ref_path:
                             ref_img = Image.open(Path(data_dir) / ref_path).convert("RGB")
                             ref_np = np.array(ref_img).astype(np.float32) / 255.0
-                            ref_t = torch.from_numpy(ref_np).permute(2, 0, 1).unsqueeze(0).to(device)
+                            ref_t = (
+                                torch.from_numpy(ref_np).permute(2, 0, 1).unsqueeze(0).to(device)
+                            )
 
                     try:
                         if is_fr and ref_t is not None:
@@ -413,9 +414,7 @@ def run_benchmark(
                 "per_task": ft_per_task,
                 "per_distortion_category": ft_per_cat,
             }
-            _log.info(
-                "    Fine-tuned SRCC=%.4f PLCC=%.4f", ft_metrics["srcc"], ft_metrics["plcc"]
-            )
+            _log.info("    Fine-tuned SRCC=%.4f PLCC=%.4f", ft_metrics["srcc"], ft_metrics["plcc"])
 
     return results
 
@@ -423,9 +422,7 @@ def run_benchmark(
 def main():
     parser = argparse.ArgumentParser(description="Benchmark existing IQA methods")
     parser.add_argument("--data-dir", default="data/processed", help="Database root")
-    parser.add_argument(
-        "--output-dir", default="outputs/benchmark", help="Output directory"
-    )
+    parser.add_argument("--output-dir", default="outputs/benchmark", help="Output directory")
     parser.add_argument(
         "--methods",
         nargs="+",
@@ -433,9 +430,7 @@ def main():
         help="Methods to benchmark",
     )
     parser.add_argument("--image-size", type=int, default=256)
-    parser.add_argument(
-        "--max-samples", type=int, default=0, help="Limit samples (0 = all)"
-    )
+    parser.add_argument("--max-samples", type=int, default=0, help="Limit samples (0 = all)")
     parser.add_argument("--device", default="cpu", help="Torch device (cuda, cpu, mps)")
     parser.add_argument(
         "--finetuned-dir",
@@ -489,9 +484,7 @@ def main():
     for name in sorted(results.keys(), key=lambda n: results[n]["srcc"], reverse=True):
         r = results[name]
         uav_srcc = r.get("per_distortion_category", {}).get("UAV", {}).get("srcc", 0)
-        gen_srcc = (
-            r.get("per_distortion_category", {}).get("Generic", {}).get("srcc", 0)
-        )
+        gen_srcc = r.get("per_distortion_category", {}).get("Generic", {}).get("srcc", 0)
         ft_label = "Yes" if r.get("finetuned") else "No"
         _log.info(
             "%-24s %-5s %-8s %8.4f %8.4f %12.4f %12.4f",
