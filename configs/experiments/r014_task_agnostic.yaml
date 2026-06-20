@@ -32,14 +32,16 @@ trainer:
   gradient_clip_val: 1.0
   log_every_n_steps: 10
   enable_progress_bar: true
+  default_root_dir: outputs/r014_task_agnostic
   logger:
+  - class_path: lightning.pytorch.loggers.CSVLogger
+    init_args:
+      save_dir: outputs
+      name: r014_task_agnostic
   - class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
       project: uav-iqa
       name: r014_task_agnostic
-      save_dir: outputs/r014_task_agnostic
-  - class_path: lightning.pytorch.loggers.CSVLogger
-    init_args:
       save_dir: outputs/r014_task_agnostic
   callbacks:
   - class_path: uav_iqa.callbacks.SetupRunCallback
@@ -48,12 +50,21 @@ trainer:
       vlm_epochs: 20
       vla_epochs: 20
       execution_epochs: 10
-  - class_path: uav_iqa.callbacks.MetricsHistoryCallback
   - class_path: lightning.pytorch.callbacks.ModelCheckpoint
     init_args:
+      dirpath: null
+      filename: epoch_{epoch:03d}
+      every_n_epochs: 5
+      save_top_k: -1
+  - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+    init_args:
+      dirpath: null
+      filename: best_{val/srcc:.4f}
       monitor: val/srcc
       mode: max
       save_top_k: 1
-      filename: best_model
-  - class_path: uav_iqa.callbacks.ResultsSavingCallback
-  default_root_dir: outputs/r014_task_agnostic
+  - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+    init_args:
+      dirpath: null
+      filename: last
+      save_last: true
