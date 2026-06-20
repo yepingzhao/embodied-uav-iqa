@@ -1,0 +1,54 @@
+r013_task_cond status=running
+r013_task_cond status=running
+r013_task_cond status=running
+r014_task_agnostic status=running
+r014_task_agnostic status=running
+r014_task_agnostic status=running
+r016_no_fab seed=100 pri=must outdir=outputs/r016_no_fab_seed100 status=pending
+r016_no_fab seed=200 pri=must outdir=outputs/r016_no_fab_seed200 status=pending
+r016_no_fab seed=42 pri=must outdir=outputs/r016_no_fab_seed42 status=pending
+r017_no_task_cond seed=100 pri=must outdir=outputs/r017_no_task_cond_seed100 status=pending
+r017_no_task_cond seed=200 pri=must outdir=outputs/r017_no_task_cond_seed200 status=pending
+r017_no_task_cond seed=42 pri=must outdir=outputs/r017_no_task_cond_seed42 status=pending
+r018_no_cbam seed=100 pri=must outdir=outputs/r018_no_cbam_seed100 status=pending
+r018_no_cbam seed=200 pri=must outdir=outputs/r018_no_cbam_seed200 status=pending
+r018_no_cbam seed=42 pri=must outdir=outputs/r018_no_cbam_seed42 status=pending
+r019_mobilevit_s seed=100 pri=must outdir=outputs/r019_mobilevit_s_seed100 status=pending
+r019_mobilevit_s seed=200 pri=must outdir=outputs/r019_mobilevit_s_seed200 status=pending
+r019_mobilevit_s seed=42 pri=must outdir=outputs/r019_mobilevit_s_seed42 status=pending
+r020_efficientvit_b0 seed=100 pri=must outdir=outputs/r020_efficientvit_b0_seed100 status=pending
+r020_efficientvit_b0 seed=200 pri=must outdir=outputs/r020_efficientvit_b0_seed200 status=pending
+r020_efficientvit_b0 seed=42 pri=must outdir=outputs/r020_efficientvit_b0_seed42 status=pending
+r021b_uav_only seed=100 pri=must outdir=outputs/r021b_uav_only_seed100 status=pending
+r021b_uav_only seed=200 pri=must outdir=outputs/r021b_uav_only_seed200 status=pending
+r021b_uav_only seed=42 pri=must outdir=outputs/r021b_uav_only_seed42 status=pending
+r021_generic_only seed=100 pri=must outdir=outputs/r021_generic_only_seed100 status=pending
+r021_generic_only seed=200 pri=must outdir=outputs/r021_generic_only_seed200 status=pending
+r021_generic_only seed=42 pri=must outdir=outputs/r021_generic_only_seed42 status=pending
+r024a_delivery seed=100 pri=must outdir=outputs/r024a_delivery_seed100 status=pending
+r024a_delivery seed=200 pri=must outdir=outputs/r024a_delivery_seed200 status=pending
+r024a_delivery seed=42 pri=must outdir=outputs/r024a_delivery_seed42 status=pending
+r024a_inspection seed=100 pri=must outdir=outputs/r024a_inspection_seed100 status=pending
+r024a_inspection seed=200 pri=must outdir=outputs/r024a_inspection_seed200 status=pending
+r024a_inspection seed=42 pri=must outdir=outputs/r024a_inspection_seed42 status=pending
+r024a_sar seed=100 pri=must outdir=outputs/r024a_sar_seed100 status=pending
+r024a_sar seed=200 pri=must outdir=outputs/r024a_sar_seed200 status=pending
+r024a_sar seed=42 pri=must outdir=outputs/r024a_sar_seed42 status=pending
+r024a_tracking seed=100 pri=must outdir=outputs/r024a_tracking_seed100 status=pending
+r024a_tracking seed=200 pri=must outdir=outputs/r024a_tracking_seed200 status=pending
+r024a_tracking seed=42 pri=must outdir=outputs/r024a_tracking_seed42 status=pending
+r024b_leave_delivery seed=100 pri=must outdir=outputs/r024b_leave_delivery_seed100 status=pending
+r024b_leave_delivery seed=200 pri=must outdir=outputs/r024b_leave_delivery_seed200 status=pending
+r024b_leave_delivery seed=42 pri=must outdir=outputs/r024b_leave_delivery_seed42 status=pending
+r024b_leave_inspection seed=100 pri=must outdir=outputs/r024b_leave_inspection_seed100 status=pending
+r024b_leave_inspection seed=200 pri=must outdir=outputs/r024b_leave_inspection_seed200 status=pending
+r024b_leave_inspection seed=42 pri=must outdir=outputs/r024b_leave_inspection_seed42 status=pending
+r024b_leave_sar seed=100 pri=must outdir=outputs/r024b_leave_sar_seed100 status=pending
+r024b_leave_sar seed=200 pri=must outdir=outputs/r024b_leave_sar_seed200 status=pending
+r024b_leave_sar seed=42 pri=must outdir=outputs/r024b_leave_sar_seed42 status=pending
+r024b_leave_tracking seed=100 pri=must outdir=outputs/r024b_leave_tracking_seed100 status=pending
+r024b_leave_tracking seed=200 pri=must outdir=outputs/r024b_leave_tracking_seed200 status=pending
+r024b_leave_tracking seed=42 pri=must outdir=outputs/r024b_leave_tracking_seed42 status=pending
+r024c_multitask seed=100 pri=must outdir=outputs/r024c_multitask_seed100 status=pending
+r024c_multitask seed=200 pri=must outdir=outputs/r024c_multitask_seed200 status=pending
+r024c_multitask seed=42 pri=must outdir=outputs/r024c_multitask_seed42 status=pending
