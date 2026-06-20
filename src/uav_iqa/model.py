@@ -242,12 +242,9 @@ class UAVIQANet(nn.Module):
     Total: ~5.4M params, INT8 quantized ~1.4MB.
     """
 
-    TASK_MAP = {
-        "tracking": 0,
-        "inspection": 1,
-        "delivery": 2,
-        "sar": 3,
-    }
+    from .dataset import TASK_TO_ID
+
+    TASK_MAP = TASK_TO_ID
 
     def __init__(
         self,

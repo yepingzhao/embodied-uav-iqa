@@ -1,4 +1,4 @@
-import json
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -6,13 +6,13 @@ import lightning as L
 from torch.utils.data import DataLoader
 
 from .dataset import UAVIQADataset
-from .distortion import UAVDistortionPipeline
+from .distortion import UAV_DISTORTION_NAMES
+
+_log = logging.getLogger(__name__)
 
 
 class UAVIQDataModule(L.LightningDataModule):
     """LightningDataModule wrapping UAVIQADataset with manifest filtering."""
-
-    UAV_DISTORTIONS = set(UAVDistortionPipeline.get_uav_distortion_names())
 
     def __init__(
         self,
@@ -49,20 +49,24 @@ class UAVIQDataModule(L.LightningDataModule):
         self.test_dataset: Optional[UAVIQADataset] = None
 
     def _load_and_filter(self, split: str, task_override: Optional[str] = None) -> list:
+        from uav_iqa.utils import load_manifest
+
         manifest_path = self.data_root / split / "manifest.json"
         if not manifest_path.exists():
-            print(
-                f"[WARNING] Manifest not found: {manifest_path} — {split} split will be empty"
+            _log.warning(
+                "Manifest not found: %s — %s split will be empty", manifest_path, split
             )
             return []
-        with open(manifest_path) as f:
-            samples = json.load(f)
+        samples = load_manifest(manifest_path)
         filtered = self._filter_manifest(samples, task=task_override)
         if len(filtered) == 0 and len(samples) > 0:
-            print(
-                f"[WARNING] All {len(samples)} {split} samples were filtered out "
-                f"(task={self.task}, distortion_filter={self.distortion_filter}, "
-                f"leave_out_task={self.leave_out_task})"
+            _log.warning(
+                "All %d %s samples were filtered out (task=%s, distortion_filter=%s, leave_out_task=%s)",
+                len(samples),
+                split,
+                self.task,
+                self.distortion_filter,
+                self.leave_out_task,
             )
         return filtered
 
@@ -82,10 +86,10 @@ class UAVIQDataModule(L.LightningDataModule):
                 continue
 
             if self.distortion_filter == "generic":
-                if sample_dist in self.UAV_DISTORTIONS:
+                if sample_dist in UAV_DISTORTION_NAMES:
                     continue
             elif self.distortion_filter == "uav_only":
-                if sample_dist not in self.UAV_DISTORTIONS:
+                if sample_dist not in UAV_DISTORTION_NAMES:
                     continue
 
             filtered.append(s)

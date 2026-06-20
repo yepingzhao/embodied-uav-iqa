@@ -8,9 +8,9 @@ import re
 from pathlib import Path
 from typing import Optional, Tuple
 
-_log = logging.getLogger(__name__)
+from .dataset import TASK_NAMES
 
-TASK_NAMES = ["tracking", "inspection", "delivery", "sar"]
+_log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------

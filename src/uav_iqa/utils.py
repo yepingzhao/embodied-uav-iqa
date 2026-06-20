@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import torch
+from PIL import Image
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
 
@@ -48,6 +50,17 @@ def find_images(
     return images
 
 
+def load_image_tensor(path: Path, image_size: int = 256) -> torch.Tensor:
+    """Load an image and convert to (C, H, W) float tensor in [0, 1].
+
+    Used by both UAVIQADataset and benchmark scripts.
+    """
+    image = Image.open(path).convert("RGB")
+    image = image.resize((image_size, image_size), Image.Resampling.BILINEAR)
+    arr = np.array(image).astype(np.float32) / 255.0
+    return torch.from_numpy(arr).permute(2, 0, 1)
+
+
 def count_parameters(model) -> tuple:
     """Return (total_params, trainable_params) for the given model."""
     total = sum(p.numel() for p in model.parameters())
@@ -84,6 +97,16 @@ def split_samples(
         "val": [samples[i] for i in indices[train_end:val_end]],
         "test": [samples[i] for i in indices[val_end:]],
     }
+
+
+def load_manifest(manifest_path: Path) -> list[dict]:
+    """Load manifest entries from a JSON file.
+
+    Returns the parsed list of entries. The caller is responsible for
+    checking that the file exists before calling.
+    """
+    with open(manifest_path) as f:
+        return json.load(f)
 
 
 def write_manifest(entries: list, manifest_path: Path, _log=None) -> int:

@@ -19,7 +19,7 @@ from typing import Optional
 
 import numpy as np
 
-from uav_iqa.annotation_utils import (
+from uav_iqa.annotations import (
     assign_task_label,
     build_ref_score_lookup,
     degradation_factor,
@@ -246,7 +246,7 @@ class AirCopBenchFormat(DatasetFormat):
 
         Returns (annotation_summary, ref_path_lookup).
         """
-        from uav_iqa.annotation_utils import parse_quality_score, parse_usability
+        from uav_iqa.annotations import parse_quality_score, parse_usability
 
         annotation_summary: dict[str, dict] = {}
         ref_path_lookup: dict[str, str] = {}

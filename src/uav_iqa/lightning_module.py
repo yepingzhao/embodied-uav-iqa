@@ -5,9 +5,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from .distortion import UAVDistortionPipeline
-from .evaluate import (
-    compute_metrics,
+from .distortion import UAV_DISTORTION_NAMES
+from .metrics import (
     evaluate_iqa,
     per_distortion_metrics,
     per_task_metrics,
@@ -21,8 +20,6 @@ class UAVIQALightningModule(L.LightningModule):
 
     All __init__ parameters are flat basic types for jsonargparse/LightningCLI compatibility.
     """
-
-    UAV_DISTORTIONS = set(UAVDistortionPipeline.get_uav_distortion_names())
 
     def __init__(
         self,
@@ -151,13 +148,13 @@ class UAVIQALightningModule(L.LightningModule):
         targets = np.concatenate(self._val_targets)
 
         metrics = evaluate_iqa(preds, targets)
-        self.log("val/srcc", metrics["SRCC"], prog_bar=True)
-        self.log("val/plcc", metrics["PLCC"])
-        self.log("val/krcc", metrics["KendallTau"])
+        self.log("val/srcc", metrics["srcc"], prog_bar=True)
+        self.log("val/plcc", metrics["plcc"])
+        self.log("val/krcc", metrics["kendall_tau"])
 
         # Per-task validation metrics
         if self._val_tasks:
-            per_task = per_task_metrics(targets, preds, self._val_tasks)
+            per_task = per_task_metrics(preds, targets, self._val_tasks)
             self.val_per_task_srcc = {
                 name: info["srcc"] for name, info in per_task.items()
             }
@@ -168,16 +165,16 @@ class UAVIQALightningModule(L.LightningModule):
         if self._val_distortions:
             per_dist = per_distortion_metrics(preds, targets, self._val_distortions)
             self.val_per_distortion_srcc = {
-                d: info.get("SRCC", 0.0) for d, info in per_dist.items()
+                d: info.get("srcc", 0.0) for d, info in per_dist.items()
             }
             # Only log aggregated by distortion family to avoid metric explosion
             uav_srccs = []
             generic_srccs = []
             for d, info in per_dist.items():
-                if d in UAVIQALightningModule.UAV_DISTORTIONS:
-                    uav_srccs.append(info.get("SRCC", 0))
+                if d in UAV_DISTORTION_NAMES:
+                    uav_srccs.append(info.get("srcc", 0))
                 else:
-                    generic_srccs.append(info.get("SRCC", 0))
+                    generic_srccs.append(info.get("srcc", 0))
             if uav_srccs:
                 self.log("val/srcc_uav", float(np.mean(uav_srccs)))
             if generic_srccs:
@@ -211,8 +208,8 @@ class UAVIQALightningModule(L.LightningModule):
         all_targets = np.concatenate(self._test_targets)
 
         metrics = evaluate_iqa(all_preds, all_targets)
-        self.log("test/srcc", metrics["SRCC"])
-        self.log("test/plcc", metrics["PLCC"])
+        self.log("test/srcc", metrics["srcc"])
+        self.log("test/plcc", metrics["plcc"])
 
         self._test_results = {
             "all_preds": all_preds,
@@ -260,7 +257,7 @@ class UAVIQALightningModule(L.LightningModule):
             return {}
 
         r = self._test_results
-        metrics = compute_metrics(r["all_targets"], r["all_preds"])
+        metrics = evaluate_iqa(r["all_preds"], r["all_targets"])
 
         results = {
             "test_metrics": metrics,
@@ -270,7 +267,7 @@ class UAVIQALightningModule(L.LightningModule):
 
         if r["tasks"]:
             results["per_task"] = per_task_metrics(
-                r["all_targets"], r["all_preds"], r["tasks"]
+                r["all_preds"], r["all_targets"], r["tasks"]
             )
 
         if r["distortions"]:

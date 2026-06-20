@@ -679,3 +679,7 @@ class UAVDistortionPipeline:
             f"{results['failed']} failed"
         )
         return results
+
+
+# Module-level constant — computed once, import everywhere
+UAV_DISTORTION_NAMES = frozenset(UAVDistortionPipeline.get_uav_distortion_names())

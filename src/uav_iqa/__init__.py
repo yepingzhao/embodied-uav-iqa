@@ -9,16 +9,16 @@ from .distortion import (
 )
 from .model import UAVIQANet
 from .dataset import UAVIQADataset, validate_manifest
-from .evaluate import (
+from .metrics import (
     compute_srcc,
     compute_plcc,
     evaluate_iqa,
     per_distortion_category_metrics,
 )
-from .lightning_model import UAVIQALightningModule
-from .lightning_data import UAVIQDataModule
+from .lightning_module import UAVIQALightningModule
+from .data_module import UAVIQDataModule
 from .losses import ListMLELoss, CrossTaskRegularization
-from .annotation_utils import (
+from .annotations import (
     parse_distortion_key,
     parse_quality_score,
     parse_usability,
@@ -31,6 +31,7 @@ from .annotation_utils import (
 from .utils import (
     setup_logging,
     load_task_map,
+    load_manifest,
     split_samples,
     write_manifest,
     find_images,
@@ -72,6 +73,7 @@ __all__ = [
     "synthetic_ref_scores",
     "setup_logging",
     "load_task_map",
+    "load_manifest",
     "split_samples",
     "write_manifest",
     "find_images",

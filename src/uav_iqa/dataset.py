@@ -4,23 +4,14 @@ from typing import Optional
 
 import numpy as np
 import torch
-from PIL import Image
 from torch.utils.data import Dataset
 
 _log = logging.getLogger(__name__)
 
 MANIFEST_REQUIRED_FIELDS = {"path", "task", "distortion", "intensity_level"}
-MANIFEST_OPTIONAL_FIELDS = {
-    "ref_id",
-    "ref_path",
-    "original",
-    "vlm_score",
-    "vla_score",
-    "execution_score",
-    "annotated",
-    "degradation_types",
-}
-VALID_TASKS = {"tracking", "inspection", "delivery", "sar"}
+TASK_NAMES = ("tracking", "inspection", "delivery", "sar")
+TASK_TO_ID = {name: i for i, name in enumerate(TASK_NAMES)}
+VALID_TASKS = set(TASK_NAMES)
 
 
 def validate_manifest(manifest_path: Path) -> dict:
@@ -111,7 +102,7 @@ class UAVIQADataset(Dataset):
     Loads distorted image pairs with VLM/VLA/execution annotations.
     """
 
-    TASK_MAP = {"tracking": 0, "inspection": 1, "delivery": 2, "sar": 3}
+    TASK_MAP = TASK_TO_ID
 
     def __init__(
         self,
@@ -145,22 +136,25 @@ class UAVIQADataset(Dataset):
             self.samples = self._load_manifest()
 
     def _load_manifest(self) -> list:
+        from uav_iqa.utils import load_manifest
+
         manifest_path = self.data_root / self.split / "manifest.json"
         if not manifest_path.exists():
             return []
-        import json
-
-        with open(manifest_path) as f:
-            return json.load(f)
+        return load_manifest(manifest_path)
 
     def __len__(self) -> int:
         return len(self.samples)
 
     def __getitem__(self, idx: int) -> dict:
+        from uav_iqa.utils import load_image_tensor
+
         sample = self.samples[idx]
 
         try:
-            image = Image.open(self.data_root / sample["path"]).convert("RGB")
+            image = load_image_tensor(
+                self.data_root / sample["path"], self.image_size
+            )
         except (OSError, IOError, Exception):
             path = sample.get("path", "?")
             if (
@@ -169,13 +163,7 @@ class UAVIQADataset(Dataset):
             ):
                 self._warned_corrupt_image.add(path)
                 _log.warning(f"Corrupted or missing image replaced with blank: {path}")
-            image = Image.new("RGB", (self.image_size, self.image_size))
-
-        image = image.resize(
-            (self.image_size, self.image_size), Image.Resampling.BILINEAR
-        )
-        image = np.array(image).astype(np.float32) / 255.0
-        image = torch.from_numpy(image).permute(2, 0, 1)
+            image = torch.zeros(3, self.image_size, self.image_size)
 
         if self.augment:
             image = self._augment(image)
