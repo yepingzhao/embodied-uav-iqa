@@ -19,6 +19,7 @@ def main():
         UAVIQALightningModule,
         UAVIQDataModule,
         args=None,  # parse sys.argv
+        save_config_callback=None,  # Disable auto-saving ./config.yaml (configs are in YAML)
     )
 
 
