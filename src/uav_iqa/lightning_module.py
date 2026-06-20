@@ -81,7 +81,7 @@ class UAVIQALightningModule(L.LightningModule):
     ) -> torch.Tensor:
         return self.model(x, task_ids)
 
-    def training_step(self, batch: Dict, batch_idx: int) -> torch.Tensor:
+    def training_step(self, batch: Dict, _: int) -> torch.Tensor:
         images = batch["image"]
         task_ids = batch["task_id"]
         score_key = f"{self.curriculum_stage}_score"
@@ -116,16 +116,16 @@ class UAVIQALightningModule(L.LightningModule):
             loss_mse + self.lambda_rank * loss_rank + self.lambda_cross_task * loss_ct
         )
 
-        self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("train/mse", loss_mse, on_step=False, on_epoch=True)
+        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("train/mse", loss_mse, on_step=True, on_epoch=True)
         if loss_rank > 0:
-            self.log("train/rank", loss_rank, on_step=False, on_epoch=True)
+            self.log("train/rank", loss_rank, on_step=True, on_epoch=True)
         if loss_ct > 0:
-            self.log("train/cross_task", loss_ct, on_step=False, on_epoch=True)
+            self.log("train/cross_task", loss_ct, on_step=True, on_epoch=True)
 
         return loss
 
-    def validation_step(self, batch: Dict, batch_idx: int) -> None:
+    def validation_step(self, batch: Dict, _: int) -> None:
         images = batch["image"]
         task_ids = batch["task_id"]
         eval_stage = self.annotator_stage
@@ -185,7 +185,7 @@ class UAVIQALightningModule(L.LightningModule):
         self._val_tasks.clear()
         self._val_distortions.clear()
 
-    def test_step(self, batch: Dict, batch_idx: int) -> None:
+    def test_step(self, batch: Dict, _: int) -> None:
         images = batch["image"]
         task_ids = batch["task_id"]
         eval_stage = self.annotator_stage

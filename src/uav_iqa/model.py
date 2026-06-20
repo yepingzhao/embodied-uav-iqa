@@ -1,5 +1,6 @@
 import logging
 import math
+import re
 from typing import Optional
 
 import torch
@@ -336,17 +337,40 @@ class UAVIQANet(nn.Module):
             self._freeze_backbone_stages(freeze_backbone_stage)
 
     def _freeze_backbone_stages(self, num_stages: int):
+        """Freeze early backbone stages via regex across naming conventions.
+
+        Supports: ``blocks.N`` (MobileNetV4, EfficientViT),
+        ``stages.N`` (generic timm), ``stages_N`` (MobileViT),
+        and stem/bn/conv_stem prefixes.
+        """
         frozen_count = 0
+        # Match numbered stage/block prefixes: blocks.0.xxx, stages_2.xxx, etc.
+        stage_pat = re.compile(r"(?:^|\.)(?:blocks|stages)[._](\d+)\.")
         for name, param in self.backbone.named_parameters():
-            if any(f"stages.{i}" in name for i in range(num_stages)):
+            stage_match = stage_pat.search(name)
+            if stage_match and int(stage_match.group(1)) < num_stages:
                 param.requires_grad = False
                 frozen_count += 1
+            # Freeze initial stem / first-bn params (always stage 0)
+            elif stage_match is None and num_stages > 0:
+                prefix = name.split(".")[0]
+                if prefix in ("conv_stem", "bn1", "stem"):
+                    param.requires_grad = False
+                    frozen_count += 1
+
+        _log = logging.getLogger(__name__)
         if frozen_count == 0:
-            _log = logging.getLogger(__name__)
+            sample_names = list(
+                dict(self.backbone.named_parameters()).keys()
+            )[:5]
             _log.warning(
-                f"No parameters matched freeze pattern 'stages.N' — "
-                f"backbone {self.backbone.__class__.__name__} may use different naming."
+                "No parameters matched freeze patterns — backbone %s "
+                "may use different naming. Sample param names: %s",
+                self.backbone.__class__.__name__,
+                sample_names,
             )
+        else:
+            _log.info("Froze %d backbone parameters (first %d stages)", frozen_count, num_stages)
 
     def _extract_fused_features(self, x: torch.Tensor) -> torch.Tensor:
         """Shared backbone → FPN → CBAM → FAB → gate pipeline."""
