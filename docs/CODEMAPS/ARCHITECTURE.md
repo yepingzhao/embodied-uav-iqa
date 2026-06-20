@@ -1,6 +1,6 @@
 # Architecture Codemap
 
-**Last Updated:** 2026-06-20
+**Last Updated:** 2026-06-21
 
 ## High-Level System Overview
 
@@ -14,7 +14,7 @@
 │  (AirCopBench /    (registry key:     │                              │
 │   GenericDir)       "aircopbench",    ├── extract_references         │
 │                     "generic")        ├── inject_distortions         │
-│                                        │    (24 × 5 per ref)         │
+│                                        │    (33 × 5 per ref)         │
 │                                        ├── generate_manifests        │
 │                                        │    (train/val/test splits)  │
 │                                        └── annotate_scores           │
@@ -39,7 +39,7 @@
 │                   (VLM → VLA → Execution)                           │
 │                                 │                                    │
 │                             Output                                   │
-│                       (best_model.pt, results.json)                  │
+│                       (best_*.ckpt, last.ckpt, metrics.csv)         │
 └──────────────────────────────────┬───────────────────────────────────┘
                                     │
                                     ▼
@@ -79,10 +79,10 @@ Reference Image (3×H×W, uint8)
 │  └─ PropellerShadow         ─── periodic           │
 │                              brightness modulation  │
 │                                                     │
-│  18 Generic ───────────┐                            │
+│  27 Generic ───────────┐                            │
 │  (via Albumentations)   │                            │
 │  ├─ blur (3)            │                            │
-│  ├─ brightness (5)      │                            │
+  │  ├─ brightness (6)      │                            │
 │  ├─ chromatic (3)       │                            │
 │  ├─ noise (4)           │                            │
 │  ├─ compression (3)     │                            │
@@ -186,8 +186,7 @@ Output: (B,) quality scores ∈ [0, 1]
 │                                              │
 │  Logging: self.log() → WandbLogger         │
 │           (cloud: wandb.ai)                  │
-│           fallback → MetricsHistoryCallback  │
-│           (local: history.json)              │
+│           + CSVLogger (local: metrics.csv)   │
 └─────────────────────────────────────────────┘
 ```
 
@@ -233,9 +232,7 @@ LightningCLI (scripts/train.py)
   │                     └── uses → utils.py (load_image_tensor, load_manifest)
   ├── adds → SetupRunCallback (manifest SHA256, param count)
   ├── adds → CurriculumStageCallback (VLM→VLA→Execution)
-  ├── adds → MetricsHistoryCallback (per-task + UAV/generic aggregates)
   ├── adds → ModelCheckpoint (val/srcc, top-1)
-  └── adds → ResultsSavingCallback (post-fit test + results.json)
 ```
 
 ## Key Design Decisions
@@ -254,5 +251,3 @@ LightningCLI (scripts/train.py)
 | Regex-based backbone freeze | `_freeze_backbone_stages` matches `blocks.N`/`stages.N`/`stages_N` via `re` — supports diverse timm backbones |
 | scripts/train.py + LightningCLI | Replaces custom UAVIQACLI; self-contained YAML per experiment |
 | WandbLogger + CSVLogger | Cloud + local dual logging; no cloud dependency for local runs |
-| SetupRunCallback | Manifests SHA256 hash for dataset versioning on every run |
-| ResultsSavingCallback | Best checkpoint auto-test + structured results.json with git_commit |

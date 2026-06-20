@@ -189,3 +189,89 @@
 - Black format: All files reformatted
 - pytest: 54/54 tests passing
 - No functional changes — only cleanup of unused code
+
+## [2026-06-20] Batch 4: Code Cleanup
+
+### Unused Dependency Removed from `pyproject.toml`
+
+| Package | Reason |
+|---------|--------|
+| `tqdm>=4.65.0` | Not imported anywhere in codebase (0 occurrences) |
+
+### Unused Parameters Removed
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `src/uav_iqa/data_module.py` | `train_split`, `val_split` in `UAVIQDataModule.__init__` | Stored via `save_hyperparameters()` but never directly accessed |
+
+### Dead Methods Removed
+
+| File | Method | Reason |
+|------|--------|--------|
+| `src/uav_iqa/data_synthesis.py` | `AirCopBenchFormat.build_image_index()` (46 lines) | Defined but never called anywhere |
+| `src/uav_iqa/data_synthesis.py` | `AirCopBenchFormat._extract_scene_and_frame()` (12 lines) | Only called by `build_image_index` |
+| `src/uav_iqa/data_synthesis.py` | `AirCopBenchFormat.build_annotation_summary()` (24 lines) | Defined but never called anywhere |
+
+### Unused Import Removed
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `src/uav_iqa/data_synthesis.py` | `import os` | No longer used after method removals |
+| `src/uav_iqa/data_synthesis.py` | `import re` | No longer used after method removals |
+
+### Impact
+
+- Files modified: 3 (`pyproject.toml`, `data_module.py`, `data_synthesis.py`)
+- Dependencies removed: 1
+- Methods removed: 3 (82 lines)
+- Imports removed: 2
+- Total lines of code removed: ~85
+- All ruff checks passing
+- All 54 tests passing
+
+### Testing
+
+- Ruff lint: All checks passed
+- pytest: 54/54 tests passing
+- No functional changes — only dead code/import/dependency cleanup
+
+## [2026-06-20] Batch 5: Code Cleanup
+
+### Import Sorting Fixed
+
+| File | Change |
+|------|--------|
+| `scripts/benchmark_iqa_methods.py` | Imports reorganized to standard order |
+| `scripts/finetune_baselines.py` | Imports reorganized to standard order |
+| `scripts/fix_configs.py` | Imports reorganized to standard order |
+| `scripts/validate_synth_real_correlation.py` | Imports reorganized to standard order |
+| `src/uav_iqa/__init__.py` | Imports reorganized to standard order |
+| `src/uav_iqa/distortion.py` | Inline imports in method reorganized |
+| `src/uav_iqa/lightning_module.py` | Imports reorganized to standard order |
+| `tests/test_data_synthesis.py` | Imports reorganized to standard order |
+| `tests/test_distortion.py` | Imports reorganized to standard order |
+
+### Line Too Long Fixed
+
+| File | Change |
+|------|--------|
+| `src/uav_iqa/data_module.py:62` | Split long warning string (105→99 chars) |
+
+### Shebang Executability Fixed
+
+| File | Change |
+|------|--------|
+| 8 script files under `scripts/` | `chmod +x` for files with `#!/usr/bin/env python3` |
+
+### Impact
+
+- Files modified: 10 (9 import sort + 1 line length)
+- Files made executable: 8
+- All ruff checks passing
+- All 54 tests passing
+
+### Testing
+
+- Ruff lint: All checks passed
+- pytest: 54/54 tests passing
+- No functional changes — only cleanup of imports, formatting, and permissions

@@ -1,6 +1,6 @@
 # Module Codemap
 
-**Last Updated:** 2026-06-20
+**Last Updated:** 2026-06-21
 
 ## Package: `uav_iqa` (src/uav_iqa/)
 
@@ -54,11 +54,11 @@ distortion.py (standalone)
   → UAV_DISTORTION_NAMES (exported, used by data_module & lightning_module)
 
 annotations.py
-  → parse_distortion_key, compute_synthetic_score (NEW)
+  → parse_distortion_key, compute_synthetic_score
   → build_ref_score_lookup, degradation_factor, synthetic_ref_scores
   → assign_task_label, parse_quality_score, parse_usability
 
-data_synthesis.py (NEW — 769 lines)
+data_synthesis.py (686 lines)
   │
   ├── DatasetFormat (ABC + registry)
   │     ├── AirCopBenchFormat
@@ -75,10 +75,12 @@ data_synthesis.py (NEW — 769 lines)
 
 ## Module: `distortion.py`
 
-**Purpose:** 24 distortion models (6 UAV-specific + 18 generic) for injecting quality degradation.
+**Purpose:** 36 distortion models (6 UAV-specific + 30 generic) for injecting quality degradation.
 
 **Location:** `src/uav_iqa/distortion.py`
-**Lines:** 685
+**Lines:** 748
+
+*Note: Pipeline docstring says "36 types" — actual is 36: 6 UAV-specific + 30 generic.*
 
 ### Key Classes
 
@@ -178,7 +180,7 @@ def forward_all_tasks(self, x: Tensor) -> Tensor
 **Purpose:** UAVIQADataset — loads manifest.json with image paths, task IDs, and annotation scores; also provides manifest validation.
 
 **Location:** `src/uav_iqa/dataset.py`
-**Lines:** 260
+**Lines:** 250
 
 ### Key Classes & Functions
 
@@ -263,7 +265,7 @@ CrossTask: L = -(2/(K*(K-1))) * Σ_{i<j} mean((scores[:,i] - scores[:,j])²)
 **Purpose:** IQA evaluation metrics.
 
 **Location:** `src/uav_iqa/metrics.py`
-**Lines:** 150
+**Lines:** 145
 
 ### Public Functions
 
@@ -276,7 +278,7 @@ CrossTask: L = -(2/(K*(K-1))) * Σ_{i<j} mean((scores[:,i] - scores[:,j])²)
 | `evaluate_iqa(pred, target) -> dict` | All 4 metrics with lowercase keys: `{srcc, plcc, rmse, kendall_tau}` |
 | `per_task_metrics(pred, target, task_ids) -> dict` | Per-task breakdown of srcc/plcc/rmse with `n` count |
 | `per_distortion_metrics(pred, target, labels) -> dict` | Per-distortion breakdown of srcc/plcc/rmse/kendall_tau |
-| `per_distortion_category_metrics(pred, target, labels) -> dict` | **NEW** — aggregate metrics for UAV-specific vs generic categories: `{UAV: {...}, Generic: {...}}` |
+| `per_distortion_category_metrics(pred, target, labels) -> dict` | Aggregate metrics for UAV-specific vs generic categories: `{UAV: {...}, Generic: {...}}` |
 
 ### Key Details
 
@@ -297,7 +299,7 @@ CrossTask: L = -(2/(K*(K-1))) * Σ_{i<j} mean((scores[:,i] - scores[:,j])²)
 **Purpose:** LightningModule wrapping UAVIQANet with training/val/test logic, per-distortion ListMLE ranking, and feature reuse (forward_features).
 
 **Location:** `src/uav_iqa/lightning_module.py`
-**Lines:** 280
+**Lines:** 289
 
 ### Key Class
 
@@ -348,17 +350,14 @@ for dist in unique_distortions:
         loss_rank += self.rank_loss(pred[mask], scores[mask])
 ```
 
-### Test Results
+### Test Results (DDP-compatible)
 
-```python
-get_test_results() -> dict {
-    "test_metrics": {"srcc": ..., "plcc": ..., "rmse": ...},
-    "per_task": {"tracking": {"srcc": ..., "plcc": ..., "rmse": ..., "n": ...}, ...},
-    "per_distortion": {"propeller_vibration_blur_L04": {"SRCC": ..., "PLCC": ..., "N": ...}, ...},
-    "preds": [...],
-    "targets": [...],
-}
-```
+Test results are now logged via `self.log()` in `on_test_epoch_end()` instead of the removed `get_test_results()` method. DDP gathering uses `_gather_tensor()` and `_gather_objects()` to aggregate predictions across all processes:
+
+- Metrics: `test/srcc`, `test/plcc` (overall)
+- Per-task: `test/srcc_{task_name}` for all 4 tasks
+- Per-distortion category: `test/srcc_uav` (avg of 6 UAV distortions), `test/srcc_generic` (avg of 30 generic distortions)
+- All stored via `self.log()` → CSVLogger/metrics.csv + WandbLogger
 
 ### Dependencies
 
@@ -373,7 +372,7 @@ get_test_results() -> dict {
 **Purpose:** LightningDataModule wrapping UAVIQADataset with manifest filtering.
 
 **Location:** `src/uav_iqa/data_module.py`
-**Lines:** 157
+**Lines:** 176
 
 ### Key Class
 
@@ -405,10 +404,10 @@ get_test_results() -> dict {
 
 ## Module: `callbacks.py`
 
-**Purpose:** PyTorch Lightning callbacks for dataset verification, curriculum switching, metric history, and result saving.
+**Purpose:** PyTorch Lightning callbacks for dataset verification and curriculum switching.
 
 **Location:** `src/uav_iqa/callbacks.py`
-**Lines:** 256
+**Lines:** 79
 
 ### Key Classes
 
@@ -416,8 +415,6 @@ get_test_results() -> dict {
 |-------|-------------|
 | `SetupRunCallback` | At fit start: computes manifest SHA256 hash for dataset versioning, prints model param count. Exposes `pl_module.manifest_hash` |
 | `CurriculumStageCallback` | Sets `pl_module.curriculum_stage` (vlm/vla/execution) based on epoch boundaries |
-| `MetricsHistoryCallback` | Records train/val metrics per epoch, saves `history.json` on fit end, exposes `pl_module.best_val_srcc` |
-| `ResultsSavingCallback` | On fit end: loads best checkpoint, runs test, prints & saves results to `results.json` with git commit hash, hparams, data config |
 
 ### SetupRunCallback
 
@@ -435,26 +432,10 @@ get_test_results() -> dict {
 
 Configurable via `vlm_epochs`, `vla_epochs`, `execution_epochs` init args.
 
-### MetricsHistoryCallback
-
-Captured series:
-- `train/loss`, `train/mse`, `train/rank`, `train/cross_task`
-- `val/srcc`, `val/plcc`
-- `val/srcc_{tracking|inspection|delivery|sar}` — per-task SRCC
-- `val/srcc_uav`, `val/srcc_generic` — aggregated distortion family SRCC
-
-### ResultsSavingCallback
-
-- Finds best checkpoint from `ModelCheckpoint` (monitors `val/srcc`, mode=max)
-- Runs `trainer.test()` with best checkpoint
-- Saves `results.json` containing:
-  - `seed`, `n_params`, `best_val_srcc`, `test_metrics` (srcc/plcc/rmse)
-  - `per_task` breakdown, `hparams`, `data_config`, `manifest_hash`, `git_commit`
-
 ### Dependencies
 
 - `lightning`
-- `json`, `pathlib`, `hashlib`, `subprocess`, `yaml`
+- `pathlib`, `hashlib`
 
 ---
 
@@ -469,11 +450,11 @@ Captured series:
 
 | Function | Description |
 |----------|-------------|
-| `parse_distortion_key(key) -> (str, float)` | **NEW** — Parse `'gaussian_blur_L04'` → `('gaussian_blur', 0.4)`. Handles `__` separator, nanme `_L4` / `_L04` / `_L0_5` formats. |
+| `parse_distortion_key(key) -> (str, float)` | Parse `'gaussian_blur_L04'` → `('gaussian_blur', 0.4)`. Handles `__` separator, nanme `_L4` / `_L04` / `_L0_5` formats. |
 | `parse_quality_score(quality_str)` | Parse `'Good (4/5)'` → 0.8, `'Excellent (5/5)'` → 1.0, etc. |
 | `parse_usability(usability_str)` | Parse `'1 (Available)'` → 1.0, `'3 (Unavailable)'` → 0.25 |
 | `degradation_factor(distortion, task)` | Get degradation at max intensity for (distortion, task) pair |
-| `compute_synthetic_score(distortion, task, intensity)` | **NEW** — Noiseless degradation-model score: `score = 1.0 * (1.0 - alpha * intensity)`. Used by C2 correlation validation. |
+| `compute_synthetic_score(distortion, task, intensity)` | Noiseless degradation-model score: `score = 1.0 * (1.0 - alpha * intensity)`. Used by C2 correlation validation. |
 | `build_ref_score_lookup(aircopbench_dir)` | Walk AirCopBench Annotations dirs → dict of `{ref_id: {vlm_score, vla_score, execution_score, annotated}}` |
 | `assign_task_label(img_name, task_map)` | Extract task label from path (scene_001→tracking, etc.), with configurable `task_map` override |
 | `synthetic_ref_scores(ref_id)` | Deterministic synthetic scores via MD5 hash for refs without annotations |
@@ -515,14 +496,14 @@ Combines real AirCopBench annotations (Quality → vlm, Usability → vla, 0.4Q 
 
 | Function | Description |
 |----------|-------------|
-| `setup_logging(name, level)` | **NEW** — Configure stdlib logging with uniform format for scripts |
-| `find_images(image_dir, exts, exclude_dirs)` | **NEW** — Recursively find image files, optionally excluding subdirectories |
-| `load_image_tensor(path, image_size)` | **NEW** — Load image as `(C, H, W)` float32 tensor in [0,1]; used by both Dataset and benchmark scripts |
+| `setup_logging(name, level)` | Configure stdlib logging with uniform format for scripts |
+| `find_images(image_dir, exts, exclude_dirs)` | Recursively find image files, optionally excluding subdirectories |
+| `load_image_tensor(path, image_size)` | Load image as `(C, H, W)` float32 tensor in [0,1]; used by both Dataset and benchmark scripts |
 | `count_parameters(model) -> (total, trainable)` | Count total and trainable parameters |
-| `load_task_map(path)` | **NEW** — Load JSON task-map file (used by data_synthesis.py) |
-| `split_samples(samples, ratios, seed)` | **NEW** — Shuffle + split into `{train, val, test}` dicts via numpy.RandomState |
-| `load_manifest(manifest_path)` | **NEW** — Load manifest.json entries |
-| `write_manifest(entries, manifest_path)` | **NEW** — Write manifest JSON with validation via `validate_manifest()` |
+| `load_task_map(path)` | Load JSON task-map file (used by data_synthesis.py) |
+| `split_samples(samples, ratios, seed)` | Shuffle + split into `{train, val, test}` dicts via numpy.RandomState |
+| `load_manifest(manifest_path)` | Load manifest.json entries |
+| `write_manifest(entries, manifest_path)` | Write manifest JSON with validation via `validate_manifest()` |
 
 ### Dependencies
 
@@ -537,14 +518,14 @@ Combines real AirCopBench annotations (Quality → vlm, Usability → vla, 0.4Q 
 **Purpose:** Dataset-agnostic data synthesis pipeline — extract references, inject distortions, generate manifests, annotate scores. Supports AirCopBench and generic image directories.
 
 **Location:** `src/uav_iqa/data_synthesis.py`
-**Lines:** 769
+**Lines:** 686
 
 ### Key Classes
 
 | Class | Description |
 |-------|-------------|
 | `DatasetFormat` | Abstract base class with explicit `_registry` for dataset-specific logic. Subclasses register via `@DatasetFormat.register`. |
-| `AirCopBenchFormat` | Handles AirCopBench nested scene/UAV directory structure + Annotation/*.json parsing. Includes `build_image_index()`, `build_annotation_summary()`, `get_degradation_types()`. |
+| `AirCopBenchFormat` | Handles AirCopBench nested scene/UAV directory structure + Annotation/*.json parsing. Provides `get_degradation_types()` and annotation path mapping. |
 | `GenericImageDirFormat` | Flat directory of images, no annotations, hash-based task assignment. |
 | `DataSynthesisPipeline` | Orchestrates the 4-step pipeline: `extract_references()` → `inject_distortions()` → `generate_manifests()` → `annotate_scores()`. Also provides `run_full()` for end-to-end execution. |
 | `create_pipeline(dataset, seed)` | Convenience factory — creates a DataSynthesisPipeline for a named dataset format. |
@@ -554,7 +535,7 @@ Combines real AirCopBench annotations (Quality → vlm, Usability → vla, 0.4Q 
 | Step | Method | Description |
 |------|--------|-------------|
 | 1 | `extract_references()` | Symlinks or copies clean reference frames to flat directory |
-| 2 | `inject_distortions()` | Applies all 24 distortions × 5 intensities via parallel workers |
+| 2 | `inject_distortions()` | Applies all 36 distortions × 5 intensities via parallel workers |
 | 3 | `generate_manifests()` | Scans distorted directory, parses filenames, builds entries, splits train/val/test |
 | 4 | `annotate_scores()` | Assigns VLM/VLA/execution scores using real annotations or synthetic fallback + degradation model |
 
@@ -586,27 +567,26 @@ __all__ = [
     # Model (1)
     "UAVIQANet",
     # Dataset (2)
-    "UAVIQADataset", "validate_manifest",          # ← validate_manifest added
+    "UAVIQADataset", "validate_manifest",
     # Metrics (4)
     "compute_srcc", "compute_plcc", "evaluate_iqa",
-    "per_distortion_category_metrics",              # ← NEW
+    "per_distortion_category_metrics",
     # Lightning wrappers (2)
     "UAVIQALightningModule", "UAVIQDataModule",
     # Losses (2)
     "ListMLELoss", "CrossTaskRegularization",
     # Annotation utilities (8)
-    "parse_distortion_key", "parse_quality_score",  # ← parse_distortion_key added
+    "parse_distortion_key", "parse_quality_score",
     "parse_usability", "degradation_factor",
-    "compute_synthetic_score",                      # ← NEW
+    "compute_synthetic_score",
     "build_ref_score_lookup", "assign_task_label",
     "synthetic_ref_scores",
     # Utility functions (6)
-    "setup_logging", "load_task_map",               # ← NEW category
+    "setup_logging", "load_task_map",
     "load_manifest", "split_samples",
     "write_manifest", "find_images",
     # Data synthesis (3)
-    "DatasetFormat",                                # ← NEW category
+    "DatasetFormat",
     "DataSynthesisPipeline", "create_pipeline",
 ]
-# Note: UAVIQACLI removed in 2026-06 refactor — use scripts/train.py + vanilla LightningCLI
 ```

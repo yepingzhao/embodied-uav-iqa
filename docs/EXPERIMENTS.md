@@ -50,14 +50,19 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 ## 训练入口
 
-训练使用 `scripts/train.py`（LightningCLI 封装器），所有超参数由 `configs/experiments/<name>.yaml` 自包含配置驱动。
+训练使用 `scripts/train.py`（LightningCLI 封装器），所有超参数由 `configs/experiments/<name>.yaml` 自包含配置驱动。输出目录通过配置中的 `trainer.default_root_dir` 自动设定，无需命令行指定。
 
 ```bash
-# 基本命令格式
+# 基本命令格式（单种子）
 CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
-    --config configs/experiments/<name>.yaml \
-    --seed_everything <seed> \
-    --trainer.default_root_dir outputs/<name>_seed<seed>
+    --config configs/experiments/<name>.yaml
+
+# 多种子
+for seed in 42 100 200; do
+    CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
+        --config configs/experiments/<name>.yaml \
+        --seed_everything $seed
+done
 
 # 覆盖超参数示例
 CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
@@ -69,11 +74,15 @@ CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
 ## 输出结构
 
 ```
-outputs/<experiment>_seed<N>/
-├── best_model.ckpt        # 最佳 checkpoint (按 val/srcc)
-├── results.json           # 测试结果 (SRCC, PLCC, RMSE)
-├── history.json           # 训练历史 (epoch-level metrics)
-└── csv_logs/              # CSVLogger 输出
+outputs/<experiment>/
+├── wandb/                     # WandbLogger 本地文件
+└── version_0/                 # Lightning 版本目录 (多种子递增: version_1, ...)
+    ├── metrics.csv            # CSVLogger 训练指标
+    ├── hparams.yaml           # 模型超参数
+    └── checkpoints/
+        ├── best_<val_srcc>.ckpt  # 最佳 checkpoint (按 val/srcc)
+        ├── last.ckpt             # 最终 epoch checkpoint
+        └── epoch_<NNN>.ckpt      # 每 5 epoch 保存
 ```
 
 ---
@@ -117,15 +126,13 @@ outputs/<experiment>_seed<N>/
 # 单种子
 CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
     --config configs/experiments/r013_task_cond.yaml \
-    --seed_everything 42 \
-    --trainer.default_root_dir outputs/r013_task_cond_seed42
+    --seed_everything 42
 
 # 三种子 (42, 100, 200)
 for seed in 42 100 200; do
     CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
         --config configs/experiments/r013_task_cond.yaml \
-        --seed_everything $seed \
-        --trainer.default_root_dir "outputs/r013_task_cond_seed${seed}"
+        --seed_everything $seed
 done
 ```
 
@@ -143,8 +150,7 @@ done
 for seed in 42 100 200; do
     CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
         --config configs/experiments/r014_task_agnostic.yaml \
-        --seed_everything $seed \
-        --trainer.default_root_dir "outputs/r014_task_agnostic_seed${seed}"
+        --seed_everything $seed
 done
 ```
 
@@ -168,8 +174,7 @@ done
 for seed in 42 100 200; do
     CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
         --config configs/experiments/r016_no_fab.yaml \
-        --seed_everything $seed \
-        --trainer.default_root_dir "outputs/r016_no_fab_seed${seed}"
+        --seed_everything $seed
 done
 ```
 
@@ -187,8 +192,7 @@ done
 for seed in 42 100 200; do
     CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
         --config configs/experiments/r017_no_task_cond.yaml \
-        --seed_everything $seed \
-        --trainer.default_root_dir "outputs/r017_no_task_cond_seed${seed}"
+        --seed_everything $seed
 done
 ```
 
@@ -206,8 +210,7 @@ done
 for seed in 42 100 200; do
     CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
         --config configs/experiments/r018_no_cbam.yaml \
-        --seed_everything $seed \
-        --trainer.default_root_dir "outputs/r018_no_cbam_seed${seed}"
+        --seed_everything $seed
 done
 ```
 
@@ -225,8 +228,7 @@ done
 for seed in 42 100 200; do
     CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
         --config configs/experiments/r019_mobilevit_s.yaml \
-        --seed_everything $seed \
-        --trainer.default_root_dir "outputs/r019_mobilevit_s_seed${seed}"
+        --seed_everything $seed
 done
 ```
 
@@ -244,8 +246,7 @@ done
 for seed in 42 100 200; do
     CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
         --config configs/experiments/r020_efficientvit_b0.yaml \
-        --seed_everything $seed \
-        --trainer.default_root_dir "outputs/r020_efficientvit_b0_seed${seed}"
+        --seed_everything $seed
 done
 ```
 
@@ -259,7 +260,7 @@ done
 >
 > 分别只用通用失真和只用 UAV 失真训练，对比完整模型。
 
-### R021 — 仅用 18 种通用失真训练
+### R021 — 仅用 30 种通用失真训练
 
 训练时过滤掉所有 6 种 UAV 失真，只用 generic 失真池。
 
@@ -269,8 +270,7 @@ done
 for seed in 42 100 200; do
     CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
         --config configs/experiments/r021_generic_only.yaml \
-        --seed_everything $seed \
-        --trainer.default_root_dir "outputs/r021_generic_only_seed${seed}"
+        --seed_everything $seed
 done
 ```
 
@@ -280,7 +280,7 @@ done
 
 ### R021b — 仅用 6 种 UAV 失真训练
 
-训练时过滤掉所有 18 种通用失真，只用 UAV 失真池。
+训练时过滤掉所有 30 种通用失真，只用 UAV 失真池。
 
 **关键配置**: `distortion_filter=uav`
 
@@ -288,8 +288,7 @@ done
 for seed in 42 100 200; do
     CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
         --config configs/experiments/r021b_uav_only.yaml \
-        --seed_everything $seed \
-        --trainer.default_root_dir "outputs/r021b_uav_only_seed${seed}"
+        --seed_everything $seed
 done
 ```
 
@@ -313,8 +312,7 @@ done
 for seed in 42 100 200; do
     CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
         --config configs/experiments/r022_vlm_only.yaml \
-        --seed_everything $seed \
-        --trainer.default_root_dir "outputs/r022_vlm_only_seed${seed}"
+        --seed_everything $seed
 done
 ```
 
@@ -330,8 +328,7 @@ done
 for seed in 42 100 200; do
     CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
         --config configs/experiments/r022b_vla_only.yaml \
-        --seed_everything $seed \
-        --trainer.default_root_dir "outputs/r022b_vla_only_seed${seed}"
+        --seed_everything $seed
 done
 ```
 
@@ -345,8 +342,7 @@ VLM (epochs 1-25) → VLA (epochs 26-50)，无 execution stage。
 for seed in 42 100 200; do
     CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
         --config configs/experiments/r023_no_exec.yaml \
-        --seed_everything $seed \
-        --trainer.default_root_dir "outputs/r023_no_exec_seed${seed}"
+        --seed_everything $seed
 done
 ```
 
@@ -377,8 +373,7 @@ for task in tracking inspection delivery sar; do
     for seed in 42 100 200; do
         CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
             --config "configs/experiments/r024a_${task}.yaml" \
-            --seed_everything $seed \
-            --trainer.default_root_dir "outputs/r024a_${task}_seed${seed}"
+            --seed_everything $seed
     done
 done
 ```
@@ -405,8 +400,7 @@ for leave_task in tracking inspection delivery sar; do
     for seed in 42 100 200; do
         CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
             --config "configs/experiments/r024b_leave_${leave_task}.yaml" \
-            --seed_everything $seed \
-            --trainer.default_root_dir "outputs/r024b_leave_${leave_task}_seed${seed}"
+            --seed_everything $seed
     done
 done
 ```
@@ -423,8 +417,7 @@ done
 for seed in 42 100 200; do
     CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
         --config configs/experiments/r024c_multitask.yaml \
-        --seed_everything $seed \
-        --trainer.default_root_dir "outputs/r024c_multitask_seed${seed}"
+        --seed_everything $seed
 done
 ```
 
@@ -444,8 +437,7 @@ for config in r013_task_cond r014_task_agnostic r016_no_fab r017_no_task_cond r0
     for seed in 42 100 200; do
         CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
             --config "configs/experiments/${config}.yaml" \
-            --seed_everything $seed \
-            --trainer.default_root_dir "outputs/${config}_seed${seed}"
+            --seed_everything $seed
     done
 done
 ```
@@ -463,8 +455,7 @@ for config in r013_task_cond r014_task_agnostic r016_no_fab r017_no_task_cond r0
     for seed in 42 100 200; do
         CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
             --config "configs/experiments/${config}.yaml" \
-            --seed_everything $seed \
-            --trainer.default_root_dir "outputs/${config}_seed${seed}"
+            --seed_everything $seed
     done
 done
 ```
@@ -475,8 +466,7 @@ done
 for seed in 42 100 200; do
     CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
         --config configs/experiments/r013_task_cond.yaml \
-        --seed_everything $seed \
-        --trainer.default_root_dir "outputs/r013_task_cond_seed${seed}"
+        --seed_everything $seed
 done
 ```
 
@@ -492,10 +482,11 @@ CUDA_VISIBLE_DEVICES=0 python scripts/train.py fit \
 
 ### 查看运行状态
 
-输出文件位于 `outputs/<experiment>_seed<N>/`:
-- `results.json` — 测试指标 (SRCC, PLCC, RMSE)
-- `history.json` — epoch 级训练指标
-- `best_model.ckpt` — 最佳 checkpoint
+输出文件位于 `outputs/<experiment>/version_N/` (多种子由 Lightning 自动递增版本号):
+- `metrics.csv` — CSVLogger epoch 级训练指标 (SRCC, PLCC, RMSE 等)
+- `hparams.yaml` — 模型超参数
+- `checkpoints/best_val_srcc.ckpt` — 最佳 checkpoint (按 val/srcc)
+- `checkpoints/last.ckpt` — 最终 epoch checkpoint
 
 ---
 

@@ -2,7 +2,7 @@
 
 **Visual Quality Assessment for Aerial Embodied Intelligence**
 
-A research codebase for no-reference image quality assessment (NR-IQA) tailored to UAV-embodied perception. Includes 24 distortion models (6 UAV-specific + 18 generic), a lightweight frequency-aware task-conditioned IQA network (~5.4M params), and a full benchmarking pipeline against 15+ existing IQA methods.
+A research codebase for no-reference image quality assessment (NR-IQA) tailored to UAV-embodied perception. Includes 36 distortion models (6 UAV-specific + 30 generic), a lightweight frequency-aware task-conditioned IQA network (~5.4M params), and a full benchmarking pipeline against 15+ existing IQA methods.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch 2.1+](https://img.shields.io/badge/pytorch-2.1+-red.svg)](https://pytorch.org/)
@@ -58,9 +58,9 @@ Input (3×256×256)
 | Low-Res + Super-Resolution | Bicubic downsample + Real-ESRGAN (optional) | scale ∈ [2, 8]× |
 | Propeller Shadow | Periodic localized brightness modulation | α ∈ [0.05, 0.3] |
 
-### 18 Generic Distortions
+### 27 Generic Distortions
 
-Categories: blur (3), brightness (5), chromatic (3), noise (4), compression (3), spatial (4), and other (4) — applied via **Albumentations**.
+Categories: blur (3), brightness (6), chromatic (3), noise (4), compression (3), spatial (4), and other (4) — applied via **Albumentations**.
 
 ---
 
@@ -68,8 +68,8 @@ Categories: blur (3), brightness (5), chromatic (3), noise (4), compression (3),
 
 ```
 src/uav_iqa/               # Core library (~2.2K LOC)
-  __init__.py              # Public API exports (22 symbols)
-  distortion.py            # 24 distortion models (UAVDistortionPipeline)
+  __init__.py              # Public API exports (35 symbols)
+   distortion.py            # 36 distortion models (UAVDistortionPipeline)
   model.py                 # UAVIQANet (backbone → FPN → CBAM → FAB → task heads)
   dataset.py               # UAVIQADataset — manifest.json loader
   losses.py                # ListMLELoss + CrossTaskRegularization
@@ -77,13 +77,13 @@ src/uav_iqa/               # Core library (~2.2K LOC)
   lightning_module.py       # LightningModule with MSE + ListMLE + cross-task loss
   data_module.py        # LightningDataModule with manifest filtering
   metrics.py              # SRCC, PLCC, RMSE, Kendall τ metrics
-  callbacks.py             # SetupRunCallback, CurriculumStageCallback, MetricsHistoryCallback, ResultsSavingCallback
+  callbacks.py             # SetupRunCallback, CurriculumStageCallback
   utils.py                 # count_parameters()
 
 scripts/                   # Executable experiment scripts
   data_synthesis.py              # Unified data synthesis CLI (extract/inject/manifest/annotate/all)
   benchmark_iqa_methods.py       # Benchmark 15+ existing IQA methods
-  visualize_distortions.py       # Visual sanity check of all 24 distortions
+  visualize_distortions.py       # Visual sanity check of all 36 distortions
   overfit_sanity_check.py        # 100-image overfit test (model correctness)
   validate_synth_real_correlation.py  # C2 correlation validation
 
@@ -243,7 +243,7 @@ python scripts/overfit_sanity_check.py
 
 ```bash
 python scripts/visualize_distortions.py --output-dir outputs/m0_distortion_check
-# Generates visual grid of all 24 distortions × 5 intensity levels.
+# Generates visual grid of all 36 distortions × 5 intensity levels.
 ```
 
 ---
@@ -296,9 +296,7 @@ trainer:
     - class_path: lightning.pytorch.loggers.CSVLogger
   callbacks:
     - class_path: uav_iqa.callbacks.CurriculumStageCallback
-    - class_path: uav_iqa.callbacks.MetricsHistoryCallback
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
-    - class_path: uav_iqa.callbacks.ResultsSavingCallback
 ```
 
 ---

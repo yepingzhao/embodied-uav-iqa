@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 UAV-Embodied-IQA: visual quality assessment for aerial embodied intelligence (research codebase). It provides:
 - **6 UAV-specific distortion models** (propeller vibration, atmospheric scattering, 6DoF viewpoint blur, packet-loss blocks, low-res+SR artifacts, propeller shadow)
-- **27 generic distortion types** via Albumentations (33 total with UAV distortions)
+- **30 generic distortion types** via Albumentations (36 total with UAV distortions)
 - **UAV-IQANet**: a lightweight NR-IQA model (~5.8M params, MobileNetV4-S backbone + PANet FPN + CBAM + frequency-aware branch + task-conditioned FiLM heads)
 - **Benchmarking** against 15+ existing IQA methods via pyiqa
 
@@ -15,7 +15,7 @@ UAV-Embodied-IQA: visual quality assessment for aerial embodied intelligence (re
 ```
 src/uav_iqa/           # Core library (~2.2K LOC total)
   __init__.py          #   Public API: exports 35 symbols
-  distortion.py        #   33 distortion models (UAVDistortionPipeline + 6 UAV + 27 generic)
+  distortion.py        #   36 distortion models (UAVDistortionPipeline + 6 UAV + 30 generic)
   model.py             #   UAVIQANet (backbone → PANet FPN → CBAM → FAB → task heads)
   dataset.py           #   UAVIQADataset — loads manifest.json, image/scores/task_id
   losses.py            #   ListMLELoss + CrossTaskRegularization
@@ -24,7 +24,7 @@ src/uav_iqa/           # Core library (~2.2K LOC total)
   lightning_module.py   #   UAVIQALightningModule (training_step, validation_step, etc.)
   data_module.py    #   UAVIQDataModule (train/val/test dataloaders, manifest filtering)
   metrics.py          #   SRCC, PLCC, RMSE, Kendall tau metrics
-  callbacks.py         #   SetupRunCallback, CurriculumStageCallback, MetricsHistoryCallback, ResultsSavingCallback
+  callbacks.py         #   SetupRunCallback, CurriculumStageCallback
   utils.py             #   Utilities: count_parameters, logging, image I/O, manifest helpers
 configs/               # YAML-driven configuration
   default.yaml         #   Default training/model/distortion config template
@@ -35,7 +35,7 @@ scripts/               # Data pipeline + benchmark + experiment scripts
    benchmark_iqa_methods.py           # Benchmark 15+ IQA methods via pyiqa
    finetune_baselines.py              # Fine-tune FR/NR baselines on UAV data
   fix_configs.py                     # Config migration/validation helper
-  visualize_distortions.py           # Verify all 33 distortions produce visually plausible outputs
+  visualize_distortions.py           # Verify all 36 distortions produce visually plausible outputs
   overfit_sanity_check.py            # Overfit test: train on 100 random images, verify loss → 0
   validate_synth_real_correlation.py # C2 correlation validation: synthetic vs real scores
 data/                  # Datasets (raw = external inputs, processed = generated artifacts)
@@ -63,7 +63,7 @@ python scripts/data_synthesis.py annotate --dataset aircopbench --manifest-dir .
 ```
 
 1. **`extract`** — Extract clean reference frames from dataset → `data/processed/ref_images/`
-2. **`inject`** — Apply all 33 distortions × 5 intensity levels → `data/processed/distorted/`
+2. **`inject`** — Apply all 36 distortions × 5 intensity levels → `data/processed/distorted/`
 3. **`manifest`** — Scan distorted dir, generate train/val/test `manifest.json` → `data/processed/{train,val,test}/`
 4. **`annotate`** — Annotate manifest entries using annotations (if available) and degradation model: `score = ref_score × degradation_factor(distortion, intensity)` + noise
 5. **`scripts/train.py`** — Train UAVIQANet via LightningCLI + experiment config (reads `data/processed/`, writes `outputs/<experiment>_seed<N>/`)
@@ -180,5 +180,5 @@ The proposal is **READY** (score 9.0/10). Read these for context:
 - Real-ESRGAN dependency is optional (for `LowResSuperResolution` distortion); falls back to bicubic + sharpen if not installed
 - Package is installed via `uv sync` — `scripts/train.py` and other scripts use `from uav_iqa.xxx` imports
 - openVLA and CARLA require manual installation (not on PyPI); not needed for basic training/inference
-- **W&B**: Set `WANDB_API_KEY` env var (or use `.env` file) to enable cloud experiment tracking. Without it, training falls back to local CSVLogger + history.json logging. Config at `trainer.logger` in `configs/default.yaml`.
-- **`UAVIQACLI` removed (2026-06)**: Training uses vanilla `lightning.pytorch.cli.LightningCLI` via `scripts/train.py`. Multi-seed loops via shell `for` loops. Full experiment documentation is at `docs/EXPERIMENTS.md`. Callbacks (`ResultsSavingCallback`, `MetricsHistoryCallback`) handle test evaluation and result saving.
+- **W&B**: Set `WANDB_API_KEY` env var (or use `.env` file) to enable cloud experiment tracking. Without it, training falls back to local CSVLogger (metrics.csv) logging. Config at `trainer.logger` in `configs/default.yaml`.
+- **`UAVIQACLI` removed (2026-06)**: Training uses vanilla `lightning.pytorch.cli.LightningCLI` via `scripts/train.py`. Multi-seed loops via shell `for` loops. Full experiment documentation is at `docs/EXPERIMENTS.md`. CSVLogger + WandbLogger handle metrics; ModelCheckpoint saves checkpoints.

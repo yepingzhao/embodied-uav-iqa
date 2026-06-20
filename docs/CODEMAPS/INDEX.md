@@ -1,6 +1,6 @@
 # UAV-Embodied-IQA — Codemap Index
 
-**Last Updated:** 2026-06-20
+**Last Updated:** 2026-06-21
 **Project:** Visual Quality Assessment for Aerial Embodied Intelligence
 **arXiv:** 2511.11025
 
@@ -43,11 +43,11 @@ docs/                  →  Literature reviews and research roadmap
 | `scripts/train.py` | **Unified training entry point** — LightningCLI with YAML configs |
 | `scripts/data_synthesis.py` | Full M1 data synthesis pipeline (extract/inject/manifest/annotate) |
 | `scripts/benchmark_iqa_methods.py` | Benchmark 15+ existing IQA methods |
-| `scripts/finetune_baselines.py` | **NEW** — Fine-tune DL-based IQA baselines (brisque/niqe/clipiqa/maniqa/topiq_nr) on UAV data |
+| `scripts/finetune_baselines.py` | Fine-tune DL-based IQA baselines (brisque/niqe/clipiqa/maniqa/topiq_nr) on UAV data |
 | `scripts/overfit_sanity_check.py` | Model correctness overfit test |
 | `scripts/validate_synth_real_correlation.py` | C2 correlation validation |
-| `scripts/fix_configs.py` | **NEW** — Convert experiment configs from nested to flat `init_args` format |
-| `scripts/visualize_distortions.py` | Visual sanity check: grid of all 24 distortions × 5 intensities |
+| `scripts/fix_configs.py` | Convert experiment configs from nested to flat `init_args` format |
+| `scripts/visualize_distortions.py` | Visual sanity check: grid of all 36 distortions × 5 intensities |
 
 ## Experiment Configs (`configs/experiments/`)
 

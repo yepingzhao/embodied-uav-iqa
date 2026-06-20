@@ -27,7 +27,7 @@ python scripts/overfit_sanity_check.py
 
 ```
 src/uav_iqa/
-  distortion.py       # 6 UAV + 18 generic distortion models
+  distortion.py       # 6 UAV + 30 generic distortion models
   model.py            # UAVIQANet (MobileNetV4-S + PANet FPN + CBAM + FAB + task-conditioned heads)
   dataset.py          # UAVIQADataset: manifest.json → image/scores/task_id
   losses.py           # ListMLELoss + CrossTaskRegularization (ranking & cross-task losses)
@@ -36,7 +36,7 @@ src/uav_iqa/
   metrics.py         # SRCC, PLCC, RMSE, Kendall tau
   lightning_module.py  # UAVIQALightningModule (MSE + ListMLE + cross-task loss, curriculum)
   data_module.py   # UAVIQDataModule (manifest filtering, task/distortion/LOO filters)
-  callbacks.py        # CurriculumStageCallback, MetricsHistoryCallback, SetupRunCallback, ResultsSavingCallback
+  callbacks.py        # CurriculumStageCallback, SetupRunCallback
 
 scripts/
   data_synthesis.py              # Unified data synthesis CLI (extract/inject/manifest/annotate/all)
