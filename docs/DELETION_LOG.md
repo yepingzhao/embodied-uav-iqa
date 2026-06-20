@@ -134,3 +134,58 @@
 - Python syntax: Verified on all modified files
 - pytest: 16/16 fast tests passing, 1 slow test skipped
 - No functional changes — only dead code/import cleanup
+
+## [2026-06-20] Dead Code Cleanup Session (Batch 3)
+
+### Unused Import Removed
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `scripts/benchmark_iqa_methods.py` | `from scipy.special import gamma` inside `brisque_dct()` | Imported but never used; function uses only numpy stats |
+
+### Unused Variables Renamed to `_`
+
+| File | Variable | Context |
+|------|----------|---------|
+| `scripts/benchmark_iqa_methods.py` | `intens` | Unpacked from `load_image_and_score()` but never used in loop |
+| `scripts/benchmark_iqa_methods.py` | `can_finetune` | Unpacked from `AVAILABLE_METHODS` tuple but never used in zero-shot loop body |
+
+### Lightning Step Unused Parameters Renamed to `_`
+
+| File | Method | Parameter |
+|------|--------|-----------|
+| `src/uav_iqa/lightning_module.py` | `training_step` | `batch_idx` → `_` |
+| `src/uav_iqa/lightning_module.py` | `validation_step` | `batch_idx` → `_` |
+| `src/uav_iqa/lightning_module.py` | `test_step` | `batch_idx` → `_` |
+| `scripts/finetune_baselines.py` | `training_step` | `batch_idx` → `_` |
+| `scripts/finetune_baselines.py` | `validation_step` | `batch_idx` → `_` |
+
+### E402 Import Moved to Top of File
+
+| File | Import | Reason |
+|------|--------|--------|
+| `scripts/finetune_baselines.py` | `from uav_iqa.dataset import UAVIQADataset` | Moved from line 140 (after class def) to top of file to fix E402 |
+
+### F-String Without Placeholders Fixed
+
+| File | Change |
+|------|--------|
+| `scripts/fix_configs.py` | `f"  OK  configs/default.yaml"` → regular string `"  OK  configs/default.yaml"` |
+
+### Impact
+
+- Files modified: 5
+- Unused imports removed: 1
+- Unused variables renamed to `_`: 2
+- Lightning step params renamed to `_`: 5
+- E402 violations fixed: 1
+- F-strings fixed: 1
+- All ruff checks passing (was 2 errors, now 0)
+- All 54 tests passing
+
+### Testing
+
+- Ruff lint: All checks passed
+- Black format: All files reformatted
+- pytest: 54/54 tests passing
+- No functional changes — only cleanup of unused code

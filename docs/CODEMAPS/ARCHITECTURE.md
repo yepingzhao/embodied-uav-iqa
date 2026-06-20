@@ -46,11 +46,14 @@
 ┌──────────────────────────────────────────────────────────────────────┐
 │                    BENCHMARKING (M2)                                 │
 │                                                                      │
-│  Test manifest ──► pyiqa (15+ methods) ──► metrics table            │
+│  Test manifest ──► benchmark_iqa_methods.py ──► metrics table        │
+│                      (pyiqa, 15+ zero-shot methods)                  │
+│  Test manifest ──► finetune_baselines.py  ──► fine-tuned metrics     │
+│                      (brisque/niqe/clipiqa/maniqa/topiq_nr)         │
 │  UAVIQANet       ──► metrics.py            (SRCC, PLCC, RMSE,       │
 │                        evaluate_iqa()       Kendall τ,              │
 │                        per_task_metrics()    per-task &             │
-│                        per_distortion_       per-distortion         │
+│                        per-distortion_       per-distortion         │
 │                          category_metrics()   category metrics)     │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -101,9 +104,11 @@ Input (B × 3 × 256 × 256)
     │
     ▼
 ┌──────────────────────────────────────────────────┐
-│              MobileNetV4-S Backbone               │
-│  (timm, pretrained, stage 0-1 frozen)            │
-│  out_indices=(2, 3, 4) → 3 feature scales        │
+│              timm Backbone (dynamically probed)    │
+│  (MobileNetV4-S / EfficientViT / MobileViT)       │
+│  n_stages probed → last 3 as multi-scale output   │
+│  regex-based freeze (blocks.N / stages.N /        │
+│   stages_N naming conventions)                    │
 └──────────────────────┬───────────────────────────┘
                        │
                        ▼
@@ -179,8 +184,8 @@ Output: (B,) quality scores ∈ [0, 1]
 │    Epochs 21-40:  vla_score                  │
 │    Epochs 41-50:  execution_score            │
 │                                              │
-│  Logging: self.log() → SwanLabLogger         │
-│           (cloud: swanlab.cn)                  │
+│  Logging: self.log() → WandbLogger         │
+│           (cloud: wandb.ai)                  │
 │           fallback → MetricsHistoryCallback  │
 │           (local: history.json)              │
 └─────────────────────────────────────────────┘
@@ -197,9 +202,21 @@ scripts/data_synthesis.py
                   ├── uses → annotations.py (build_ref_score_lookup, assign_task_label, etc.)
                   └── uses → utils.py (find_images, split_samples, write_manifest)
 
-LightningCLI (main.py)
+scripts/finetune_baselines.py
+  ├── uses → UAVIQADataset (dataset.py) — reuses existing data loading
+  ├── uses → metrics.py (evaluate_iqa, per_task_metrics, per_distortion_category_metrics)
+  ├── uses → utils.py (load_image_tensor, load_manifest, setup_logging)
+  ├── owns → BaselineLightningModule (standalone wrapper around pyiqa model)
+  │            └── owns → pyiqa model (brisque/niqe/clipiqa/maniqa/topiq_nr)
+  └── owns → BaselineDataModule (standalone, no LightningCLI)
+                 └── owns → UAVIQADataset (reuses manifest data loading)
+
+scripts/fix_configs.py
+  └── utility — batch-converts experiment YAML configs from nested to flat format
+
+LightningCLI (scripts/train.py)
   ├── --config → configs/experiments/<name>.yaml
-  ├── configures → SwanLabLogger + CSVLogger (dual logger)
+  ├── configures → WandbLogger + CSVLogger (dual logger)
   ├── calls → UAVIQALightningModule
   │              ├── owns → UAVIQANet
   │              │            ├── owns → MobileNetV4-S (timm)
@@ -233,7 +250,9 @@ LightningCLI (main.py)
 | 3-stage curriculum | Progressive supervision: cheap VLM → medium VLA → expensive execution |
 | ListMLE loss | Per-distortion ranking signal improves relative quality ordering |
 | Feature sharing (forward_features) | Backbone+FPN+FAB computed once, reused for pred + cross-task loss |
-| main.py + LightningCLI | Replaces custom UAVIQACLI; self-contained YAML per experiment |
-| SwanLabLogger + CSVLogger | Cloud + local dual logging; no cloud dependency for local runs |
+| Dynamic stage probing | Probes backbone forward pass to determine n_stages, selects last 3 — compatible with MobileNetV4, EfficientViT, MobileViT |
+| Regex-based backbone freeze | `_freeze_backbone_stages` matches `blocks.N`/`stages.N`/`stages_N` via `re` — supports diverse timm backbones |
+| scripts/train.py + LightningCLI | Replaces custom UAVIQACLI; self-contained YAML per experiment |
+| WandbLogger + CSVLogger | Cloud + local dual logging; no cloud dependency for local runs |
 | SetupRunCallback | Manifests SHA256 hash for dataset versioning on every run |
 | ResultsSavingCallback | Best checkpoint auto-test + structured results.json with git_commit |

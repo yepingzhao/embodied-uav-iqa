@@ -47,7 +47,7 @@ scripts/
 
 configs/default.yaml          # Model/data/training config template
 configs/experiments/          # 21 per-experiment configs (r013–r024c)
-main.py                       # Unified training entry point (LightningCLI)
+scripts/train.py              # Unified training entry point (LightningCLI)
 ```
 
 ## Gotchas
@@ -63,7 +63,7 @@ main.py                       # Unified training entry point (LightningCLI)
 - **4 task types**: `tracking=0`, `inspection=1`, `delivery=2`, `sar=3`.
 - **Ablation toggles**: use per-experiment config in `configs/experiments/` (e.g., `r016_no_fab.yaml`), or override via CLI: `--model.init_args.use_fab false`.
 - **Test coverage is sparse** (only `test_distortion.py`, `test_lightning.py`, and `test_data_synthesis.py` exist). Add tests to `tests/` when implementing new functionality.
-- **Training entry point**: `main.py` (vanilla LightningCLI). `run_m3_train.py` and `UAVIQACLI` were removed in 2026-06 refactor.
+- **Training entry point**: `scripts/train.py` (vanilla LightningCLI). `main.py`, `run_m3_train.py` and `UAVIQACLI` were removed in 2026-06 refactor.
 
 ## Research context
 

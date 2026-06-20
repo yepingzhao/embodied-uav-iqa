@@ -95,7 +95,7 @@ tests/
   test_distortion.py           # 10 tests for distortion models
   test_lightning.py            # Tests for LightningModule & DataModule
 
-main.py                        # Unified training entry point (LightningCLI)
+scripts/train.py               # Unified training entry point (LightningCLI)
 
 refine-logs/                   # Research refinement artifacts
   FINAL_PROPOSAL.md            # Method thesis (score 9.0/10)
@@ -167,32 +167,32 @@ python scripts/data_synthesis.py annotate \
 
 ### Training
 
-All hyperparameters live in self-contained YAML configs. Training uses `main.py` (vanilla LightningCLI).
+All hyperparameters live in self-contained YAML configs. Training uses `scripts/train.py` (vanilla LightningCLI).
 
 ```bash
 # Standard training (task-conditioned, all components)
-python main.py fit --config configs/experiments/r013_task_cond.yaml
+python scripts/train.py fit --config configs/experiments/r013_task_cond.yaml
 
 # Multi-seed via shell loop
 for seed in 42 100 200; do
-  python main.py fit --config configs/experiments/r013_task_cond.yaml \
+  python scripts/train.py fit --config configs/experiments/r013_task_cond.yaml \
     --seed_everything $seed \
     --trainer.default_root_dir "outputs/r013_seed${seed}"
 done
 
 # Per-task training
-python main.py fit --config configs/experiments/r024a_tracking.yaml
-python main.py fit --config configs/experiments/r024a_inspection.yaml
+python scripts/train.py fit --config configs/experiments/r024a_tracking.yaml
+python scripts/train.py fit --config configs/experiments/r024a_inspection.yaml
 
 # Leave-one-out (train on 3 tasks, test on SAR)
-python main.py fit --config configs/experiments/r024b_leave_sar.yaml
+python scripts/train.py fit --config configs/experiments/r024b_leave_sar.yaml
 
 # Distortion filter (generic only or uav_only)
-python main.py fit --config configs/experiments/r021_generic_only.yaml
-python main.py fit --config configs/experiments/r021b_uav_only.yaml
+python scripts/train.py fit --config configs/experiments/r021_generic_only.yaml
+python scripts/train.py fit --config configs/experiments/r021b_uav_only.yaml
 
 # Override any config key from CLI
-python main.py fit --config configs/experiments/r013_task_cond.yaml \
+python scripts/train.py fit --config configs/experiments/r013_task_cond.yaml \
   --data.init_args.dry_run true \
   --trainer.max_epochs 3
 ```
@@ -203,17 +203,17 @@ Each ablation has its own self-contained config:
 
 ```bash
 # Without Frequency-Aware Branch
-python main.py fit --config configs/experiments/r016_no_fab.yaml
+python scripts/train.py fit --config configs/experiments/r016_no_fab.yaml
 
 # Without CBAM
-python main.py fit --config configs/experiments/r018_no_cbam.yaml
+python scripts/train.py fit --config configs/experiments/r018_no_cbam.yaml
 
 # Without task conditioning
-python main.py fit --config configs/experiments/r017_no_task_cond.yaml
+python scripts/train.py fit --config configs/experiments/r017_no_task_cond.yaml
 
 # Backbone ablations
-python main.py fit --config configs/experiments/r019_mobilevit_s.yaml
-python main.py fit --config configs/experiments/r020_efficientvit_b0.yaml
+python scripts/train.py fit --config configs/experiments/r019_mobilevit_s.yaml
+python scripts/train.py fit --config configs/experiments/r020_efficientvit_b0.yaml
 ```
 
 ### Benchmark
@@ -292,7 +292,7 @@ trainer:
   max_epochs: 50
   gradient_clip_val: 1.0
   logger:
-    - class_path: swanlab.integration.pytorch_lightning.SwanLabLogger
+    - class_path: lightning.pytorch.loggers.WandbLogger
     - class_path: lightning.pytorch.loggers.CSVLogger
   callbacks:
     - class_path: uav_iqa.callbacks.CurriculumStageCallback
@@ -332,7 +332,7 @@ black src/ tests/ scripts/
 - **Loss layers:** MSE + λ_rank · ListMLE (per-distortion ranking) + λ_cross_task · CrossTaskRegularization (negative pairwise score variance)
 - **Real-ESRGAN** is optional; falls back to bicubic + sharpen if not installed
 - **openVLA/CARLA** are manual installs (not on PyPI); not needed for basic training/inference
-- **Training entry:** `main.py` (vanilla LightningCLI). `run_m3_train.py` and `UAVIQACLI` were removed in the 2026-06 refactor.
+- **Training entry:** `scripts/train.py` (vanilla LightningCLI). `main.py`, `run_m3_train.py` and `UAVIQACLI` were removed in the 2026-06 refactor.
 - **Score annotation:** `scripts/data_synthesis.py annotate` applies degradation model: `score = ref_score × degradation_factor(distortion, task, intensity)`
 
 ---

@@ -47,7 +47,7 @@
                          │ added by          ▲
                          ▼                   │
                 ┌───────────────────────────────────────────┐
-                │  main.py (Lightning CLI — no custom CLI)  │
+                │  scripts/train.py (Lightning CLI — no custom CLI)  │
                 └───────────────────────────────────────────┘
 
 distortion.py (standalone)
@@ -125,7 +125,7 @@ Also exports `UAV_DISTORTION_NAMES` — a `frozenset` of the 6 UAV-specific dist
 **Purpose:** UAVIQANet — frequency-aware task-conditioned lightweight NR-IQA model (~5.4M params).
 
 **Location:** `src/uav_iqa/model.py`
-**Lines:** 395
+**Lines:** 426
 
 ### Key Classes
 
@@ -136,7 +136,7 @@ Also exports `UAV_DISTORTION_NAMES` — a `frozenset` of the 6 UAV-specific dist
 | `FrequencyAwareBranch` | Patch FFT (32×32, stride 16) → log-polar histogram → 3-layer tiny CNN → proj to 64-dim |
 | `CrossAttentionGate` | Gating: α = σ(W·[f_s, f_f]), outputs α ⊙ f_f |
 | `TaskConditionedHead` | FiLM modulation: task_embed → γ, β → h' = γ ⊙ h + β → FC(128→1) → sigmoid |
-| `UAVIQANet` | Top-level model: MobileNetV4-S → PANet FPN → CBAM → FAB (optional) → CrossAttnGate → TaskConditionedHead (optional) |
+| `UAVIQANet` | Top-level model: MobileNetV4-S → PANet FPN → CBAM → FAB (optional) → CrossAttnGate → TaskConditionedHead (optional). **Dynamic stage probing**: probes backbone to determine number of feature stages, selects last 3 as multi-scale output. **Regex-based freeze**: uses `re` matching to freeze stages across naming conventions (`blocks.N`, `stages.N`, `stages_N`) — works with MobileNetV4, EfficientViT, MobileViT, and generic timm backbones. |
 
 ### TASK_MAP
 
@@ -167,8 +167,9 @@ def forward_all_tasks(self, x: Tensor) -> Tensor
 ### Dependencies
 
 - `torch`, `torch.nn`, `torch.nn.functional`
-- `timm` — MobileNetV4-S backbone
+- `timm` — Backbone (dynamically probed for feature stage count)
 - `math` — log-polar coordinate computation
+- `re` — regex-based backbone stage freezing (backbone-agnostic naming support)
 
 ---
 
@@ -607,5 +608,5 @@ __all__ = [
     "DatasetFormat",                                # ← NEW category
     "DataSynthesisPipeline", "create_pipeline",
 ]
-# Note: UAVIQACLI removed in 2026-06 refactor — use main.py + vanilla LightningCLI
+# Note: UAVIQACLI removed in 2026-06 refactor — use scripts/train.py + vanilla LightningCLI
 ```

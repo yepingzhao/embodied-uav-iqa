@@ -40,11 +40,14 @@ docs/                  →  Literature reviews and research roadmap
 
 | Entry Point | Purpose |
 |-------------|---------|
-| `main.py` | **Unified training entry point** — LightningCLI with YAML configs |
+| `scripts/train.py` | **Unified training entry point** — LightningCLI with YAML configs |
 | `scripts/data_synthesis.py` | Full M1 data synthesis pipeline (extract/inject/manifest/annotate) |
 | `scripts/benchmark_iqa_methods.py` | Benchmark 15+ existing IQA methods |
+| `scripts/finetune_baselines.py` | **NEW** — Fine-tune DL-based IQA baselines (brisque/niqe/clipiqa/maniqa/topiq_nr) on UAV data |
 | `scripts/overfit_sanity_check.py` | Model correctness overfit test |
 | `scripts/validate_synth_real_correlation.py` | C2 correlation validation |
+| `scripts/fix_configs.py` | **NEW** — Convert experiment configs from nested to flat `init_args` format |
+| `scripts/visualize_distortions.py` | Visual sanity check: grid of all 24 distortions × 5 intensities |
 
 ## Experiment Configs (`configs/experiments/`)
 
@@ -72,7 +75,7 @@ docs/                  →  Literature reviews and research roadmap
 |----------|--------|---------|
 | AirCopBench dataset | arXiv 2511.11025 | `data_synthesis.py` (extract/manifest/annotate steps) |
 | Real-ESRGAN (optional) | GitHub (xinntao/Real-ESRGAN) | `LowResSuperResolution` distortion |
-| pyiqa (optional) | PyPI | `benchmark_iqa_methods.py` |
+| pyiqa (optional) | PyPI | `benchmark_iqa_methods.py`, `finetune_baselines.py` |
 | openVLA (manual install) | GitHub | VLA annotation stage |
 | VLM libs (optional) | vllm, transformers, accelerate | VLM annotation stage |
 

@@ -6,13 +6,13 @@
 
 ```
 embodied-uav-iqa/
-├── src/uav_iqa/           # Core library (12 modules, ~3,559 LOC total)
-├── scripts/               # 5 executable experiment scripts
+├── src/uav_iqa/           # Core library (12 modules, ~3,577 LOC total)
+├── scripts/               # 8 executable experiment scripts
 ├── configs/               # YAML configuration (LightningCLI) + 21 experiment configs
-├── tests/                 # pytest test suite (3 files, 35+ tests)
+├── tests/                 # pytest test suite (3 files, 54 tests)
 ├── refine-logs/           # 16 research refinement artifacts
 ├── docs/                  # Literature reviews, research roadmap, codemaps
-├── main.py                # Unified training entry point (LightningCLI)
+├── scripts/train.py        # Unified training entry point (LightningCLI)
 ├── pyproject.toml         # Project metadata, deps, tool config
 ├── CLAUDE.md              # Agent guidance (architecture, commands)
 ├── AGENTS.md              # Quick-reference for development agents
@@ -35,16 +35,16 @@ embodied-uav-iqa/
 |------|-------|---------|
 | `__init__.py` | 83 | Public API: exports **35 symbols** (was 22) |
 | `distortion.py` | 685 | 24 distortion models + UAVDistortionPipeline + `UAV_DISTORTION_NAMES` constant |
-| `model.py` | 395 | UAVIQANet: backbone → FPN → CBAM → FAB → task heads, `forward_features()` feature sharing |
-| `dataset.py` | 260 | UAVIQADataset + `validate_manifest()` + constants (TASK_NAMES, TASK_TO_ID) |
+| `model.py` | **426** | UAVIQANet: backbone → FPN → CBAM → FAB → task heads, `forward_features()` feature sharing. **Dynamic stage probing** + **regex-based freeze** for backbone-agnostic compatibility |
+| `dataset.py` | 250 | UAVIQADataset + `validate_manifest()` + constants (TASK_NAMES, TASK_TO_ID) |
 | `losses.py` | 30 | ListMLELoss + CrossTaskRegularization (replaces former `trainer.py`) |
-| `metrics.py` | 150 | SRCC, PLCC, RMSE, Kendall τ + per-task / per-distortion / **per-category** metrics |
+| `metrics.py` | 145 | SRCC, PLCC, RMSE, Kendall τ + per-task / per-distortion / **per-category** metrics |
 | `annotations.py` | 367 | AirCopBench annotation parsing, degradation factors, score synthesis, **parse_distortion_key**, **compute_synthetic_score** |
 | `data_synthesis.py` | **769** | **NEW** — dataset-agnostic pipeline: DatasetFormat (ABC + registry), AirCopBenchFormat, GenericImageDirFormat, DataSynthesisPipeline, create_pipeline |
-| `lightning_module.py` | 280 | LightningModule: UAVIQANet + MSE/ListMLE/cross-task, feature sharing, per-distortion ranking |
-| `data_module.py` | 157 | LightningDataModule: manifest filtering (task/distortion/leave-out), train/val/test splits |
+| `lightning_module.py` | 278 | LightningModule: UAVIQANet + MSE/ListMLE/cross-task, feature sharing, per-distortion ranking |
+| `data_module.py` | 161 | LightningDataModule: manifest filtering (task/distortion/leave-out), train/val/test splits |
 | `callbacks.py` | 256 | SetupRunCallback + CurriculumStageCallback + MetricsHistoryCallback + ResultsSavingCallback |
-| `utils.py` | **127** | **Expanded** — `count_parameters()`, `find_images()`, `load_image_tensor()`, `load_manifest()`, `write_manifest()`, `split_samples()`, `load_task_map()`, `setup_logging()` |
+| `utils.py` | 127 | `count_parameters()`, `find_images()`, `load_image_tensor()`, `load_manifest()`, `write_manifest()`, `split_samples()`, `load_task_map()`, `setup_logging()` |
 
 ### Per-File Dependencies
 
@@ -59,7 +59,7 @@ distortion.py
   → cv2, numpy, scipy.signal, albumentations
 
 model.py
-  → torch, timm
+  → torch, timm, math, re
 
 dataset.py
   → torch, numpy
@@ -104,17 +104,21 @@ utils.py
 | File | Lines | Purpose | Pipeline Stage |
 |------|-------|---------|----------------|
 | `data_synthesis.py` | 196 | Unified data synthesis CLI (extract/inject/manifest/annotate/all). Uses `DataSynthesisPipeline` from `src/uav_iqa/data_synthesis.py` | M1 |
-| `benchmark_iqa_methods.py` | 331 | Benchmark 15+ IQA methods (pyiqa) on test set | M2 |
+| `benchmark_iqa_methods.py` | 594 | Benchmark 15+ IQA methods (pyiqa) on test set | M2 |
+| `finetune_baselines.py` | **420** | **NEW** — Fine-tune DL-based IQA baselines (brisque/niqe/clipiqa/maniqa/topiq_nr) on UAV training data. Uses standalone LightningModule + LightningDataModule, no LightningCLI | M2 |
 | `overfit_sanity_check.py` | 105 | Overfit correctness test: train on 100 images, verify loss → 0 | Validation |
 | `visualize_distortions.py` | 108 | Visual sanity check: grid of all 24 distortions × 5 intensities | Validation |
 | `validate_synth_real_correlation.py` | 132 | C2 correlation validation: synthetic vs real scores | Validation |
+| `fix_configs.py` | **129** | **NEW** — Convert experiment YAML configs from nested `class_path+init_args` to flat format; ensures CurriculumStageCallback and CSVLogger `save_dir` are present | Utility |
+| `train.py` | **36** | **Unified training entry point** — vanilla LightningCLI (fit/test/predict). Usage: `python scripts/train.py fit --config configs/experiments/<name>.yaml` | M3 |
 
 ### Script Execution Order (Standard Pipeline)
 
 ```
 1. data_synthesis.py all            # Extract → inject → manifest → annotate (full M1 pipeline)
-2. main.py                         # Train UAVIQANet via LightningCLI + experiment config
-3. benchmark_iqa_methods.py         # Benchmark (optional, after training)
+2. scripts/train.py                 # Train UAVIQANet via LightningCLI + experiment config
+3. benchmark_iqa_methods.py         # Benchmark zero-shot IQA methods (optional, after training)
+4. finetune_baselines.py            # Fine-tune DL baselines on UAV data (optional, M2-R009a)
 ```
 
 ### Script CLI Patterns
@@ -123,9 +127,10 @@ All scripts support `--help` (argparse). Common conventions:
 
 ```bash
 # Data paths: --manifest-dir, --aircopbench-dir, --data-root, --image-dir
-# Training via main.py: python main.py fit --config configs/experiments/<name>.yaml
+# Training via scripts/train.py: python scripts/train.py fit --config configs/experiments/<name>.yaml
 # Parallelism via --workers (default 4, 8, or 16)
-# Scripts use `sys.path.insert(0, "src")` to resolve imports
+# Most scripts import from installed package (`pip install -e .` or `uv sync`)
+# Only test_lightning.py still uses sys.path.insert for src/ resolution
 ```
 
 ---
@@ -200,7 +205,7 @@ trainer:
   gradient_clip_val: 1.0
   log_every_n_steps: 10
   logger:
-    - class_path: swanlab.integration.pytorch_lightning.SwanLabLogger
+    - class_path: lightning.pytorch.loggers.WandbLogger
       init_args:
         project: uav-iqa
     - class_path: lightning.pytorch.loggers.CSVLogger
@@ -219,11 +224,11 @@ trainer:
 
 ## `tests/` — Test Suite
 
-| File | Tests | Coverage |
-|------|-------|----------|
-| `test_distortion.py` | 10 | All 6 UAV distortions + pipeline + intensity range + generate_all + determinism |
-| `test_lightning.py` | 94 | LightningModule init, ablations, optimizer config, training step; DataModule setup with mock data |
-| `test_data_synthesis.py` | **336** (NEW) | DatasetFormat registry (4), AirCopBenchFormat (10), GenericImageDirFormat (4), create_pipeline (3), PipelineExtract (2), PipelineManifest (1), PipelineAnnotate (2), PipelineStepsParsing (3) |
+| File | Lines | Tests | Coverage |
+|------|-------|-------|----------|
+| `test_distortion.py` | 181 | **19** | All 6 UAV distortions + pipeline + 7 generic distortion categories + intensity range + determinism |
+| `test_lightning.py` | 94 | **6** | LightningModule init, ablations, optimizer config, training step; DataModule setup with mock data |
+| `test_data_synthesis.py` | 336 | **29** | DatasetFormat registry (4), AirCopBenchFormat (10), GenericImageDirFormat (4), create_pipeline (3), PipelineExtract (2), PipelineManifest (1), PipelineAnnotate (2), PipelineStepsParsing (3) |
 
 ### Test Dependencies
 
@@ -277,7 +282,7 @@ test_data_synthesis.py    → uav_iqa.data_synthesis (DatasetFormat, DataSynthes
 
 | File | Purpose |
 |------|---------|
-| `main.py` | **Unified training entry point** — vanilla LightningCLI (fit/test/predict). Usage: `python main.py fit --config configs/experiments/<name>.yaml` |
+| `scripts/train.py` | **Unified training entry point** — vanilla LightningCLI (fit/test/predict). Usage: `python scripts/train.py fit --config configs/experiments/<name>.yaml` |
 | `pyproject.toml` | Package metadata, dependencies, ruff config, pytest config |
 | `.python-version` | Python version pinning (3.10+) |
 | `uv.lock` | Reproducible dependency lock file |
