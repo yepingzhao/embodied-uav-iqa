@@ -1,33 +1,29 @@
 seed_everything: 42
 model:
-  class_path: uav_iqa.lightning_module.UAVIQALightningModule
-  init_args:
-    backbone: mobilenetv4_conv_small
-    num_tasks: 4
-    use_fab: true
-    use_cbam: true
-    use_task_conditioning: true
-    freeze_backbone_stage: 2
-    lambda_rank: 0.3
-    lambda_cross_task: 0.1
-    lr: 0.0012
-    weight_decay: 0.0001
-    warmup_epochs: 5
-    total_epochs: 50
-    annotator_stage: vla
+  backbone: mobilenetv4_conv_small
+  num_tasks: 4
+  use_fab: true
+  use_cbam: true
+  use_task_conditioning: true
+  freeze_backbone_stage: 2
+  lambda_rank: 0.3
+  lambda_cross_task: 0.1
+  lr: 0.0012
+  weight_decay: 0.0001
+  warmup_epochs: 5
+  total_epochs: 50
+  annotator_stage: vla
 data:
-  class_path: uav_iqa.data_module.UAVIQDataModule
-  init_args:
-    data_root: data/processed
-    batch_size: 256
-    num_workers: 16
-    image_size: 256
-    annotator_stage: vla
-    task: null
-    val_task: null
-    distortion_filter: null
-    leave_out_task: null
-    dry_run: false
+  data_root: data/processed
+  batch_size: 256
+  num_workers: 16
+  image_size: 256
+  annotator_stage: vla
+  task: null
+  val_task: null
+  distortion_filter: null
+  leave_out_task: null
+  dry_run: false
 trainer:
   accelerator: auto
   devices: 1
@@ -40,8 +36,10 @@ trainer:
   - class_path: swanlab.integration.pytorch_lightning.SwanLabLogger
     init_args:
       project: uav-iqa
+      experiment_name: r024c_multitask
   - class_path: lightning.pytorch.loggers.CSVLogger
-    init_args: {}
+    init_args:
+      save_dir: outputs/r024c_multitask
   callbacks:
   - class_path: uav_iqa.callbacks.SetupRunCallback
   - class_path: uav_iqa.callbacks.CurriculumStageCallback

@@ -5,22 +5,34 @@ Runs 15+ existing IQA methods on the UAV-Embodied-IQA test set and computes
 SRCC/PLCC against VLA decision scores. Models are cached per method to avoid
 re-instantiation overhead on large test sets.
 
+Two modes per method:
+  - zero-shot: pretrained weights only (current default)
+  - fine-tuned: checkpoint from scripts/finetune_baselines.py
+
 Supported methods:
-  FR: psnr, ssim, ms_ssim, lpips_alex, lpips_vgg, dists, ahiq, topiq_fr
-  NR-handcrafted: brisque, niqe, ilniqe
+  FR: psnr, ssim, ms_ssim, lpips_alex, lpips_vgg, ahiq, topiq_fr
+  NR-handcrafted: brisque, niqe
   NR-deep: maniqa, clip_iqa, q_align, topiq_nr
 
 Usage:
+    # Zero-shot only
     python scripts/benchmark_iqa_methods.py \
         --data-dir data/processed \
         --output-dir outputs/benchmark \
         --methods psnr ssim lpips_alex brisque clip_iqa
+
+    # With fine-tuned checkpoints (runs zero-shot first, then fine-tuned)
+    python scripts/benchmark_iqa_methods.py \
+        --data-dir data/processed \
+        --output-dir outputs/benchmark \
+        --finetuned-dir outputs/finetune
 """
 
 import argparse
 import json
 from functools import lru_cache
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import torch
@@ -184,22 +196,228 @@ class IQAEvaluator:
         return self._pyiqa_nr(img_t, "topiq_nr")
 
 
-# Registry: name -> (category, needs_instance)
+# Registry: name -> (category, needs_instance, can_finetune)
 AVAILABLE_METHODS = {
-    "psnr": ("FR", False),
-    "ssim": ("FR", False),
-    "ms_ssim": ("FR", False),
-    "lpips_alex": ("FR", True),
-    "lpips_vgg": ("FR", True),
-    "ahiq": ("FR", True),
-    "topiq_fr": ("FR", True),
-    "brisque": ("NR", True),
-    "niqe": ("NR", True),
-    "clip_iqa": ("NR", True),
-    "maniqa": ("NR", True),
-    "q_align": ("NR", True),
-    "topiq_nr": ("NR", True),
+    "psnr": ("FR", False, False),
+    "ssim": ("FR", False, False),
+    "ms_ssim": ("FR", False, False),
+    "lpips_alex": ("FR", True, True),
+    "lpips_vgg": ("FR", True, True),
+    "ahiq": ("FR", True, True),
+    "topiq_fr": ("FR", True, True),
+    "brisque": ("NR", True, True),
+    "niqe": ("NR", True, True),
+    "clip_iqa": ("NR", True, True),
+    "maniqa": ("NR", True, True),
+    "q_align": ("NR", True, True),
+    "topiq_nr": ("NR", True, True),
 }
+
+# Map method name to pyiqa metric name (some differ)
+METHOD_TO_PYIQA = {
+    "brisque": "brisque",
+    "niqe": "niqe",
+    "clip_iqa": "clipiqa",
+    "maniqa": "maniqa",
+    "q_align": "qalign",
+    "topiq_nr": "topiq_nr",
+    "ahiq": "ahiq",
+    "topiq_fr": "topiq_fr",
+}
+
+
+def load_finetuned_checkpoint(ckpt_path: str, device: torch.device):
+    """Load a fine-tuned pyiqa model from checkpoint.
+
+    Returns the model callable (img, ref=None) -> scalar tensor,
+    or None on failure.
+    """
+    import pyiqa
+
+    try:
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    except Exception as e:
+        _log.warning("  Failed to load checkpoint %s: %s", ckpt_path, e)
+        return None
+
+    # Lightning checkpoints store model state under "state_dict" with "model." prefix
+    state_dict = ckpt.get("state_dict", ckpt)
+    hparams = ckpt.get("hyper_parameters", {})
+    method_name = hparams.get("method_name") if isinstance(hparams, dict) else None
+
+    if method_name is None:
+        _log.warning("  Checkpoint missing method_name in hyper_parameters")
+        return None
+
+    pyiqa_name = METHOD_TO_PYIQA.get(method_name, method_name)
+    model = pyiqa.create_metric(pyiqa_name, device=device)
+
+    # Strip "model." prefix from state_dict keys
+    model_state = {}
+    for k, v in state_dict.items():
+        if k.startswith("model."):
+            model_state[k[len("model."):]] = v
+
+    if not model_state:
+        _log.warning("  Checkpoint has no 'model.*' keys")
+        return None
+
+    try:
+        model.load_state_dict(model_state, strict=False)
+    except Exception as e:
+        _log.warning("  State dict load failed: %s", e)
+        return None
+
+    model.eval()
+    return model
+
+
+def run_benchmark(
+    manifest: list,
+    data_dir: Path,
+    device: torch.device,
+    methods: list,
+    image_size: int,
+    finetuned_dir: Optional[Path] = None,
+) -> dict:
+    """Run benchmark for given methods, optionally using fine-tuned checkpoints.
+
+    Args:
+        finetuned_dir: If provided, deep methods that have a corresponding
+                       {method}/best.ckpt checkpoint will use fine-tuned weights.
+                       Results are keyed as "{method}_ft" to distinguish.
+    """
+    targets = []
+    task_ids = []
+    distortion_labels = []
+    for s in manifest:
+        score = s.get("vla_score", 0.0)
+        if isinstance(score, list):
+            score = np.mean(score)
+        targets.append(float(score))
+        task_ids.append(s.get("task", "tracking"))
+        distortion_labels.append(s.get("distortion", "unknown"))
+    targets = np.array(targets)
+
+    evaluator = IQAEvaluator(device=device)
+    results = {}
+
+    # Pre-load fine-tuned models for methods that have checkpoints
+    finetuned_models = {}
+    if finetuned_dir and finetuned_dir.exists():
+        for method_name in methods:
+            info = AVAILABLE_METHODS.get(method_name)
+            if info is None or not info[2]:  # can_finetune=False
+                continue
+            ckpt_path = finetuned_dir / method_name / "best.ckpt"
+            if ckpt_path.exists():
+                model = load_finetuned_checkpoint(str(ckpt_path), device)
+                if model is not None:
+                    finetuned_models[method_name] = model
+                    _log.info("  Loaded fine-tuned %s from %s", method_name, ckpt_path)
+
+    for method_name in methods:
+        if method_name not in AVAILABLE_METHODS:
+            _log.info("  SKIP %s: not available", method_name)
+            continue
+
+        cat, needs_instance, can_finetune = AVAILABLE_METHODS[method_name]
+
+        # --- Zero-shot ---
+        func = (
+            getattr(evaluator, method_name.replace("-", "_"))
+            if needs_instance
+            else getattr(IQAEvaluator, method_name)
+        )
+        _log.info("  Running %s (%s, zero-shot)...", method_name, cat)
+
+        predictions = []
+        for i, s in enumerate(manifest):
+            img_np, img_t, score, task, dist, intens, ref_path = load_image_and_score(
+                s, data_dir, image_size
+            )
+            try:
+                pred = func(data_dir, img_np, img_t, ref_path)
+            except Exception:
+                pred = 0.0
+            predictions.append(float(pred) if pred is not None else 0.0)
+            if (i + 1) % 1000 == 0:
+                _log.info("    %d/%d", i + 1, len(manifest))
+
+        preds = np.array(predictions)
+        metrics = evaluate_iqa(preds, targets)
+        per_task = per_task_metrics(preds, targets, task_ids)
+        per_cat = per_distortion_category_metrics(preds, targets, distortion_labels)
+
+        results[method_name] = {
+            "category": cat,
+            "finetuned": False,
+            "srcc": float(metrics["srcc"]),
+            "plcc": float(metrics["plcc"]),
+            "rmse": float(metrics["rmse"]),
+            "kendall_tau": float(metrics.get("kendall_tau", 0.0)),
+            "per_task": per_task,
+            "per_distortion_category": per_cat,
+        }
+        _log.info(
+            "    Zero-shot  SRCC=%.4f PLCC=%.4f", metrics["srcc"], metrics["plcc"]
+        )
+
+        # --- Fine-tuned (if available) ---
+        if method_name in finetuned_models:
+            _log.info("  Running %s (%s, fine-tuned)...", method_name, cat)
+            ft_model = finetuned_models[method_name]
+            is_fr = (cat == "FR")
+
+            ft_preds = []
+            with torch.no_grad():
+                for i, s in enumerate(manifest):
+                    img_t = load_image_tensor(
+                        Path(data_dir) / s["path"], image_size
+                    ).unsqueeze(0).to(device)
+
+                    ref_t = None
+                    if is_fr:
+                        ref_path = s.get("ref_path", "")
+                        if ref_path:
+                            ref_img = Image.open(Path(data_dir) / ref_path).convert("RGB")
+                            ref_np = np.array(ref_img).astype(np.float32) / 255.0
+                            ref_t = torch.from_numpy(ref_np).permute(2, 0, 1).unsqueeze(0).to(device)
+
+                    try:
+                        if is_fr and ref_t is not None:
+                            out = ft_model(img_t, ref_t)
+                        else:
+                            out = ft_model(img_t)
+                        pred = float(out.item()) if hasattr(out, "item") else float(out)
+                    except Exception:
+                        pred = 0.0
+
+                    ft_preds.append(pred)
+                    if (i + 1) % 1000 == 0:
+                        _log.info("    %d/%d", i + 1, len(manifest))
+
+            ft_preds_arr = np.array(ft_preds)
+            ft_metrics = evaluate_iqa(ft_preds_arr, targets)
+            ft_per_task = per_task_metrics(ft_preds_arr, targets, task_ids)
+            ft_per_cat = per_distortion_category_metrics(ft_preds_arr, targets, distortion_labels)
+
+            ft_key = f"{method_name}_ft"
+            results[ft_key] = {
+                "category": cat,
+                "finetuned": True,
+                "srcc": float(ft_metrics["srcc"]),
+                "plcc": float(ft_metrics["plcc"]),
+                "rmse": float(ft_metrics["rmse"]),
+                "kendall_tau": float(ft_metrics.get("kendall_tau", 0.0)),
+                "per_task": ft_per_task,
+                "per_distortion_category": ft_per_cat,
+            }
+            _log.info(
+                "    Fine-tuned SRCC=%.4f PLCC=%.4f", ft_metrics["srcc"], ft_metrics["plcc"]
+            )
+
+    return results
 
 
 def main():
@@ -211,7 +429,7 @@ def main():
     parser.add_argument(
         "--methods",
         nargs="+",
-        default=list(AVAILABLE_METHODS.keys()),
+        default=[k for k in AVAILABLE_METHODS],
         help="Methods to benchmark",
     )
     parser.add_argument("--image-size", type=int, default=256)
@@ -219,6 +437,11 @@ def main():
         "--max-samples", type=int, default=0, help="Limit samples (0 = all)"
     )
     parser.add_argument("--device", default="cpu", help="Torch device (cuda, cpu, mps)")
+    parser.add_argument(
+        "--finetuned-dir",
+        default=None,
+        help="Directory containing fine-tuned checkpoints (e.g., outputs/finetune)",
+    )
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
@@ -236,89 +459,45 @@ def main():
         manifest = manifest[: args.max_samples]
     _log.info("Evaluating %d samples", len(manifest))
 
-    targets, task_ids, distortion_labels = [], [], []
-    for s in manifest:
-        score = s.get("vla_score", 0.0)
-        if isinstance(score, list):
-            score = np.mean(score)
-        targets.append(float(score))
-        task_ids.append(s.get("task", "tracking"))
-        distortion_labels.append(s.get("distortion", "unknown"))
-    targets = np.array(targets)
-
-    evaluator = IQAEvaluator(device=device)
-
-    results = {}
-    for method_name in args.methods:
-        if method_name not in AVAILABLE_METHODS:
-            _log.info("  SKIP %s: not available", method_name)
-            continue
-
-        cat, needs_instance = AVAILABLE_METHODS[method_name]
-        func = (
-            getattr(evaluator, method_name.replace("-", "_"))
-            if needs_instance
-            else getattr(IQAEvaluator, method_name)
-        )
-        _log.info("  Running %s (%s)...", method_name, cat)
-
-        predictions = []
-        for i, s in enumerate(manifest):
-            img_np, img_t, score, task, dist, intens, ref_path = load_image_and_score(
-                s, data_dir, args.image_size
-            )
-
-            try:
-                pred = func(data_dir, img_np, img_t, ref_path)
-            except Exception:
-                pred = 0.0
-
-            predictions.append(float(pred) if pred is not None else 0.0)
-            if (i + 1) % 1000 == 0:
-                _log.info("    %d/%d", i + 1, len(manifest))
-
-        preds = np.array(predictions)
-        metrics = evaluate_iqa(preds, targets)
-        per_task = per_task_metrics(preds, targets, task_ids)
-        per_cat = per_distortion_category_metrics(preds, targets, distortion_labels)
-
-        results[method_name] = {
-            "category": cat,
-            "srcc": float(metrics["srcc"]),
-            "plcc": float(metrics["plcc"]),
-            "rmse": float(metrics["rmse"]),
-            "kendall_tau": float(metrics.get("kendall_tau", 0.0)),
-            "per_task": per_task,
-            "per_distortion_category": per_cat,
-        }
-        _log.info("    SRCC=%.4f PLCC=%.4f", metrics["srcc"], metrics["plcc"])
+    finetuned_dir = Path(args.finetuned_dir) if args.finetuned_dir else None
+    results = run_benchmark(
+        manifest=manifest,
+        data_dir=data_dir,
+        device=device,
+        methods=args.methods,
+        image_size=args.image_size,
+        finetuned_dir=finetuned_dir,
+    )
 
     with open(output_dir / "benchmark_results.json", "w") as f:
         json.dump({"n_samples": len(manifest), "methods": results}, f, indent=2)
 
-    _log.info("=" * 60)
+    _log.info("=" * 80)
     _log.info("Benchmark Complete")
-    _log.info("=" * 60)
+    _log.info("=" * 80)
     _log.info(
-        "%-20s %-5s %8s %8s %12s %12s",
+        "%-24s %-5s %-8s %8s %8s %12s %12s",
         "Method",
         "Cat",
+        "Finetune",
         "SRCC",
         "PLCC",
         "UAV_SRCC",
         "Gen_SRCC",
     )
-    _log.info("-" * 75)
+    _log.info("-" * 90)
     for name in sorted(results.keys(), key=lambda n: results[n]["srcc"], reverse=True):
         r = results[name]
         uav_srcc = r.get("per_distortion_category", {}).get("UAV", {}).get("srcc", 0)
         gen_srcc = (
             r.get("per_distortion_category", {}).get("Generic", {}).get("srcc", 0)
         )
+        ft_label = "Yes" if r.get("finetuned") else "No"
         _log.info(
-            "%-20s %-5s %8.4f %8.4f %12.4f %12.4f",
+            "%-24s %-5s %-8s %8.4f %8.4f %12.4f %12.4f",
             name,
             r["category"],
+            ft_label,
             r["srcc"],
             r["plcc"],
             uav_srcc,
