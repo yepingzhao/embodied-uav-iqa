@@ -11,7 +11,7 @@ Supported methods:
   NR-deep: maniqa, clip_iqa, q_align, topiq_nr
 
 Usage:
-    python scripts/run_m2_benchmark.py \
+    python scripts/benchmark_iqa_methods.py \
         --data-dir data/processed \
         --output-dir outputs/benchmark \
         --methods psnr ssim lpips_alex brisque clip_iqa
@@ -26,30 +26,20 @@ import numpy as np
 import torch
 from PIL import Image
 
-from uav_iqa.evaluate import (
-    compute_metrics,
+from uav_iqa.metrics import (
+    evaluate_iqa,
     per_task_metrics,
     per_distortion_category_metrics,
 )
-from uav_iqa.utils import setup_logging
+from uav_iqa.utils import load_image_tensor, load_manifest, setup_logging
 
 _log = setup_logging(__name__)
 
 
-def load_manifest(data_dir, split="test"):
-    path = Path(data_dir) / split / "manifest.json"
-    if not path.exists():
-        raise FileNotFoundError(f"Manifest not found: {path}")
-    with open(path) as f:
-        return json.load(f)
-
-
 def load_image_and_score(sample, data_dir, image_size=256):
     img_path = Path(data_dir) / sample["path"]
-    image = Image.open(img_path).convert("RGB")
-    image = image.resize((image_size, image_size), Image.BILINEAR)
-    image_np = np.array(image).astype(np.float32) / 255.0
-    image_tensor = torch.from_numpy(image_np).permute(2, 0, 1).unsqueeze(0)
+    image_tensor = load_image_tensor(img_path, image_size).unsqueeze(0)
+    image_np = image_tensor.squeeze(0).permute(1, 2, 0).contiguous().numpy()
     score = sample.get("vla_score", 0.0)
     if isinstance(score, list):
         score = np.mean(score)
@@ -238,7 +228,10 @@ def main():
     device = torch.device(args.device)
     _log.info("Using device: %s", device)
 
-    manifest = load_manifest(data_dir)
+    manifest_path = data_dir / "test" / "manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Manifest not found: {manifest_path}")
+    manifest = load_manifest(manifest_path)
     if args.max_samples > 0:
         manifest = manifest[: args.max_samples]
     _log.info("Evaluating %d samples", len(manifest))
@@ -285,9 +278,9 @@ def main():
                 _log.info("    %d/%d", i + 1, len(manifest))
 
         preds = np.array(predictions)
-        metrics = compute_metrics(targets, preds)
-        per_task = per_task_metrics(targets, preds, task_ids)
-        per_cat = per_distortion_category_metrics(targets, preds, distortion_labels)
+        metrics = evaluate_iqa(preds, targets)
+        per_task = per_task_metrics(preds, targets, task_ids)
+        per_cat = per_distortion_category_metrics(preds, targets, distortion_labels)
 
         results[method_name] = {
             "category": cat,
@@ -318,9 +311,9 @@ def main():
     _log.info("-" * 75)
     for name in sorted(results.keys(), key=lambda n: results[n]["srcc"], reverse=True):
         r = results[name]
-        uav_srcc = r.get("per_distortion_category", {}).get("UAV", {}).get("SRCC", 0)
+        uav_srcc = r.get("per_distortion_category", {}).get("UAV", {}).get("srcc", 0)
         gen_srcc = (
-            r.get("per_distortion_category", {}).get("Generic", {}).get("SRCC", 0)
+            r.get("per_distortion_category", {}).get("Generic", {}).get("srcc", 0)
         )
         _log.info(
             "%-20s %-5s %8.4f %8.4f %12.4f %12.4f",

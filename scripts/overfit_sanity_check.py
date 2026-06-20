@@ -11,7 +11,7 @@ import lightning as L
 import torch
 from torch.utils.data import DataLoader
 
-from uav_iqa.lightning_model import UAVIQALightningModule
+from uav_iqa.lightning_module import UAVIQALightningModule
 from uav_iqa.utils import setup_logging
 
 _log = setup_logging(__name__)

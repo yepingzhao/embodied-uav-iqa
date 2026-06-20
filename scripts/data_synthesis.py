@@ -14,19 +14,19 @@ Subcommands:
 
 Examples:
     # Full AirCopBench pipeline
-    python scripts/synthesize_data.py all \\
+    python scripts/data_synthesis.py all \\
         --dataset aircopbench \\
         --input-root data/raw/AirCopBench \\
         --output-dir data/processed
 
     # Single step: inject only
-    python scripts/synthesize_data.py inject \\
+    python scripts/data_synthesis.py inject \\
         --image-dir data/processed/ref_images \\
         --output-dir data/processed/distorted \\
         --workers 8
 
     # Generic image directory (no annotations)
-    python scripts/synthesize_data.py all \\
+    python scripts/data_synthesis.py all \\
         --dataset generic \\
         --input-root /path/to/images \\
         --output-dir data/processed

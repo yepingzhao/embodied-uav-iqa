@@ -6,7 +6,7 @@ annotations. This validates Claim C2: "Synthetic distortions injected into clean
 AirCopBench frames correlate with real UAV-degraded image quality."
 
 Usage:
-    python scripts/run_c2_correlation.py \
+    python scripts/validate_synth_real_correlation.py \
         --manifest-dir data/processed \
         --aircopbench-dir data/raw/AirCopBench \
         --output-dir outputs/c2_correlation
@@ -18,17 +18,17 @@ from pathlib import Path
 
 import numpy as np
 
-from uav_iqa.annotation_utils import (
+from uav_iqa.annotations import (
     build_ref_score_lookup,
     compute_synthetic_score,
 )
-from uav_iqa.evaluate import (
+from uav_iqa.metrics import (
     compute_srcc,
     compute_plcc,
     compute_rmse,
     per_distortion_category_metrics,
 )
-from uav_iqa.utils import setup_logging
+from uav_iqa.utils import load_manifest, setup_logging
 
 _log = setup_logging(__name__)
 
@@ -61,8 +61,7 @@ def main():
         _log.error("Manifest not found: %s", manifest_path)
         return
 
-    with open(manifest_path) as f:
-        entries = json.load(f)
+    entries = load_manifest(manifest_path)
     _log.info("Loaded %d entries from %s", len(entries), manifest_path)
 
     ref_lookup = build_ref_score_lookup(Path(args.aircopbench_dir))
@@ -108,11 +107,11 @@ def main():
     _log.info("  By distortion category:")
     for cat, m in per_cat.items():
         _log.info(
-            "    %s (N=%d): SRCC=%.4f PLCC=%.4f",
+            "    %s (n=%d): srcc=%.4f plcc=%.4f",
             cat,
-            m.get("N", 0),
-            m.get("SRCC", 0),
-            m.get("PLCC", 0),
+            m.get("n", 0),
+            m.get("srcc", 0),
+            m.get("plcc", 0),
         )
 
     results = {
