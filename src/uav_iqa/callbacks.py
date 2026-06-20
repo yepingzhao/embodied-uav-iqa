@@ -114,6 +114,7 @@ class MetricsHistoryCallback(L.Callback):
 
     def on_fit_end(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
         run_dir = Path(trainer.default_root_dir)
+        run_dir.mkdir(parents=True, exist_ok=True)
         with open(run_dir / "history.json", "w") as f:
             json.dump(self.history, f, indent=2)
         # Expose for downstream callbacks (e.g. ResultsSavingCallback)
@@ -222,6 +223,7 @@ class ResultsSavingCallback(L.Callback):
             "manifest_hash": getattr(pl_module, "manifest_hash", ""),
             "git_commit": self._get_git_commit(),
         }
+        run_dir.mkdir(parents=True, exist_ok=True)
         with open(run_dir / "results.json", "w") as f:
             json.dump(result, f, indent=2)
 
