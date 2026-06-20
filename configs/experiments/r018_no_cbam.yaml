@@ -33,10 +33,11 @@ trainer:
   log_every_n_steps: 10
   enable_progress_bar: true
   logger:
-  - class_path: swanlab.integration.pytorch_lightning.SwanLabLogger
+  - class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
       project: uav-iqa
-      experiment_name: r018_no_cbam
+      name: r018_no_cbam
+      save_dir: outputs/r018_no_cbam
   - class_path: lightning.pytorch.loggers.CSVLogger
     init_args:
       save_dir: outputs/r018_no_cbam

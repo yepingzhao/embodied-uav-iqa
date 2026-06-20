@@ -34,10 +34,11 @@ trainer:
   enable_progress_bar: true
   default_root_dir: outputs/default
   logger:
-  - class_path: swanlab.integration.pytorch_lightning.SwanLabLogger
+  - class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
       project: uav-iqa
-      experiment_name: default
+      name: default
+      save_dir: outputs/default
   - class_path: lightning.pytorch.loggers.CSVLogger
     init_args:
       save_dir: outputs/default
