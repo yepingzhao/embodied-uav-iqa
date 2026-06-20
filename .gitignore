@@ -75,3 +75,10 @@ lightning_logs/
 
 # MyPy
 .mypy_cache/
+
+# LightningCLI auto-generated config
+config.yaml
+
+# Experiment runner runtime artifacts
+scripts/run_all_experiments.status
+scripts/run_all_experiments.log
