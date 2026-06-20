@@ -28,7 +28,6 @@ def main():
         UAVIQALightningModule,
         UAVIQDataModule,
         args=None,  # parse sys.argv
-        save_config_callback=None,  # configs are in configs/experiments/
     )
 
 

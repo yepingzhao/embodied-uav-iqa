@@ -1,18 +1,19 @@
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import lightning as L
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 
 from .distortion import UAV_DISTORTION_NAMES
+from .losses import CrossTaskRegularization, ListMLELoss
 from .metrics import (
     evaluate_iqa,
     per_distortion_metrics,
     per_task_metrics,
 )
 from .model import UAVIQANet
-from .losses import CrossTaskRegularization, ListMLELoss
 
 
 class UAVIQALightningModule(L.LightningModule):
@@ -63,18 +64,37 @@ class UAVIQALightningModule(L.LightningModule):
         self.annotator_stage = annotator_stage
         self.curriculum_stage = "vlm"
 
-        self._val_preds: List[np.ndarray] = []
-        self._val_targets: List[np.ndarray] = []
+        self._val_preds: List[torch.Tensor] = []
+        self._val_targets: List[torch.Tensor] = []
         self._val_tasks: List[int] = []
         self._val_distortions: List[str] = []
-        self._test_preds: List[np.ndarray] = []
-        self._test_targets: List[np.ndarray] = []
+        self._test_preds: List[torch.Tensor] = []
+        self._test_targets: List[torch.Tensor] = []
         self._test_tasks: List[int] = []
         self._test_distortions: List[str] = []
 
-        # Exposed per-slice validation metrics for MetricsHistoryCallback to read
-        self.val_per_task_srcc: Dict[str, float] = {}
-        self.val_per_distortion_srcc: Dict[str, float] = {}
+    def _gather_tensor(self, t: torch.Tensor) -> torch.Tensor:
+        """Gather a tensor from all DDP processes, trimming padding from unequal splits."""
+        if not dist.is_initialized() or dist.get_world_size() == 1:
+            return t
+        local_size = torch.tensor([t.shape[0]], device=t.device, dtype=torch.long)
+        sizes = self.all_gather(local_size).flatten()  # [world_size]
+        gathered = self.all_gather(t)  # [world_size, N_max, ...]
+        world_size = dist.get_world_size()
+        chunks = [gathered[i][: sizes[i]] for i in range(world_size)]
+        return torch.cat(chunks, dim=0)
+
+    def _gather_objects(self, obj_list: list) -> list:
+        """Gather arbitrary Python objects from all DDP processes."""
+        if not dist.is_initialized() or dist.get_world_size() == 1:
+            return list(obj_list)
+        world_size = dist.get_world_size()
+        output: List[Any] = [None] * world_size
+        dist.all_gather_object(output, obj_list)
+        result: list = []
+        for items in output:
+            result.extend(items)
+        return result
 
     def forward(
         self, x: torch.Tensor, task_ids: Optional[torch.Tensor] = None
@@ -135,8 +155,8 @@ class UAVIQALightningModule(L.LightningModule):
 
         pred = self.model(images, task_ids)
 
-        self._val_preds.append(pred.detach().cpu().numpy())
-        self._val_targets.append(scores.detach().cpu().numpy())
+        self._val_preds.append(pred.detach().cpu())
+        self._val_targets.append(scores.detach().cpu())
         self._val_tasks.extend(batch["task_id"].cpu().tolist())
         self._val_distortions.extend(batch.get("distortion", []) or [])
 
@@ -144,30 +164,27 @@ class UAVIQALightningModule(L.LightningModule):
         if not self._val_preds:
             return
 
-        preds = np.concatenate(self._val_preds)
-        targets = np.concatenate(self._val_targets)
+        preds_t = torch.cat(self._val_preds).to(self.device)
+        targets_t = torch.cat(self._val_targets).to(self.device)
+        tasks_t = torch.tensor(self._val_tasks, device=self.device, dtype=torch.long)
+
+        preds = self._gather_tensor(preds_t).cpu().numpy()
+        targets = self._gather_tensor(targets_t).cpu().numpy()
+        tasks_all = self._gather_tensor(tasks_t).cpu().tolist()
+        distortions_all = self._gather_objects(self._val_distortions)
 
         metrics = evaluate_iqa(preds, targets)
         self.log("val/srcc", metrics["srcc"], prog_bar=True)
         self.log("val/plcc", metrics["plcc"])
         self.log("val/krcc", metrics["kendall_tau"])
 
-        # Per-task validation metrics
-        if self._val_tasks:
-            per_task = per_task_metrics(preds, targets, self._val_tasks)
-            self.val_per_task_srcc = {
-                name: info["srcc"] for name, info in per_task.items()
-            }
+        if tasks_all:
+            per_task = per_task_metrics(preds, targets, tasks_all)
             for name, info in per_task.items():
                 self.log(f"val/srcc_{name}", info["srcc"])
 
-        # Per-distortion validation metrics (log top-N for readability)
-        if self._val_distortions:
-            per_dist = per_distortion_metrics(preds, targets, self._val_distortions)
-            self.val_per_distortion_srcc = {
-                d: info.get("srcc", 0.0) for d, info in per_dist.items()
-            }
-            # Only log aggregated by distortion family to avoid metric explosion
+        if distortions_all:
+            per_dist = per_distortion_metrics(preds, targets, distortions_all)
             uav_srccs = []
             generic_srccs = []
             for d, info in per_dist.items():
@@ -195,8 +212,8 @@ class UAVIQALightningModule(L.LightningModule):
 
         pred = self.model(images, task_ids)
 
-        self._test_preds.append(pred.detach().cpu().numpy())
-        self._test_targets.append(scores.detach().cpu().numpy())
+        self._test_preds.append(pred.detach().cpu())
+        self._test_targets.append(scores.detach().cpu())
         self._test_tasks.extend(batch["task_id"].cpu().tolist())
         self._test_distortions.extend(batch.get("distortion", []) or [])
 
@@ -204,19 +221,37 @@ class UAVIQALightningModule(L.LightningModule):
         if not self._test_preds:
             return
 
-        all_preds = np.concatenate(self._test_preds)
-        all_targets = np.concatenate(self._test_targets)
+        preds_t = torch.cat(self._test_preds).to(self.device)
+        targets_t = torch.cat(self._test_targets).to(self.device)
+        tasks_t = torch.tensor(self._test_tasks, device=self.device, dtype=torch.long)
+
+        all_preds = self._gather_tensor(preds_t).cpu().numpy()
+        all_targets = self._gather_tensor(targets_t).cpu().numpy()
+        tasks_all = self._gather_tensor(tasks_t).cpu().tolist()
+        distortions_all = self._gather_objects(self._test_distortions)
 
         metrics = evaluate_iqa(all_preds, all_targets)
         self.log("test/srcc", metrics["srcc"])
         self.log("test/plcc", metrics["plcc"])
 
-        self._test_results = {
-            "all_preds": all_preds,
-            "all_targets": all_targets,
-            "tasks": list(self._test_tasks),
-            "distortions": list(self._test_distortions),
-        }
+        if tasks_all:
+            per_task = per_task_metrics(all_preds, all_targets, tasks_all)
+            for name, info in per_task.items():
+                self.log(f"test/srcc_{name}", info["srcc"])
+
+        if distortions_all:
+            per_dist = per_distortion_metrics(all_preds, all_targets, distortions_all)
+            uav_srccs = []
+            generic_srccs = []
+            for d, info in per_dist.items():
+                if d in UAV_DISTORTION_NAMES:
+                    uav_srccs.append(info.get("srcc", 0))
+                else:
+                    generic_srccs.append(info.get("srcc", 0))
+            if uav_srccs:
+                self.log("test/srcc_uav", float(np.mean(uav_srccs)))
+            if generic_srccs:
+                self.log("test/srcc_generic", float(np.mean(generic_srccs)))
 
         self._test_preds.clear()
         self._test_targets.clear()
@@ -252,27 +287,3 @@ class UAVIQALightningModule(L.LightningModule):
             },
         }
 
-    def get_test_results(self) -> Dict:
-        if not hasattr(self, "_test_results") or not self._test_results:
-            return {}
-
-        r = self._test_results
-        metrics = evaluate_iqa(r["all_preds"], r["all_targets"])
-
-        results = {
-            "test_metrics": metrics,
-            "preds": r["all_preds"].tolist(),
-            "targets": r["all_targets"].tolist(),
-        }
-
-        if r["tasks"]:
-            results["per_task"] = per_task_metrics(
-                r["all_preds"], r["all_targets"], r["tasks"]
-            )
-
-        if r["distortions"]:
-            results["per_distortion"] = per_distortion_metrics(
-                r["all_preds"], r["all_targets"], r["distortions"]
-            )
-
-        return results

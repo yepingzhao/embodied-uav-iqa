@@ -25,8 +25,6 @@ class UAVIQDataModule(L.LightningDataModule):
         val_task: Optional[str] = None,
         distortion_filter: Optional[str] = None,
         leave_out_task: Optional[str] = None,
-        train_split: float = 0.80,
-        val_split: float = 0.10,
         dry_run: bool = False,
     ):
         super().__init__()
@@ -61,7 +59,8 @@ class UAVIQDataModule(L.LightningDataModule):
         filtered = self._filter_manifest(samples, task=task_override)
         if len(filtered) == 0 and len(samples) > 0:
             _log.warning(
-                "All %d %s samples were filtered out (task=%s, distortion_filter=%s, leave_out_task=%s)",
+                "All %d %s samples were filtered out "
+                "(task=%s, distortion_filter=%s, leave_out_task=%s)",
                 len(samples),
                 split,
                 self.task,
@@ -104,31 +103,47 @@ class UAVIQDataModule(L.LightningDataModule):
 
         val_task = self.val_task or self.task
 
-        train_samples = self._load_and_filter("train", task_override=self.task)
-        val_samples = self._load_and_filter("val", task_override=val_task)
-        test_samples = self._load_and_filter("test", task_override=val_task)
+        if stage in (None, "fit"):
+            train_samples = self._load_and_filter("train", task_override=self.task)
+            val_samples = self._load_and_filter("val", task_override=val_task)
+        elif stage == "validate":
+            train_samples = []
+            val_samples = self._load_and_filter("val", task_override=val_task)
+        else:
+            train_samples = []
+            val_samples = []
+
+        if stage in (None, "fit", "test"):
+            test_samples = self._load_and_filter("test", task_override=val_task)
+        else:
+            test_samples = []
 
         if self.dry_run:
             train_samples = train_samples[:100]
             val_samples = val_samples[:50]
             test_samples = test_samples[:50]
 
-        print(
-            f"Train: {len(train_samples)}, Val: {len(val_samples)}, Test: {len(test_samples)}"
+        _log.info(
+            "Train: %d, Val: %d, Test: %d",
+            len(train_samples),
+            len(val_samples),
+            len(test_samples),
         )
 
-        self.train_dataset = UAVIQADataset(
-            samples=train_samples if train_samples else None,
-            **shared_kwargs,
-        )
-        self.val_dataset = UAVIQADataset(
-            samples=val_samples if val_samples else None,
-            **shared_kwargs,
-        )
-        self.test_dataset = UAVIQADataset(
-            samples=test_samples if test_samples else None,
-            **shared_kwargs,
-        )
+        if stage in (None, "fit", "validate"):
+            self.train_dataset = UAVIQADataset(
+                samples=train_samples if train_samples else None,
+                **shared_kwargs,
+            )
+            self.val_dataset = UAVIQADataset(
+                samples=val_samples if val_samples else None,
+                **shared_kwargs,
+            )
+        if stage in (None, "fit", "test"):
+            self.test_dataset = UAVIQADataset(
+                samples=test_samples if test_samples else None,
+                **shared_kwargs,
+            )
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(

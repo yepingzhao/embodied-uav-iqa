@@ -34,13 +34,14 @@ trainer:
   enable_progress_bar: true
   default_root_dir: outputs/default
   logger:
+  - class_path: lightning.pytorch.loggers.CSVLogger
+    init_args:
+      save_dir: outputs
+      name: default
   - class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
       project: uav-iqa
       name: default
-      save_dir: outputs/default
-  - class_path: lightning.pytorch.loggers.CSVLogger
-    init_args:
       save_dir: outputs/default
   callbacks:
   - class_path: uav_iqa.callbacks.SetupRunCallback
@@ -49,11 +50,21 @@ trainer:
       vlm_epochs: 20
       vla_epochs: 20
       execution_epochs: 10
-  - class_path: uav_iqa.callbacks.MetricsHistoryCallback
   - class_path: lightning.pytorch.callbacks.ModelCheckpoint
     init_args:
+      dirpath: null
+      filename: epoch{epoch:03d}
+      every_n_epochs: 5
+      save_top_k: -1
+  - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+    init_args:
+      dirpath: null
+      filename: best_epoch{epoch:03d}_srcc{val_srcc:.4f}
       monitor: val/srcc
       mode: max
       save_top_k: 1
-      filename: best_model
-  - class_path: uav_iqa.callbacks.ResultsSavingCallback
+  - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+    init_args:
+      dirpath: null
+      filename: last
+      save_last: true

@@ -15,8 +15,9 @@ Also fixes CSVLogger requiring save_dir, and removes CurriculumStageCallback
 from experiment configs (defined via defaults).
 """
 
-import yaml
 import os
+
+import yaml
 
 CONFIG_DIR = os.path.join(os.path.dirname(__file__), "..", "configs", "experiments")
 DEFAULT_CONFIG = os.path.join(
