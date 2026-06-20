@@ -27,7 +27,12 @@ import torch.nn as nn
 import lightning as L
 from torch.utils.data import DataLoader
 
-from uav_iqa.metrics import evaluate_iqa, per_task_metrics, per_distortion_category_metrics
+from uav_iqa.dataset import UAVIQADataset
+from uav_iqa.metrics import (
+    evaluate_iqa,
+    per_task_metrics,
+    per_distortion_category_metrics,
+)
 from uav_iqa.utils import load_image_tensor, load_manifest, setup_logging
 
 _log = setup_logging(__name__)
@@ -78,7 +83,7 @@ class BaselineLightningModule(L.LightningModule):
     def forward(self, x):
         return self.model(x).squeeze(-1)
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch, _):
         img = batch["image"]
         scores = batch.get("score")
 
@@ -87,7 +92,7 @@ class BaselineLightningModule(L.LightningModule):
         self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         return loss
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch, _):
         img = batch["image"]
         scores = batch.get("score")
 
@@ -113,7 +118,9 @@ class BaselineLightningModule(L.LightningModule):
         self._val_distortions.clear()
 
     def configure_optimizers(self):
-        opt = torch.optim.AdamW(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        opt = torch.optim.AdamW(
+            self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay
+        )
         if self.warmup_epochs > 0:
             warmup = torch.optim.lr_scheduler.LinearLR(
                 opt, start_factor=1e-3, total_iters=self.warmup_epochs
@@ -125,7 +132,9 @@ class BaselineLightningModule(L.LightningModule):
                 opt, [warmup, cosine], milestones=[self.warmup_epochs]
             )
         else:
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=self.total_epochs)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                opt, T_max=self.total_epochs
+            )
         return {
             "optimizer": opt,
             "lr_scheduler": {
@@ -134,10 +143,6 @@ class BaselineLightningModule(L.LightningModule):
                 "frequency": 1,
             },
         }
-
-
-# Reuse existing collate_fn from UAVIQADataset
-from uav_iqa.dataset import UAVIQADataset
 
 
 class BaselineDataModule(L.LightningDataModule):
@@ -257,7 +262,9 @@ def evaluate_checkpoint(
     with torch.no_grad():
         for i, s in enumerate(test_samples):
             img_t = (
-                load_image_tensor(Path(data_dir) / s["path"], image_size).unsqueeze(0).to(device)
+                load_image_tensor(Path(data_dir) / s["path"], image_size)
+                .unsqueeze(0)
+                .to(device)
             )
             pred = model(img_t).item()
 

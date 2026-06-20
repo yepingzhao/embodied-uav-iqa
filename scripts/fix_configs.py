@@ -19,7 +19,9 @@ import yaml
 import os
 
 CONFIG_DIR = os.path.join(os.path.dirname(__file__), "..", "configs", "experiments")
-DEFAULT_CONFIG = os.path.join(os.path.dirname(__file__), "..", "configs", "default.yaml")
+DEFAULT_CONFIG = os.path.join(
+    os.path.dirname(__file__), "..", "configs", "default.yaml"
+)
 
 
 def flatten_section(config, section_name):
@@ -49,10 +51,17 @@ def fix_callbacks(trainer):
         for cb in callbacks
     )
     if not has_curriculum:
-        callbacks.insert(1, {  # after SetupRunCallback
-            "class_path": "uav_iqa.callbacks.CurriculumStageCallback",
-            "init_args": {"vlm_epochs": 20, "vla_epochs": 20, "execution_epochs": 10},
-        })
+        callbacks.insert(
+            1,
+            {  # after SetupRunCallback
+                "class_path": "uav_iqa.callbacks.CurriculumStageCallback",
+                "init_args": {
+                    "vlm_epochs": 20,
+                    "vla_epochs": 20,
+                    "execution_epochs": 10,
+                },
+            },
+        )
 
     for cb in callbacks:
         if not isinstance(cb, dict):
@@ -90,7 +99,9 @@ def process_config(filepath):
         fix_loggers(trainer)
 
     with open(filepath, "w") as f:
-        yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        yaml.dump(
+            config, f, default_flow_style=False, sort_keys=False, allow_unicode=True
+        )
 
     return True
 
@@ -109,7 +120,7 @@ def main():
     if os.path.exists(DEFAULT_CONFIG):
         try:
             process_config(DEFAULT_CONFIG)
-            print(f"  OK  configs/default.yaml")
+            print("  OK  configs/default.yaml")
         except Exception as e:
             print(f"  FAIL configs/default.yaml: {e}")
 

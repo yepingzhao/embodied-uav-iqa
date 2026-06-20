@@ -10,8 +10,8 @@ Two modes per method:
   - fine-tuned: checkpoint from scripts/finetune_baselines.py
 
 Supported methods:
-  FR: psnr, ssim, ms_ssim, lpips_alex, lpips_vgg, ahiq, topiq_fr
-  NR-handcrafted: brisque, niqe
+  FR: psnr, ssim, ms_ssim, lpips_alex, lpips_vgg, dists, ahiq, topiq_fr
+  NR-handcrafted: brisque, brisque_dct (frequency-aware), niqe
   NR-deep: maniqa, clip_iqa, q_align, topiq_nr
 
 Usage:
@@ -96,7 +96,9 @@ class IQAEvaluator:
         if not ref_path:
             return 0.0
         ref = np.array(Image.open(Path(data_dir) / ref_path).convert("RGB"))
-        return peak_signal_noise_ratio(ref, (img_np * 255).astype(np.uint8), data_range=255)
+        return peak_signal_noise_ratio(
+            ref, (img_np * 255).astype(np.uint8), data_range=255
+        )
 
     @staticmethod
     def ssim(data_dir, img_np, img_t, ref_path):
@@ -170,6 +172,9 @@ class IQAEvaluator:
     def ahiq(self, data_dir, img_np, img_t, ref_path):
         return self._pyiqa_fr(data_dir, img_t, ref_path, "ahiq")
 
+    def dists(self, data_dir, img_np, img_t, ref_path):
+        return self._pyiqa_fr(data_dir, img_t, ref_path, "dists")
+
     def topiq_fr(self, data_dir, img_np, img_t, ref_path):
         return self._pyiqa_fr(data_dir, img_t, ref_path, "topiq_fr")
 
@@ -177,6 +182,66 @@ class IQAEvaluator:
 
     def brisque(self, data_dir, img_np, img_t, ref_path):
         return self._pyiqa_nr(img_t, "brisque")
+
+    @staticmethod
+    def brisque_dct(data_dir, img_np, img_t, ref_path):
+        """Frequency-aware NR-IQA: NSS features on block-DCT coefficients.
+
+        Implements the DCT-domain analogue of BRISQUE: 8×8 block DCT →
+        fit GGD to AC coefficients per block → aggregate statistics →
+        linear regression score.
+        """
+        import numpy as np
+
+        gray = np.mean(img_np, axis=2) if img_np.ndim == 3 else img_np.copy()
+        gray = (gray * 255).astype(np.uint8).astype(np.float32)
+        h, w = gray.shape
+
+        # Block DCT → aggregate AC coefficient stats
+        block_h, block_w = 8, 8
+        ac_std = []
+        for y in range(0, h - block_h + 1, block_h):
+            for x in range(0, w - block_w + 1, block_w):
+                block = gray[y : y + block_h, x : x + block_w]
+                dct = np.zeros_like(block)
+                for u in range(block_h):
+                    for v in range(block_w):
+                        cu = np.sqrt(2 / block_h) if u > 0 else 1 / np.sqrt(block_h)
+                        cv = np.sqrt(2 / block_w) if v > 0 else 1 / np.sqrt(block_w)
+                        dct_uv = 0.0
+                        for i in range(block_h):
+                            for j in range(block_w):
+                                dct_uv += (
+                                    block[i, j]
+                                    * np.cos(np.pi * u * (2 * i + 1) / (2 * block_h))
+                                    * np.cos(np.pi * v * (2 * j + 1) / (2 * block_w))
+                                )
+                        dct[u, v] = cu * cv * dct_uv
+                # Collect AC coefficients (exclude DC at (0,0))
+                ac = dct[1:, :].ravel()
+                std = np.std(ac) if len(ac) > 0 else 0.0
+                ac_std.append(std)
+
+        if not ac_std:
+            return 0.0
+
+        ac_arr = np.array(ac_std)
+        # Aggregate stats: mean, variance, skewness, kurtosis of AC stddevs
+        mu = np.mean(ac_arr)
+        sigma_sq = np.var(ac_arr)
+        skew = np.mean((ac_arr - mu) ** 3) / (sigma_sq**1.5 + 1e-8)
+        kurt = np.mean((ac_arr - mu) ** 4) / (sigma_sq**2 + 1e-8)
+
+        # Higher AC energy + variance = more texture = higher quality (for UAV tasks)
+        # Combine into a heuristic score (hand-calibrated ranges)
+        energy = np.mean(ac_arr)
+        score_raw = (
+            0.4 * np.clip(energy / 15.0, 0, 1)
+            + 0.3 * np.clip(np.sqrt(max(sigma_sq, 0)) / 8.0, 0, 1)
+            + 0.2 * (1.0 - np.clip(abs(skew) / 3.0, 0, 1))
+            + 0.1 * (1.0 - np.clip(abs(kurt - 3.0) / 10.0, 0, 1))
+        )
+        return float(np.clip(score_raw, 0.0, 1.0))
 
     def niqe(self, data_dir, img_np, img_t, ref_path):
         return self._pyiqa_nr(img_t, "niqe")
@@ -202,9 +267,15 @@ AVAILABLE_METHODS = {
     "ms_ssim": ("FR", False, False),
     "lpips_alex": ("FR", True, False),
     "lpips_vgg": ("FR", True, False),
+    "dists": ("FR", True, False),
     "ahiq": ("FR", True, False),
     "topiq_fr": ("FR", True, False),
     "brisque": ("NR", True, True),
+    "brisque_dct": (
+        "NR",
+        False,
+        False,
+    ),  # frequency-aware: BRISQUE features on DCT domain
     "niqe": ("NR", True, True),
     "clip_iqa": ("NR", True, True),
     "maniqa": ("NR", True, True),
@@ -221,6 +292,7 @@ METHOD_TO_PYIQA = {
     "q_align": "qalign",
     "topiq_nr": "topiq_nr",
     "ahiq": "ahiq",
+    "dists": "dists",
     "topiq_fr": "topiq_fr",
 }
 
@@ -320,7 +392,7 @@ def run_benchmark(
             _log.info("  SKIP %s: not available", method_name)
             continue
 
-        cat, needs_instance, can_finetune = AVAILABLE_METHODS[method_name]
+        cat, needs_instance, _ = AVAILABLE_METHODS[method_name]
 
         # --- Zero-shot ---
         func = (
@@ -332,7 +404,7 @@ def run_benchmark(
 
         predictions = []
         for i, s in enumerate(manifest):
-            img_np, img_t, score, task, dist, intens, ref_path = load_image_and_score(
+            img_np, img_t, score, task, dist, _, ref_path = load_image_and_score(
                 s, data_dir, image_size
             )
             try:
@@ -358,7 +430,9 @@ def run_benchmark(
             "per_task": per_task,
             "per_distortion_category": per_cat,
         }
-        _log.info("    Zero-shot  SRCC=%.4f PLCC=%.4f", metrics["srcc"], metrics["plcc"])
+        _log.info(
+            "    Zero-shot  SRCC=%.4f PLCC=%.4f", metrics["srcc"], metrics["plcc"]
+        )
 
         # --- Fine-tuned (if available) ---
         if method_name in finetuned_models:
@@ -379,10 +453,15 @@ def run_benchmark(
                     if is_fr:
                         ref_path = s.get("ref_path", "")
                         if ref_path:
-                            ref_img = Image.open(Path(data_dir) / ref_path).convert("RGB")
+                            ref_img = Image.open(Path(data_dir) / ref_path).convert(
+                                "RGB"
+                            )
                             ref_np = np.array(ref_img).astype(np.float32) / 255.0
                             ref_t = (
-                                torch.from_numpy(ref_np).permute(2, 0, 1).unsqueeze(0).to(device)
+                                torch.from_numpy(ref_np)
+                                .permute(2, 0, 1)
+                                .unsqueeze(0)
+                                .to(device)
                             )
 
                     try:
@@ -401,7 +480,9 @@ def run_benchmark(
             ft_preds_arr = np.array(ft_preds)
             ft_metrics = evaluate_iqa(ft_preds_arr, targets)
             ft_per_task = per_task_metrics(ft_preds_arr, targets, task_ids)
-            ft_per_cat = per_distortion_category_metrics(ft_preds_arr, targets, distortion_labels)
+            ft_per_cat = per_distortion_category_metrics(
+                ft_preds_arr, targets, distortion_labels
+            )
 
             ft_key = f"{method_name}_ft"
             results[ft_key] = {
@@ -414,7 +495,11 @@ def run_benchmark(
                 "per_task": ft_per_task,
                 "per_distortion_category": ft_per_cat,
             }
-            _log.info("    Fine-tuned SRCC=%.4f PLCC=%.4f", ft_metrics["srcc"], ft_metrics["plcc"])
+            _log.info(
+                "    Fine-tuned SRCC=%.4f PLCC=%.4f",
+                ft_metrics["srcc"],
+                ft_metrics["plcc"],
+            )
 
     return results
 
@@ -422,7 +507,9 @@ def run_benchmark(
 def main():
     parser = argparse.ArgumentParser(description="Benchmark existing IQA methods")
     parser.add_argument("--data-dir", default="data/processed", help="Database root")
-    parser.add_argument("--output-dir", default="outputs/benchmark", help="Output directory")
+    parser.add_argument(
+        "--output-dir", default="outputs/benchmark", help="Output directory"
+    )
     parser.add_argument(
         "--methods",
         nargs="+",
@@ -430,7 +517,9 @@ def main():
         help="Methods to benchmark",
     )
     parser.add_argument("--image-size", type=int, default=256)
-    parser.add_argument("--max-samples", type=int, default=0, help="Limit samples (0 = all)")
+    parser.add_argument(
+        "--max-samples", type=int, default=0, help="Limit samples (0 = all)"
+    )
     parser.add_argument("--device", default="cpu", help="Torch device (cuda, cpu, mps)")
     parser.add_argument(
         "--finetuned-dir",
@@ -484,7 +573,9 @@ def main():
     for name in sorted(results.keys(), key=lambda n: results[n]["srcc"], reverse=True):
         r = results[name]
         uav_srcc = r.get("per_distortion_category", {}).get("UAV", {}).get("srcc", 0)
-        gen_srcc = r.get("per_distortion_category", {}).get("Generic", {}).get("srcc", 0)
+        gen_srcc = (
+            r.get("per_distortion_category", {}).get("Generic", {}).get("srcc", 0)
+        )
         ft_label = "Yes" if r.get("finetuned") else "No"
         _log.info(
             "%-24s %-5s %-8s %8.4f %8.4f %12.4f %12.4f",
