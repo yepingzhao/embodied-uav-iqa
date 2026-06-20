@@ -10,8 +10,6 @@ Provides:
 
 import json
 import logging
-import os
-import re
 import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -59,8 +57,7 @@ class DatasetFormat(ABC):
     def get(cls, name: str) -> type["DatasetFormat"]:
         if name not in cls._registry:
             raise ValueError(
-                f"Unknown dataset format: '{name}'. "
-                f"Available: {cls.list_formats()}"
+                f"Unknown dataset format: '{name}'. " f"Available: {cls.list_formats()}"
             )
         return cls._registry[name]
 
@@ -157,67 +154,6 @@ class AirCopBenchFormat(DatasetFormat):
     # ---- AirCopBench-specific helpers ----
 
     @staticmethod
-    def _extract_scene_and_frame(basename: str) -> tuple[Optional[str], str]:
-        """Extract (scene, frame) from annotation basenames.
-
-        Sim3 annotations:  '8f2a9605-scene_004-UAV1_frame_005.jpg'
-            → ('scene_004', 'UAV1_frame_005.jpg')
-        Real2 annotations: '23-00000001-UAV1.jpg'
-            → (None, '23-00000001-UAV1.jpg')
-        """
-        m = re.search(r"(scene_\d+)-(UAV\d+_frame_\d+\.jpg)", basename)
-        if m:
-            return m.group(1), m.group(2)
-        return None, basename
-
-    def build_image_index(self, input_root: Path) -> dict[str, dict]:
-        """Scan AirCopBench data directory, building image -> annotation mapping.
-
-        Returns a dict keyed by absolute image path, each value is
-        ``{rel_path, annotation}``.
-        """
-        input_root = Path(input_root)
-        image_index: dict[str, dict] = {}
-
-        for img_path in find_images(input_root, exclude_dirs={".cache", "distorted"}):
-            rel = str(img_path.relative_to(input_root))
-            image_index[str(img_path)] = {"rel_path": rel, "annotation": None}
-
-        annotation_files = sorted(input_root.rglob("Annotations/*.json"))
-        _log.info(
-            "Found %d images, %d annotation files",
-            len(image_index),
-            len(annotation_files),
-        )
-
-        ann_lookup: dict[tuple, dict] = {}
-        for ann_file in annotation_files:
-            with open(ann_file) as f:
-                annotations = json.load(f)
-            for entry in annotations:
-                img1 = entry.get("img1", "")
-                scene, frame = self._extract_scene_and_frame(os.path.basename(img1))
-                key = (scene, frame) if scene else (None, frame)
-                ann_lookup[key] = entry
-
-        matched = 0
-        for img_path_str, info in image_index.items():
-            fname = os.path.basename(img_path_str)
-            rel = info["rel_path"]
-            scene_m = re.search(r"(scene_\d+)", rel)
-            scene = scene_m.group(1) if scene_m else None
-            key = (scene, fname) if scene else (None, fname)
-            entry = ann_lookup.get(key)
-            if not entry and scene:
-                entry = ann_lookup.get((None, fname))
-            if entry:
-                info["annotation"] = entry
-                matched += 1
-
-        _log.info("Matched %d/%d images to annotations", matched, len(image_index))
-        return image_index
-
-    @staticmethod
     def get_degradation_types(entry: dict) -> list[str]:
         """Extract degradation category strings from an annotation entry."""
         degs: list[str] = []
@@ -238,31 +174,6 @@ class AirCopBenchFormat(DatasetFormat):
         if not degs:
             degs.append("none")
         return degs
-
-    def build_annotation_summary(
-        self, image_index: dict[str, dict], task_map: Optional[dict] = None
-    ) -> tuple[dict[str, dict], dict[str, str]]:
-        """Extract annotation metadata and ref_path lookup from image_index.
-
-        Returns (annotation_summary, ref_path_lookup).
-        """
-        from uav_iqa.annotations import parse_quality_score, parse_usability
-
-        annotation_summary: dict[str, dict] = {}
-        ref_path_lookup: dict[str, str] = {}
-
-        for img_path, info in image_index.items():
-            ann = info.get("annotation") or {}
-            rel_path = info["rel_path"]
-            annotation_summary[os.path.basename(img_path)] = {
-                "quality": parse_quality_score(ann.get("Quality", "")),
-                "usability": parse_usability(ann.get("Usibility", "")),
-                "degradations": self.get_degradation_types(ann),
-                "task": assign_task_label(rel_path, task_map=task_map),
-            }
-            ref_path_lookup[os.path.splitext(os.path.basename(img_path))[0]] = rel_path
-
-        return annotation_summary, ref_path_lookup
 
 
 @DatasetFormat.register
@@ -580,7 +491,9 @@ class DataSynthesisPipeline:
         for split_name in ("train", "val", "test"):
             manifest_path = manifest_dir / split_name / "manifest.json"
             if not manifest_path.exists():
-                _log.info("Skip %s: manifest not found at %s", split_name, manifest_path)
+                _log.info(
+                    "Skip %s: manifest not found at %s", split_name, manifest_path
+                )
                 continue
 
             entries = self._annotate_one_manifest(
@@ -648,7 +561,9 @@ class DataSynthesisPipeline:
 
             for key in ("vlm_score", "vla_score", "execution_score"):
                 ref_score = entry[key]
-                noise = rng.normal(0, noise_scale * intensity) if noise_scale > 0 else 0.0
+                noise = (
+                    rng.normal(0, noise_scale * intensity) if noise_scale > 0 else 0.0
+                )
                 degraded = ref_score * (1.0 - degrade) + noise
                 entry[key] = round(max(0.0, min(1.0, degraded)), 4)
 
@@ -754,7 +669,9 @@ class DataSynthesisPipeline:
 # ===========================================================================
 
 
-def create_pipeline(dataset: str = "aircopbench", seed: int = 42) -> DataSynthesisPipeline:
+def create_pipeline(
+    dataset: str = "aircopbench", seed: int = 42
+) -> DataSynthesisPipeline:
     """Create a ``DataSynthesisPipeline`` for a named dataset format.
 
     Args:

@@ -10,12 +10,11 @@ import pytest
 
 from uav_iqa.data_synthesis import (
     AirCopBenchFormat,
-    DataSynthesisPipeline,
     DatasetFormat,
+    DataSynthesisPipeline,
     GenericImageDirFormat,
     create_pipeline,
 )
-
 
 # ===========================================================================
 # Helpers
