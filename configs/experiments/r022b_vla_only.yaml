@@ -1,6 +1,6 @@
 seed_everything: 42
 model:
-  class_path: uav_iqa.lightning_model.UAVIQALightningModule
+  class_path: uav_iqa.lightning_module.UAVIQALightningModule
   init_args:
     backbone: mobilenetv4_conv_small
     num_tasks: 4
@@ -16,7 +16,7 @@ model:
     total_epochs: 50
     annotator_stage: vla
 data:
-  class_path: uav_iqa.lightning_data.UAVIQDataModule
+  class_path: uav_iqa.data_module.UAVIQDataModule
   init_args:
     data_root: data/processed
     batch_size: 256
