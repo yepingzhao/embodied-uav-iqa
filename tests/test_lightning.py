@@ -7,7 +7,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from uav_iqa.lightning_model import UAVIQALightningModule
+from uav_iqa.lightning_module import UAVIQALightningModule
 
 
 class TestLightningModule:
@@ -78,7 +78,7 @@ class TestLightningDataModule:
         return str(data_root)
 
     def test_data_module_setup(self, mock_data_dir):
-        from uav_iqa.lightning_data import UAVIQDataModule
+        from uav_iqa.data_module import UAVIQDataModule
 
         dm = UAVIQDataModule(
             data_root=mock_data_dir,

@@ -10,8 +10,8 @@ Usage::
 
 from lightning.pytorch.cli import LightningCLI
 
-from uav_iqa.lightning_data import UAVIQDataModule
-from uav_iqa.lightning_model import UAVIQALightningModule
+from uav_iqa.data_module import UAVIQDataModule
+from uav_iqa.lightning_module import UAVIQALightningModule
 
 
 def main():
