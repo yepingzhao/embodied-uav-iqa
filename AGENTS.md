@@ -20,7 +20,7 @@ black src/ tests/ scripts/
 pytest tests/test_distortion.py::test_pipeline_has_all_distortions -v
 
 # Overfit test (fast correctness check of the model)
-python scripts/run_overfit.py
+python scripts/overfit_sanity_check.py
 ```
 
 ## Architecture at a glance
@@ -31,19 +31,19 @@ src/uav_iqa/
   model.py            # UAVIQANet (MobileNetV4-S + PANet FPN + CBAM + FAB + task-conditioned heads)
   dataset.py          # UAVIQADataset: manifest.json → image/scores/task_id
   losses.py           # ListMLELoss + CrossTaskRegularization (ranking & cross-task losses)
-  annotation_utils.py # AirCopBench annotation parsing, degradation factors, score synthesis
+  annotations.py # AirCopBench annotation parsing, degradation factors, score synthesis
   data_synthesis.py  # Dataset-agnostic data pipeline (DatasetFormat + DataSynthesisPipeline)
-  evaluate.py         # SRCC, PLCC, RMSE, Kendall tau
-  lightning_model.py  # UAVIQALightningModule (MSE + ListMLE + cross-task loss, curriculum)
-  lightning_data.py   # UAVIQDataModule (manifest filtering, task/distortion/LOO filters)
+  metrics.py         # SRCC, PLCC, RMSE, Kendall tau
+  lightning_module.py  # UAVIQALightningModule (MSE + ListMLE + cross-task loss, curriculum)
+  data_module.py   # UAVIQDataModule (manifest filtering, task/distortion/LOO filters)
   callbacks.py        # CurriculumStageCallback, MetricsHistoryCallback, SetupRunCallback, ResultsSavingCallback
 
 scripts/
-  synthesize_data.py          # Unified data synthesis CLI (extract/inject/manifest/annotate/all)
-  run_m2_benchmark.py         # Benchmark existing IQA methods (pyiqa)
-  run_distortion.py           # Visual sanity check of all distortions
-  run_overfit.py              # 100-image overfit test
-  run_c2_correlation.py       # C2 correlation validation
+  data_synthesis.py              # Unified data synthesis CLI (extract/inject/manifest/annotate/all)
+  benchmark_iqa_methods.py       # Benchmark existing IQA methods (pyiqa)
+  visualize_distortions.py       # Visual sanity check of all distortions
+  overfit_sanity_check.py        # 100-image overfit test
+  validate_synth_real_correlation.py  # C2 correlation validation
 
 configs/default.yaml          # Model/data/training config template
 configs/experiments/          # 21 per-experiment configs (r013–r024c)
@@ -62,7 +62,7 @@ main.py                       # Unified training entry point (LightningCLI)
 - **Distortion naming**: `{name}_L{intensity*10:02d}` (e.g., `propeller_vibration_blur_L04`).
 - **4 task types**: `tracking=0`, `inspection=1`, `delivery=2`, `sar=3`.
 - **Ablation toggles**: use per-experiment config in `configs/experiments/` (e.g., `r016_no_fab.yaml`), or override via CLI: `--model.init_args.use_fab false`.
-- **Test coverage is sparse** (only `test_distortion.py` and `test_lightning.py` exist). Add tests to `tests/` when implementing new functionality.
+- **Test coverage is sparse** (only `test_distortion.py`, `test_lightning.py`, and `test_data_synthesis.py` exist). Add tests to `tests/` when implementing new functionality.
 - **Training entry point**: `main.py` (vanilla LightningCLI). `run_m3_train.py` and `UAVIQACLI` were removed in 2026-06 refactor.
 
 ## Research context

@@ -7,61 +7,68 @@
 ### Module Dependency Graph
 
 ```
-                      ┌───────────────┐
-                      │   model.py    │
-                      │  (UAVIQANet)  │
-                      └───────┬───────┘
-                              │ owns
-                              ▼
-               ┌──────────────────────────────┐
-               │        losses.py             │
-               │  ListMLELoss                 │
-               │  CrossTaskRegularization     │
-               └──────────────────────────────┘
-                       ▲ uses                  ▲ uses
-                       │                        │
-               ┌───────┴────────────┐   ┌───────┴──────────┐
-               │ lightning_model.py │   │  lightning_data.py│
-               │ UAVIQALightning    │   │  UAVIQDataModule  │
-               │ Module             │   └────────┬──────────┘
-               └────────┬───────────┘            │ owns
-                        │ uses                   ▼
-                        ▼              ┌─────────────────┐
-               ┌───────────────┐       │   dataset.py    │
-               │ evaluate.py   │       │ UAVIQADataset   │
-               │ SRCC, PLCC,   │       └─────────────────┘
-               │ RMSE, Kend-τ  │
-               └───────────────┘
-                        ▲
-                        │
-               ┌────────┴────────────┐
-               │    callbacks.py     │
-               │ SetupRunCallback    │
-               │ CurriculumStage     │
-               │ MetricsHistory      │
-               │ ResultsSaving       │
-               └────────┬───────────┘
-                        │ added by
-                        ▼
-               ┌──────────────────────┐
-               │  main.py (Lightning  │
-               │  CLI — no custom CLI)│
-               └──────────────────────┘
-                        │
-               ┌────────┴────────┐
-               │   utils.py      │
-               │ count_params    │
-               └─────────────────┘
+                       ┌───────────────┐
+                       │   model.py    │
+                       │  (UAVIQANet)  │
+                       └───────┬───────┘
+                               │ owns
+                               ▼
+                ┌──────────────────────────────┐
+                │        losses.py             │
+                │  ListMLELoss                 │
+                │  CrossTaskRegularization     │
+                └──────────────────────────────┘
+                        ▲ uses                  ▲ uses
+                        │                        │
+                ┌───────┴────────────┐   ┌───────┴──────────┐
+                │ lightning_module   │   │  data_module.py  │
+                │  .py               │   │  UAVIQDataModule │
+                │ UAVIQALightning    │   └────────┬─────────┘
+                │ Module             │            │ owns
+                └────────┬───────────┘            ▼
+                         │ uses         ┌─────────────────┐
+                         ▼              │   dataset.py    │
+                ┌───────────────┐       │ UAVIQADataset   │
+                │  metrics.py   │       │ validate_manifest│
+                │ evaluate_iqa  │       └────────┬────────┘
+                │ per_task      │                │ uses
+                │ per_distortion│                ▼
+                │ per_category  │       ┌─────────────────┐
+                └───────────────┘       │    utils.py     │
+                         ▲             │ find_images      │
+                         │             │ load_image_tensor│
+                ┌────────┴────────┐    │ count_parameters │
+                │  callbacks.py   │    │ split_samples    │
+                │ SetupRunCallback│    │ load_manifest    │
+                │ CurriculumStage │    │ write_manifest   │
+                │ MetricsHistory  │    │ load_task_map    │
+                │ ResultsSaving   │    │ setup_logging    │
+                └────────┬───────┘    └──────────────────┘
+                         │ added by          ▲
+                         ▼                   │
+                ┌───────────────────────────────────────────┐
+                │  main.py (Lightning CLI — no custom CLI)  │
+                └───────────────────────────────────────────┘
 
-distortion.py (standalone, no internal deps)
+distortion.py (standalone)
+  → UAV_DISTORTION_NAMES (exported, used by data_module & lightning_module)
 
-annotation_utils.py (standalone)
-  build_ref_score_lookup
-  degradation_factor
-  synthetic_ref_scores
-  assign_task_label
-  parse_quality_score
-  parse_usability
+annotations.py
+  → parse_distortion_key, compute_synthetic_score (NEW)
+  → build_ref_score_lookup, degradation_factor, synthetic_ref_scores
+  → assign_task_label, parse_quality_score, parse_usability
+
+data_synthesis.py (NEW — 769 lines)
+  │
+  ├── DatasetFormat (ABC + registry)
+  │     ├── AirCopBenchFormat
+  │     └── GenericImageDirFormat
+  ├── DataSynthesisPipeline (orchestrates 4 steps)
+  └── create_pipeline (factory)
+       │
+       ├── uses → distortion.py (UAVDistortionPipeline)
+       ├── uses → annotations.py (build_ref_score_lookup, parse_distortion_key, etc.)
+       └── uses → utils.py (find_images, split_samples, write_manifest)
 ```
 
 ---
@@ -71,7 +78,7 @@ annotation_utils.py (standalone)
 **Purpose:** 24 distortion models (6 UAV-specific + 18 generic) for injecting quality degradation.
 
 **Location:** `src/uav_iqa/distortion.py`
-**Lines:** 665
+**Lines:** 685
 
 ### Key Classes
 
@@ -101,6 +108,8 @@ from .distortion import (
 )
 ```
 
+Also exports `UAV_DISTORTION_NAMES` — a `frozenset` of the 6 UAV-specific distortion names, used by `data_module.py` and `lightning_module.py` for distortion-family filtering.
+
 ### Dependencies
 
 - `cv2` (opencv-python) — image I/O, filtering, resizing
@@ -116,7 +125,7 @@ from .distortion import (
 **Purpose:** UAVIQANet — frequency-aware task-conditioned lightweight NR-IQA model (~5.4M params).
 
 **Location:** `src/uav_iqa/model.py`
-**Lines:** 379
+**Lines:** 395
 
 ### Key Classes
 
@@ -165,16 +174,27 @@ def forward_all_tasks(self, x: Tensor) -> Tensor
 
 ## Module: `dataset.py`
 
-**Purpose:** UAVIQADataset — loads manifest.json with image paths, task IDs, and annotation scores.
+**Purpose:** UAVIQADataset — loads manifest.json with image paths, task IDs, and annotation scores; also provides manifest validation.
 
 **Location:** `src/uav_iqa/dataset.py`
-**Lines:** 134
+**Lines:** 260
 
-### Key Class
+### Key Classes & Functions
 
-| Class | Description |
-|-------|-------------|
-| `UAVIQADataset` | `torch.utils.data.Dataset`: loads images from manifest, resizes to `image_size`, normalizes to [0,1], returns dict of `{image, task_id, score, distortion, intensity, ref_id, optional_vlm/vla/execution_scores}` |
+| Class / Function | Description |
+|------------------|-------------|
+| `UAVIQADataset` | `torch.utils.data.Dataset`: loads images from manifest, resizes to `image_size`, normalizes to [0,1], returns dict of `{image, task_id, score, distortion, intensity, ref_id, optional_vlm/vla/execution_scores}`. Supports optional augmentation (RandomHorizontalFlip + ColorJitter). Handles corrupt images gracefully (falls back to blank tensor with warning). |
+| `validate_manifest(manifest_path) -> dict` | Validates a manifest.json and returns diagnostics: `{valid, n_entries, missing_fields, unknown_tasks, missing_paths, score_stats}`. Used by `write_manifest()` in utils.py. |
+
+### Module-Level Constants
+
+```python
+TASK_NAMES = ("tracking", "inspection", "delivery", "sar")  # ordered tuple
+TASK_TO_ID = {"tracking": 0, "inspection": 1, "delivery": 2, "sar": 3}
+VALID_TASKS = {"tracking", "inspection", "delivery", "sar"}
+MANIFEST_REQUIRED_FIELDS = {"path", "task", "distortion", "intensity_level"}
+MANIFEST_OPTIONAL_FIELDS = {"ref_id", "ref_path", "original", "vlm_score", "vla_score", "execution_score", "annotated", "degradation_types"}
+```
 
 ### Manifest Schema
 
@@ -202,8 +222,8 @@ def forward_all_tasks(self, x: Tensor) -> Tensor
 ### Dependencies
 
 - `torch`, `torch.utils.data`
-- `PIL.Image`
 - `numpy`
+- `PIL.Image` (via utils.py)
 
 ---
 
@@ -212,7 +232,7 @@ def forward_all_tasks(self, x: Tensor) -> Tensor
 **Purpose:** Custom loss functions for IQA ranking and cross-task regularization (replaces former `trainer.py`).
 
 **Location:** `src/uav_iqa/losses.py`
-**Lines:** 32
+**Lines:** 30
 
 ### Key Classes
 
@@ -237,12 +257,12 @@ CrossTask: L = -(2/(K*(K-1))) * Σ_{i<j} mean((scores[:,i] - scores[:,j])²)
 
 ---
 
-## Module: `evaluate.py`
+## Module: `metrics.py`
 
 **Purpose:** IQA evaluation metrics.
 
-**Location:** `src/uav_iqa/evaluate.py`
-**Lines:** 109
+**Location:** `src/uav_iqa/metrics.py`
+**Lines:** 150
 
 ### Public Functions
 
@@ -252,10 +272,17 @@ CrossTask: L = -(2/(K*(K-1))) * Σ_{i<j} mean((scores[:,i] - scores[:,j])²)
 | `compute_plcc(pred, target)` | Pearson Linear Correlation Coefficient |
 | `compute_rmse(pred, target)` | Root Mean Square Error |
 | `compute_kendall_tau(pred, target)` | Kendall's τ rank correlation |
-| `evaluate_iqa(pred, target) -> dict` | All 4 metrics: {SRCC, PLCC, RMSE, KendallTau} |
-| `per_task_metrics(pred, target, task_ids) -> dict` | Per-task breakdown of srcc/plcc/rmse |
-| `per_distortion_metrics(pred, target, labels) -> dict` | Per-distortion breakdown of SRCC/PLCC/RMSE |
-| `compute_metrics(target, pred) -> dict` | Alias of evaluate_iqa with lowercase keys |
+| `evaluate_iqa(pred, target) -> dict` | All 4 metrics with lowercase keys: `{srcc, plcc, rmse, kendall_tau}` |
+| `per_task_metrics(pred, target, task_ids) -> dict` | Per-task breakdown of srcc/plcc/rmse with `n` count |
+| `per_distortion_metrics(pred, target, labels) -> dict` | Per-distortion breakdown of srcc/plcc/rmse/kendall_tau |
+| `per_distortion_category_metrics(pred, target, labels) -> dict` | **NEW** — aggregate metrics for UAV-specific vs generic categories: `{UAV: {...}, Generic: {...}}` |
+
+### Key Details
+
+- All functions return lowercase keys (`srcc`, `plcc`, `rmse`, `kendall_tau`)
+- `per_task_metrics` accepts int task IDs or string task names
+- `per_distortion_category_metrics` auto-detects the 6 UAV distortion names
+- All metrics return `0.0` with `n` count when `n < 3` samples
 
 ### Dependencies
 
@@ -264,12 +291,12 @@ CrossTask: L = -(2/(K*(K-1))) * Σ_{i<j} mean((scores[:,i] - scores[:,j])²)
 
 ---
 
-## Module: `lightning_model.py`
+## Module: `lightning_module.py`
 
 **Purpose:** LightningModule wrapping UAVIQANet with training/val/test logic, per-distortion ListMLE ranking, and feature reuse (forward_features).
 
-**Location:** `src/uav_iqa/lightning_model.py`
-**Lines:** 272
+**Location:** `src/uav_iqa/lightning_module.py`
+**Lines:** 280
 
 ### Key Class
 
@@ -340,12 +367,12 @@ get_test_results() -> dict {
 
 ---
 
-## Module: `lightning_data.py`
+## Module: `data_module.py`
 
 **Purpose:** LightningDataModule wrapping UAVIQADataset with manifest filtering.
 
-**Location:** `src/uav_iqa/lightning_data.py`
-**Lines:** 155
+**Location:** `src/uav_iqa/data_module.py`
+**Lines:** 157
 
 ### Key Class
 
@@ -380,7 +407,7 @@ get_test_results() -> dict {
 **Purpose:** PyTorch Lightning callbacks for dataset verification, curriculum switching, metric history, and result saving.
 
 **Location:** `src/uav_iqa/callbacks.py`
-**Lines:** 234
+**Lines:** 256
 
 ### Key Classes
 
@@ -430,27 +457,29 @@ Captured series:
 
 ---
 
-## Module: `annotation_utils.py`
+## Module: `annotations.py`
 
 **Purpose:** AirCopBench human annotation parsing, degradation factor computation, and synthetic score generation for manifest annotation.
 
-**Location:** `src/uav_iqa/annotation_utils.py`
-**Lines:** 155
+**Location:** `src/uav_iqa/annotations.py`
+**Lines:** 367
 
 ### Key Functions
 
 | Function | Description |
 |----------|-------------|
+| `parse_distortion_key(key) -> (str, float)` | **NEW** — Parse `'gaussian_blur_L04'` → `('gaussian_blur', 0.4)`. Handles `__` separator, nanme `_L4` / `_L04` / `_L0_5` formats. |
 | `parse_quality_score(quality_str)` | Parse `'Good (4/5)'` → 0.8, `'Excellent (5/5)'` → 1.0, etc. |
 | `parse_usability(usability_str)` | Parse `'1 (Available)'` → 1.0, `'3 (Unavailable)'` → 0.25 |
 | `degradation_factor(distortion, task)` | Get degradation at max intensity for (distortion, task) pair |
+| `compute_synthetic_score(distortion, task, intensity)` | **NEW** — Noiseless degradation-model score: `score = 1.0 * (1.0 - alpha * intensity)`. Used by C2 correlation validation. |
 | `build_ref_score_lookup(aircopbench_dir)` | Walk AirCopBench Annotations dirs → dict of `{ref_id: {vlm_score, vla_score, execution_score, annotated}}` |
-| `assign_task_label(img_name)` | Deterministic task assignment from image name MD5 hash |
+| `assign_task_label(img_name, task_map)` | Extract task label from path (scene_001→tracking, etc.), with configurable `task_map` override |
 | `synthetic_ref_scores(ref_id)` | Deterministic synthetic scores via MD5 hash for refs without annotations |
 
 ### DEGRADATION_FACTORS Table
 
-155-entry dict mapping 31 distortion names × 4 tasks to degradation coefficients. Example:
+248-entry dict mapping 31 distortion names × 4 tasks to degradation coefficients, plus utility keys. Example:
 
 ```python
 "propeller_vibration_blur": {
@@ -476,16 +505,64 @@ Combines real AirCopBench annotations (Quality → vlm, Usability → vla, 0.4Q 
 
 ## Module: `utils.py`
 
-**Purpose:** Utility helpers.
+**Purpose:** Utility helpers — image I/O, manifest management, logging setup, parameter counting.
 
 **Location:** `src/uav_iqa/utils.py`
-**Lines:** 4
+**Lines:** 127
 
 ### Functions
 
 | Function | Description |
 |----------|-------------|
+| `setup_logging(name, level)` | **NEW** — Configure stdlib logging with uniform format for scripts |
+| `find_images(image_dir, exts, exclude_dirs)` | **NEW** — Recursively find image files, optionally excluding subdirectories |
+| `load_image_tensor(path, image_size)` | **NEW** — Load image as `(C, H, W)` float32 tensor in [0,1]; used by both Dataset and benchmark scripts |
 | `count_parameters(model) -> (total, trainable)` | Count total and trainable parameters |
+| `load_task_map(path)` | **NEW** — Load JSON task-map file (used by data_synthesis.py) |
+| `split_samples(samples, ratios, seed)` | **NEW** — Shuffle + split into `{train, val, test}` dicts via numpy.RandomState |
+| `load_manifest(manifest_path)` | **NEW** — Load manifest.json entries |
+| `write_manifest(entries, manifest_path)` | **NEW** — Write manifest JSON with validation via `validate_manifest()` |
+
+### Dependencies
+
+- `torch`
+- `numpy`
+- `PIL.Image`
+
+---
+
+## Module: `data_synthesis.py`
+
+**Purpose:** Dataset-agnostic data synthesis pipeline — extract references, inject distortions, generate manifests, annotate scores. Supports AirCopBench and generic image directories.
+
+**Location:** `src/uav_iqa/data_synthesis.py`
+**Lines:** 769
+
+### Key Classes
+
+| Class | Description |
+|-------|-------------|
+| `DatasetFormat` | Abstract base class with explicit `_registry` for dataset-specific logic. Subclasses register via `@DatasetFormat.register`. |
+| `AirCopBenchFormat` | Handles AirCopBench nested scene/UAV directory structure + Annotation/*.json parsing. Includes `build_image_index()`, `build_annotation_summary()`, `get_degradation_types()`. |
+| `GenericImageDirFormat` | Flat directory of images, no annotations, hash-based task assignment. |
+| `DataSynthesisPipeline` | Orchestrates the 4-step pipeline: `extract_references()` → `inject_distortions()` → `generate_manifests()` → `annotate_scores()`. Also provides `run_full()` for end-to-end execution. |
+| `create_pipeline(dataset, seed)` | Convenience factory — creates a DataSynthesisPipeline for a named dataset format. |
+
+### Pipeline Steps
+
+| Step | Method | Description |
+|------|--------|-------------|
+| 1 | `extract_references()` | Symlinks or copies clean reference frames to flat directory |
+| 2 | `inject_distortions()` | Applies all 24 distortions × 5 intensities via parallel workers |
+| 3 | `generate_manifests()` | Scans distorted directory, parses filenames, builds entries, splits train/val/test |
+| 4 | `annotate_scores()` | Assigns VLM/VLA/execution scores using real annotations or synthetic fallback + degradation model |
+
+### Dependencies
+
+- `numpy`
+- `uav_iqa.distortion` — `UAVDistortionPipeline`
+- `uav_iqa.annotations` — `build_ref_score_lookup`, `parse_distortion_key`, etc.
+- `uav_iqa.utils` — `find_images`, `split_samples`, `write_manifest`
 
 ---
 
@@ -494,8 +571,9 @@ Combines real AirCopBench annotations (Quality → vlm, Usability → vla, 0.4Q 
 **Purpose:** Public API exports.
 
 **Location:** `src/uav_iqa/__init__.py`
+**Lines:** 83
 
-### Exports (22 total)
+### Exports (35 total)
 
 ```python
 __all__ = [
@@ -506,18 +584,28 @@ __all__ = [
     "LowResSuperResolution", "PropellerShadow",
     # Model (1)
     "UAVIQANet",
-    # Dataset (1)
-    "UAVIQADataset",
-    # Metrics (3)
+    # Dataset (2)
+    "UAVIQADataset", "validate_manifest",          # ← validate_manifest added
+    # Metrics (4)
     "compute_srcc", "compute_plcc", "evaluate_iqa",
+    "per_distortion_category_metrics",              # ← NEW
     # Lightning wrappers (2)
     "UAVIQALightningModule", "UAVIQDataModule",
     # Losses (2)
     "ListMLELoss", "CrossTaskRegularization",
-    # Annotation utilities (6)
-    "parse_quality_score", "parse_usability",
-    "degradation_factor", "build_ref_score_lookup",
-    "assign_task_label", "synthetic_ref_scores",
+    # Annotation utilities (8)
+    "parse_distortion_key", "parse_quality_score",  # ← parse_distortion_key added
+    "parse_usability", "degradation_factor",
+    "compute_synthetic_score",                      # ← NEW
+    "build_ref_score_lookup", "assign_task_label",
+    "synthetic_ref_scores",
+    # Utility functions (6)
+    "setup_logging", "load_task_map",               # ← NEW category
+    "load_manifest", "split_samples",
+    "write_manifest", "find_images",
+    # Data synthesis (3)
+    "DatasetFormat",                                # ← NEW category
+    "DataSynthesisPipeline", "create_pipeline",
 ]
 # Note: UAVIQACLI removed in 2026-06 refactor — use main.py + vanilla LightningCLI
 ```

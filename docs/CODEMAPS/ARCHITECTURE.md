@@ -5,43 +5,54 @@
 ## High-Level System Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                      DATA PREPARATION (M1)                      │
-│                                                                  │
-│  AirCopBench ──► extract_refs ──► inject_distortions ──►        │
-│  Dataset         (clean frames)    (24 × 5 per ref)              │
-│                                       │                          │
-│                                       ▼                          │
-│                               manifest.json                      │
-│                               (train/val/test splits)            │
-│                                       │                          │
-└───────────────────────────────────────┼──────────────────────────┘
-                                        │
-                                        ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        TRAINING (M3)                            │
-│                                                                  │
-│  UAVIQADataset ──► UAVIQALightningModule ──► UAVIQANet          │
-│  (manifest)          │                              │            │
-│                      │  Loss: MSE + ListMLE +       │            │
-│                      │  CrossTaskRegularization     │            │
-│                      └──────────────────────────────┘            │
-│                                  │                               │
-│                    CurriculumStageCallback                       │
-│                    (VLM → VLA → Execution)                      │
-│                                  │                               │
-│                              Output                              │
-│                        (best_model.pt, results.json)             │
-└───────────────────────────────────┬──────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                   DATA PREPARATION (M1)                              │
+│                                                                      │
+│  Dataset-agnostic pipeline (data_synthesis.py)                       │
+│                                                                      │
+│  Input Source ───► DatasetFormat ──► DataSynthesisPipeline           │
+│  (AirCopBench /    (registry key:     │                              │
+│   GenericDir)       "aircopbench",    ├── extract_references         │
+│                     "generic")        ├── inject_distortions         │
+│                                        │    (24 × 5 per ref)         │
+│                                        ├── generate_manifests        │
+│                                        │    (train/val/test splits)  │
+│                                        └── annotate_scores           │
+│                                             │                        │
+│                                             ▼                        │
+│                                     manifest.json                    │
+│                                     (path, task, distortion,         │
+│                                      intensity, scores)              │
+└─────────────────────────────────────┼────────────────────────────────┘
+                                       │
+                                       ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                      TRAINING (M3)                                   │
+│                                                                      │
+│  UAVIQADataset ──► UAVIQALightningModule ──► UAVIQANet              │
+│  (manifest +        │                              │                 │
+│   augmentation)     │  Loss: MSE + ListMLE +       │                 │
+│                     │  CrossTaskRegularization     │                 │
+│                     └──────────────────────────────┘                 │
+│                                 │                                    │
+│                   CurriculumStageCallback                            │
+│                   (VLM → VLA → Execution)                           │
+│                                 │                                    │
+│                             Output                                   │
+│                       (best_model.pt, results.json)                  │
+└──────────────────────────────────┬───────────────────────────────────┘
                                     │
                                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     BENCHMARKING (M2)                            │
-│                                                                  │
-│  Test manifest ──► pyiqa (15+ methods) ──► metrics table        │
-│  UAVIQANet       ──► evaluate.py           (SRCC, PLCC, RMSE)   │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                    BENCHMARKING (M2)                                 │
+│                                                                      │
+│  Test manifest ──► pyiqa (15+ methods) ──► metrics table            │
+│  UAVIQANet       ──► metrics.py            (SRCC, PLCC, RMSE,       │
+│                        evaluate_iqa()       Kendall τ,              │
+│                        per_task_metrics()    per-task &             │
+│                        per_distortion_       per-distortion         │
+│                          category_metrics()   category metrics)     │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Data Flow
@@ -178,6 +189,14 @@ Output: (B,) quality scores ∈ [0, 1]
 ## Component Relationships
 
 ```
+scripts/data_synthesis.py
+  └── calls → DataSynthesisPipeline (data_synthesis.py)
+                  │
+                  ├── uses → DatasetFormat (registry: AirCopBenchFormat, GenericImageDirFormat)
+                  ├── uses → UAVDistortionPipeline (distortion.py)
+                  ├── uses → annotations.py (build_ref_score_lookup, assign_task_label, etc.)
+                  └── uses → utils.py (find_images, split_samples, write_manifest)
+
 LightningCLI (main.py)
   ├── --config → configs/experiments/<name>.yaml
   ├── configures → SwanLabLogger + CSVLogger (dual logger)
@@ -191,12 +210,13 @@ LightningCLI (main.py)
   │              │            └── owns → TaskConditionedHead (optional)
   │              ├── uses → ListMLELoss
   │              ├── uses → CrossTaskRegularization
-  │              └── uses → evaluate_iqa
+  │              └── uses → metrics.py (evaluate_iqa, per_task_metrics, per_distortion_metrics)
   ├── calls → UAVIQDataModule
   │              └── owns → UAVIQADataset
-  ├── adds → SetupRunCallback
-  ├── adds → CurriculumStageCallback
-  ├── adds → MetricsHistoryCallback
+  │                     └── uses → utils.py (load_image_tensor, load_manifest)
+  ├── adds → SetupRunCallback (manifest SHA256, param count)
+  ├── adds → CurriculumStageCallback (VLM→VLA→Execution)
+  ├── adds → MetricsHistoryCallback (per-task + UAV/generic aggregates)
   ├── adds → ModelCheckpoint (val/srcc, top-1)
   └── adds → ResultsSavingCallback (post-fit test + results.json)
 ```

@@ -73,19 +73,19 @@ src/uav_iqa/               # Core library (~2.2K LOC)
   model.py                 # UAVIQANet (backbone → FPN → CBAM → FAB → task heads)
   dataset.py               # UAVIQADataset — manifest.json loader
   losses.py                # ListMLELoss + CrossTaskRegularization
-  annotation_utils.py      # AirCopBench annotation parsing, degradation factors, score synthesis
-  lightning_model.py       # LightningModule with MSE + ListMLE + cross-task loss
-  lightning_data.py        # LightningDataModule with manifest filtering
-  evaluate.py              # SRCC, PLCC, RMSE, Kendall τ metrics
+  annotations.py      # AirCopBench annotation parsing, degradation factors, score synthesis
+  lightning_module.py       # LightningModule with MSE + ListMLE + cross-task loss
+  data_module.py        # LightningDataModule with manifest filtering
+  metrics.py              # SRCC, PLCC, RMSE, Kendall τ metrics
   callbacks.py             # SetupRunCallback, CurriculumStageCallback, MetricsHistoryCallback, ResultsSavingCallback
   utils.py                 # count_parameters()
 
 scripts/                   # Executable experiment scripts
-  synthesize_data.py           # Unified data synthesis CLI (extract/inject/manifest/annotate/all)
-  run_m2_benchmark.py          # Benchmark 15+ existing IQA methods
-  run_distortion.py            # Visual sanity check of all 24 distortions
-  run_overfit.py               # 100-image overfit test (model correctness)
-  run_c2_correlation.py        # C2 correlation validation
+  data_synthesis.py              # Unified data synthesis CLI (extract/inject/manifest/annotate/all)
+  benchmark_iqa_methods.py       # Benchmark 15+ existing IQA methods
+  visualize_distortions.py       # Visual sanity check of all 24 distortions
+  overfit_sanity_check.py        # 100-image overfit test (model correctness)
+  validate_synth_real_correlation.py  # C2 correlation validation
 
 configs/
   default.yaml                 # LightningCLI config template
@@ -138,25 +138,25 @@ Data is **not** included in the repo. Download AirCopBench from [arXiv 2511.1102
 
 ```bash
 # Full pipeline (all 4 steps at once)
-python scripts/synthesize_data.py all \
+python scripts/data_synthesis.py all \
   --dataset aircopbench \
   --input-root data/raw/AirCopBench \
   --output-dir data/processed
 
 # Or run individual steps:
-python scripts/synthesize_data.py extract \
+python scripts/data_synthesis.py extract \
   --dataset aircopbench --input-root data/raw/AirCopBench \
   --output-dir data/processed/ref_images
 
-python scripts/synthesize_data.py inject \
+python scripts/data_synthesis.py inject \
   --image-dir data/processed/ref_images \
   --output-dir data/processed/distorted --workers 8
 
-python scripts/synthesize_data.py manifest \
+python scripts/data_synthesis.py manifest \
   --dataset aircopbench --distorted-dir data/processed/distorted \
   --output-dir data/processed
 
-python scripts/synthesize_data.py annotate \
+python scripts/data_synthesis.py annotate \
   --dataset aircopbench --manifest-dir data/processed \
   --input-root data/raw/AirCopBench
 ```
@@ -220,29 +220,29 @@ python main.py fit --config configs/experiments/r020_efficientvit_b0.yaml
 
 ```bash
 # Run all 15+ methods on the test set
-python scripts/run_m2_benchmark.py \
+python scripts/benchmark_iqa_methods.py \
   --data-dir data/processed \
   --output-dir outputs/benchmark
 
 # Selected methods only
-python scripts/run_m2_benchmark.py \
+python scripts/benchmark_iqa_methods.py \
   --methods psnr ssim brisque clip_iqa maniqa
 
 # Quick sanity (max 100 samples)
-python scripts/run_m2_benchmark.py --max-samples 100
+python scripts/benchmark_iqa_methods.py --max-samples 100
 ```
 
 ### Overfit Test
 
 ```bash
-python scripts/run_overfit.py
+python scripts/overfit_sanity_check.py
 # Verifies loss → 0 on 100 random images. Passes if final loss < 0.001.
 ```
 
 ### Distortion Verification
 
 ```bash
-python scripts/run_distortion.py --output-dir outputs/m0_distortion_check
+python scripts/visualize_distortions.py --output-dir outputs/m0_distortion_check
 # Generates visual grid of all 24 distortions × 5 intensity levels.
 ```
 
@@ -257,7 +257,7 @@ python scripts/run_distortion.py --output-dir outputs/m0_distortion_check
 | **RMSE** | [0, ∞) | Root mean square error |
 | **Kendall τ** | [-1, 1] | Kendall rank correlation |
 
-Support for per-task and per-distortion evaluation via `evaluate.py`.
+Support for per-task and per-distortion evaluation via `metrics.py`.
 
 ---
 
@@ -267,7 +267,7 @@ The [default config](configs/default.yaml) serves as a reference template. Each 
 
 ```yaml
 model:
-  class_path: uav_iqa.lightning_model.UAVIQALightningModule
+  class_path: uav_iqa.lightning_module.UAVIQALightningModule
   init_args:
     backbone: mobilenetv4_conv_small
     use_fab: true          # Frequency-Aware Branch
@@ -279,7 +279,7 @@ model:
     annotator_stage: vla
 
 data:
-  class_path: uav_iqa.lightning_data.UAVIQDataModule
+  class_path: uav_iqa.data_module.UAVIQDataModule
   init_args:
     data_root: data/processed
     batch_size: 256
@@ -333,7 +333,7 @@ black src/ tests/ scripts/
 - **Real-ESRGAN** is optional; falls back to bicubic + sharpen if not installed
 - **openVLA/CARLA** are manual installs (not on PyPI); not needed for basic training/inference
 - **Training entry:** `main.py` (vanilla LightningCLI). `run_m3_train.py` and `UAVIQACLI` were removed in the 2026-06 refactor.
-- **Score annotation:** `annotate_scores.py` applies degradation model: `score = ref_score × degradation_factor(distortion, task, intensity)`
+- **Score annotation:** `scripts/data_synthesis.py annotate` applies degradation model: `score = ref_score × degradation_factor(distortion, task, intensity)`
 
 ---
 

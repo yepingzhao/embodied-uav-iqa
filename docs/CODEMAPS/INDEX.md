@@ -41,10 +41,10 @@ docs/                  →  Literature reviews and research roadmap
 | Entry Point | Purpose |
 |-------------|---------|
 | `main.py` | **Unified training entry point** — LightningCLI with YAML configs |
-| `scripts/synthesize_data.py` | Full M1 data synthesis pipeline (extract/inject/manifest/annotate) |
-| `scripts/run_m2_benchmark.py` | Benchmark 15+ existing IQA methods |
-| `scripts/run_overfit.py` | Model correctness overfit test |
-| `scripts/run_c2_correlation.py` | C2 correlation validation |
+| `scripts/data_synthesis.py` | Full M1 data synthesis pipeline (extract/inject/manifest/annotate) |
+| `scripts/benchmark_iqa_methods.py` | Benchmark 15+ existing IQA methods |
+| `scripts/overfit_sanity_check.py` | Model correctness overfit test |
+| `scripts/validate_synth_real_correlation.py` | C2 correlation validation |
 
 ## Experiment Configs (`configs/experiments/`)
 
@@ -70,8 +70,24 @@ docs/                  →  Literature reviews and research roadmap
 
 | Resource | Source | Used By |
 |----------|--------|---------|
-| AirCopBench dataset | arXiv 2511.11025 | `synthesize_data.py` (extract step) |
+| AirCopBench dataset | arXiv 2511.11025 | `data_synthesis.py` (extract/manifest/annotate steps) |
 | Real-ESRGAN (optional) | GitHub (xinntao/Real-ESRGAN) | `LowResSuperResolution` distortion |
-| pyiqa (optional) | PyPI | `run_m2_benchmark.py` |
+| pyiqa (optional) | PyPI | `benchmark_iqa_methods.py` |
 | openVLA (manual install) | GitHub | VLA annotation stage |
 | VLM libs (optional) | vllm, transformers, accelerate | VLM annotation stage |
+
+## Key Public API (`__init__.py`)
+
+The package now exports **35 symbols** (up from 22), including new data-synthesis, manifest-validation, and utility functions:
+
+| Category | Count | New Additions |
+|----------|-------|---------------|
+| Distortion models | 7 | (unchanged) |
+| Model | 1 | (unchanged) |
+| Dataset | 2 | `validate_manifest` |
+| Metrics | 4 | `per_distortion_category_metrics` |
+| Lightning wrappers | 2 | (unchanged) |
+| Losses | 2 | (unchanged) |
+| Annotation utilities | 8 | `parse_distortion_key`, `compute_synthetic_score` |
+| Data synthesis | 3 | `DatasetFormat`, `DataSynthesisPipeline`, `create_pipeline` |
+| Utility functions | 6 | `setup_logging`, `find_images`, `load_task_map`, `load_manifest`, `split_samples`, `write_manifest` |

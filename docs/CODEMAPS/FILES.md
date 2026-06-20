@@ -6,10 +6,10 @@
 
 ```
 embodied-uav-iqa/
-├── src/uav_iqa/           # Core library (~2.2K LOC total)
-├── scripts/               # 8 executable experiment scripts
+├── src/uav_iqa/           # Core library (12 modules, ~3,559 LOC total)
+├── scripts/               # 5 executable experiment scripts
 ├── configs/               # YAML configuration (LightningCLI) + 21 experiment configs
-├── tests/                 # pytest test suite (2 files, 17 tests)
+├── tests/                 # pytest test suite (3 files, 35+ tests)
 ├── refine-logs/           # 16 research refinement artifacts
 ├── docs/                  # Literature reviews, research roadmap, codemaps
 ├── main.py                # Unified training entry point (LightningCLI)
@@ -33,25 +33,27 @@ embodied-uav-iqa/
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `__init__.py` | 49 | Public API: exports 22 symbols |
-| `distortion.py` | 664 | 24 distortion models + UAVDistortionPipeline |
-| `model.py` | 385 | UAVIQANet: backbone → FPN → CBAM → FAB → task heads, `forward_features()` feature sharing |
-| `dataset.py` | 159 | UAVIQADataset: manifest.json loader, annotation scores, augmentation |
-| `losses.py` | 32 | ListMLELoss + CrossTaskRegularization (replaces former `trainer.py`) |
-| `evaluate.py` | 109 | SRCC, PLCC, RMSE, Kendall τ + per-task/per-distortion metrics |
-| `annotation_utils.py` | 155 | AirCopBench annotation parsing, degradation factors, score synthesis |
-| `lightning_model.py` | 272 | LightningModule: UAVIQANet + MSE/ListMLE/cross-task, feature sharing, per-distortion ranking |
-| `lightning_data.py` | 155 | LightningDataModule: manifest filtering (task/distortion/leave-out), train/val/test splits |
-| `callbacks.py` | 234 | SetupRunCallback + CurriculumStageCallback + MetricsHistoryCallback + ResultsSavingCallback |
-| `utils.py` | 5 | count_parameters() |
+| `__init__.py` | 83 | Public API: exports **35 symbols** (was 22) |
+| `distortion.py` | 685 | 24 distortion models + UAVDistortionPipeline + `UAV_DISTORTION_NAMES` constant |
+| `model.py` | 395 | UAVIQANet: backbone → FPN → CBAM → FAB → task heads, `forward_features()` feature sharing |
+| `dataset.py` | 260 | UAVIQADataset + `validate_manifest()` + constants (TASK_NAMES, TASK_TO_ID) |
+| `losses.py` | 30 | ListMLELoss + CrossTaskRegularization (replaces former `trainer.py`) |
+| `metrics.py` | 150 | SRCC, PLCC, RMSE, Kendall τ + per-task / per-distortion / **per-category** metrics |
+| `annotations.py` | 367 | AirCopBench annotation parsing, degradation factors, score synthesis, **parse_distortion_key**, **compute_synthetic_score** |
+| `data_synthesis.py` | **769** | **NEW** — dataset-agnostic pipeline: DatasetFormat (ABC + registry), AirCopBenchFormat, GenericImageDirFormat, DataSynthesisPipeline, create_pipeline |
+| `lightning_module.py` | 280 | LightningModule: UAVIQANet + MSE/ListMLE/cross-task, feature sharing, per-distortion ranking |
+| `data_module.py` | 157 | LightningDataModule: manifest filtering (task/distortion/leave-out), train/val/test splits |
+| `callbacks.py` | 256 | SetupRunCallback + CurriculumStageCallback + MetricsHistoryCallback + ResultsSavingCallback |
+| `utils.py` | **127** | **Expanded** — `count_parameters()`, `find_images()`, `load_image_tensor()`, `load_manifest()`, `write_manifest()`, `split_samples()`, `load_task_map()`, `setup_logging()` |
 
 ### Per-File Dependencies
 
 ```
 __init__.py
-  → distortion.py, model.py, dataset.py, evaluate.py,
-    losses.py, annotation_utils.py,
-    lightning_model.py, lightning_data.py
+  → distortion.py, model.py, dataset.py, metrics.py,
+    losses.py, annotations.py, utils.py, data_synthesis.py,
+    lightning_module.py, data_module.py
+  (10 internal deps)
 
 distortion.py
   → cv2, numpy, scipy.signal, albumentations
@@ -60,28 +62,39 @@ model.py
   → torch, timm
 
 dataset.py
-  → torch, PIL, numpy
+  → torch, numpy
 
 losses.py
   → torch
 
-evaluate.py
-  → numpy, scipy.stats
+metrics.py
+  → numpy, scipy.stats, dataset.py (TASK_NAMES)
 
-annotation_utils.py
-  → json, hashlib, re, logging, pathlib
+annotations.py
+  → json, hashlib, re, logging, pathlib, dataset.py (TASK_NAMES)
 
-lightning_model.py
-  → lightning, torch, evaluate.py, model.py, losses.py
+data_synthesis.py (NEW)
+  → numpy, json, shutil, re, logging, pathlib, abc, typing
+  → uav_iqa.distortion (UAVDistortionPipeline)
+  → uav_iqa.annotations (build_ref_score_lookup, assign_task_label, ...)
+  → uav_iqa.utils (find_images, split_samples, write_manifest)
 
-lightning_data.py
-  → lightning, dataset.py, distortion.py
+lightning_module.py
+  → lightning, torch, numpy
+  → metrics.py (evaluate_iqa, per_task_metrics, per_distortion_metrics)
+  → model.py (UAVIQANet), losses.py (ListMLELoss, CrossTaskRegularization)
+  → distortion.py (UAV_DISTORTION_NAMES)
+
+data_module.py
+  → lightning, dataset.py (UAVIQADataset), distortion.py (UAV_DISTORTION_NAMES)
 
 callbacks.py
-  → lightning, yaml, utils.py
+  → lightning, yaml, json, hashlib, subprocess, pathlib
+  → utils.py (count_parameters)
 
 utils.py
-  → (none)
+  → torch, numpy, PIL.Image, json, logging, pathlib
+  → dataset.py (validate_manifest) [via write_manifest]
 ```
 
 ---
@@ -90,18 +103,18 @@ utils.py
 
 | File | Lines | Purpose | Pipeline Stage |
 |------|-------|---------|----------------|
-| `synthesize_data.py` | — | Unified data synthesis CLI (extract/inject/manifest/annotate/all) | M1 |
-| `run_m2_benchmark.py` | 311 | Benchmark 15+ IQA methods (pyiqa) on test set | M2 |
-| `run_overfit.py` | 107 | Overfit correctness test: train on 100 images, verify loss → 0 | Validation |
-| `run_distortion.py` | 101 | Visual sanity check: grid of all 24 distortions × 5 intensities | Validation |
-| `run_c2_correlation.py` | — | C2 correlation validation: synthetic vs real scores | Validation |
+| `data_synthesis.py` | 196 | Unified data synthesis CLI (extract/inject/manifest/annotate/all). Uses `DataSynthesisPipeline` from `src/uav_iqa/data_synthesis.py` | M1 |
+| `benchmark_iqa_methods.py` | 331 | Benchmark 15+ IQA methods (pyiqa) on test set | M2 |
+| `overfit_sanity_check.py` | 105 | Overfit correctness test: train on 100 images, verify loss → 0 | Validation |
+| `visualize_distortions.py` | 108 | Visual sanity check: grid of all 24 distortions × 5 intensities | Validation |
+| `validate_synth_real_correlation.py` | 132 | C2 correlation validation: synthetic vs real scores | Validation |
 
 ### Script Execution Order (Standard Pipeline)
 
 ```
-1. synthesize_data.py all          # Extract → inject → manifest → annotate (full M1 pipeline)
+1. data_synthesis.py all            # Extract → inject → manifest → annotate (full M1 pipeline)
 2. main.py                         # Train UAVIQANet via LightningCLI + experiment config
-3. run_m2_benchmark.py             # Benchmark (optional, after training)
+3. benchmark_iqa_methods.py         # Benchmark (optional, after training)
 ```
 
 ### Script CLI Patterns
@@ -124,34 +137,34 @@ All scripts support `--help` (argparse). Common conventions:
 | `default.yaml` | Reference template: model arch, data params, trainer settings, callbacks |
 | `experiments/` | **21 self-contained experiment configs** (r013–r024c) — each is a complete LightningCLI YAML |
 
-### Experiment Configs
+### Experiment Configs (21 total)
 
-All 21 configs follow the same structure as `default.yaml` with per-experiment overrides:
+All 21 configs follow the same structure as `default.yaml` (67 lines) with per-experiment overrides:
 
-| Config Range | Experiment | Key Difference from Baseline |
-|-------------|------------|------------------------------|
-| r013 | Task-conditioned (full baseline) | use_task_conditioning=true |
-| r014 | Task-agnostic | use_task_conditioning=false |
-| r016 | No FAB | use_fab=false |
-| r017 | No task conditioning | use_task_conditioning=false |
-| r018 | No CBAM | use_cbam=false |
-| r019 | MobileViT-S backbone | backbone=mobilevit_s |
-| r020 | EfficientViT-B0 backbone | backbone=efficientvit_b0 |
-| r021 | Generic distortions only | distortion_filter=generic |
-| r021b | UAV distortions only | distortion_filter=uav_only |
-| r022 | VLM annotation only | annotator_stage=vlm |
-| r022b | VLA annotation only | annotator_stage=vla |
-| r023 | No execution scores | total_epochs=40 (skip execution stage) |
-| r024a | Single-task (4 variants) | task=tracking/inspection/delivery/sar |
-| r024b | Leave-one-task-out (4 variants) | leave_out_task=tracking/inspection/delivery/sar |
-| r024c | Multi-task (all 4 tasks) | task=null (no filter) |
+| Config Range | Count | Experiment | Key Difference from Baseline |
+|-------------|-------|------------|------------------------------|
+| r013 | 1 | Task-conditioned (full baseline) | use_task_conditioning=true |
+| r014 | 1 | Task-agnostic | use_task_conditioning=false |
+| r016 | 1 | No FAB | use_fab=false |
+| r017 | 1 | No task conditioning | use_task_conditioning=false |
+| r018 | 1 | No CBAM | use_cbam=false |
+| r019 | 1 | MobileViT-S backbone | backbone=mobilevit_s |
+| r020 | 1 | EfficientViT-B0 backbone | backbone=efficientvit_b0 |
+| r021 | 1 | Generic distortions only | distortion_filter=generic |
+| r021b | 1 | UAV distortions only | distortion_filter=uav_only |
+| r022 | 1 | VLM annotation only | annotator_stage=vlm |
+| r022b | 1 | VLA annotation only | annotator_stage=vla |
+| r023 | 1 | No execution scores | total_epochs=40 (skip execution stage) |
+| r024a | 4 | Single-task | task=tracking/inspection/delivery/sar |
+| r024b | 4 | Leave-one-task-out | leave_out_task=tracking/inspection/delivery/sar |
+| r024c | 1 | Multi-task (all 4 tasks) | task=null (no filter) |
 
 ### Config Structure (default.yaml)
 
 ```yaml
 seed_everything: 42
 model:
-  class_path: uav_iqa.lightning_model.UAVIQALightningModule
+  class_path: uav_iqa.lightning_module.UAVIQALightningModule
   init_args:
     backbone: mobilenetv4_conv_small
     num_tasks: 4
@@ -167,7 +180,7 @@ model:
     total_epochs: 50
     annotator_stage: vla
 data:
-  class_path: uav_iqa.lightning_data.UAVIQDataModule
+  class_path: uav_iqa.data_module.UAVIQDataModule
   init_args:
     data_root: data/processed
     batch_size: 256
@@ -209,13 +222,16 @@ trainer:
 | File | Tests | Coverage |
 |------|-------|----------|
 | `test_distortion.py` | 10 | All 6 UAV distortions + pipeline + intensity range + generate_all + determinism |
-| `test_lightning.py` | 5+ | LightningModule init, ablations, optimizer config, training step; DataModule setup with mock data |
+| `test_lightning.py` | 94 | LightningModule init, ablations, optimizer config, training step; DataModule setup with mock data |
+| `test_data_synthesis.py` | **336** (NEW) | DatasetFormat registry (4), AirCopBenchFormat (10), GenericImageDirFormat (4), create_pipeline (3), PipelineExtract (2), PipelineManifest (1), PipelineAnnotate (2), PipelineStepsParsing (3) |
 
 ### Test Dependencies
 
 ```
-test_distortion.py → uav_iqa.distortion
-test_lightning.py  → uav_iqa.lightning_model, uav_iqa.lightning_data
+test_distortion.py        → uav_iqa.distortion
+test_lightning.py         → uav_iqa.lightning_module, uav_iqa.data_module
+test_data_synthesis.py    → uav_iqa.data_synthesis (DatasetFormat, DataSynthesisPipeline,
+                             AirCopBenchFormat, GenericImageDirFormat, create_pipeline)
 ```
 
 ---

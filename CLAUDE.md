@@ -14,28 +14,28 @@ UAV-Embodied-IQA: visual quality assessment for aerial embodied intelligence (re
 
 ```
 src/uav_iqa/           # Core library (~2.2K LOC total)
-  __init__.py          #   Public API: exports 22 symbols
+  __init__.py          #   Public API: exports 35 symbols
   distortion.py        #   24 distortion models (UAVDistortionPipeline + 6 UAV + 18 generic)
   model.py             #   UAVIQANet (backbone → PANet FPN → CBAM → FAB → task heads)
   dataset.py           #   UAVIQADataset — loads manifest.json, image/scores/task_id
   losses.py            #   ListMLELoss + CrossTaskRegularization
-  annotation_utils.py  #   AirCopBench annotation parsing, degradation factors, score synthesis
-  data_synthesis.py   #   Dataset-agnostic data pipeline (DatasetFormat + DataSynthesisPipeline)
-  lightning_model.py   #   UAVIQALightningModule (training_step, validation_step, etc.)
-  lightning_data.py    #   UAVIQDataModule (train/val/test dataloaders, manifest filtering)
-  evaluate.py          #   SRCC, PLCC, RMSE, Kendall tau metrics
+  annotations.py  #   AirCopBench annotation parsing, degradation factors, score synthesis
+  data_synthesis.py   #   Dataset-agnostic data pipeline (DatasetFormat ABC + AirCopBenchFormat + GenericImageDirFormat + DataSynthesisPipeline)
+  lightning_module.py   #   UAVIQALightningModule (training_step, validation_step, etc.)
+  data_module.py    #   UAVIQDataModule (train/val/test dataloaders, manifest filtering)
+  metrics.py          #   SRCC, PLCC, RMSE, Kendall tau metrics
   callbacks.py         #   SetupRunCallback, CurriculumStageCallback, MetricsHistoryCallback, ResultsSavingCallback
-  utils.py             #   count_parameters
+  utils.py             #   Utilities: count_parameters, logging, image I/O, manifest helpers
 main.py                # Unified training entry point (LightningCLI, reads experiment YAMLs)
 configs/               # YAML-driven configuration
   default.yaml         #   Default training/model/distortion config template
   experiments/         #   21 per-experiment configs (r013–r024c)
 scripts/               # Data pipeline + benchmark scripts
-  synthesize_data.py   #   Unified data synthesis CLI (extract/inject/manifest/annotate/all)
-  run_m2_benchmark.py  #   Benchmark 15+ IQA methods via pyiqa
-  run_distortion.py    #   Verify all 24 distortions produce visually plausible outputs
-  run_overfit.py       #   Overfit test: train on 100 random images, verify loss → 0
-  run_c2_correlation.py #  C2 correlation validation: synthetic vs real scores
+  data_synthesis.py                  # Unified data synthesis CLI (extract/inject/manifest/annotate/all)
+  benchmark_iqa_methods.py           # Benchmark 15+ IQA methods via pyiqa
+  visualize_distortions.py           # Verify all 24 distortions produce visually plausible outputs
+  overfit_sanity_check.py            # Overfit test: train on 100 random images, verify loss → 0
+  validate_synth_real_correlation.py # C2 correlation validation: synthetic vs real scores
 data/                  # Datasets (raw = external inputs, processed = generated artifacts)
 tests/                 # pytest tests (test_distortion.py, test_lightning.py)
 refine-logs/           # Research-refine artifacts (FINAL_PROPOSAL, EXPERIMENT_PLAN, etc.)
@@ -44,20 +44,20 @@ docs/                  # CODEMAPS, literature reviews, and research roadmap
 
 ## Data pipeline
 
-Data synthesis is handled by `src/uav_iqa/data_synthesis.py` (library) and `scripts/synthesize_data.py` (CLI). The pipeline has 4 steps — run individually or end-to-end:
+Data synthesis is handled by `src/uav_iqa/data_synthesis.py` (library) and `scripts/data_synthesis.py` (CLI). The pipeline has 4 steps — run individually or end-to-end:
 
 ```bash
 # Full pipeline (all 4 steps)
-python scripts/synthesize_data.py all \
+python scripts/data_synthesis.py all \
   --dataset aircopbench \
   --input-root data/raw/AirCopBench \
   --output-dir data/processed
 
 # Or run steps individually:
-python scripts/synthesize_data.py extract --dataset aircopbench --input-root ... --output-dir ...
-python scripts/synthesize_data.py inject --image-dir ... --output-dir ...
-python scripts/synthesize_data.py manifest --dataset aircopbench --distorted-dir ... --output-dir ...
-python scripts/synthesize_data.py annotate --dataset aircopbench --manifest-dir ...
+python scripts/data_synthesis.py extract --dataset aircopbench --input-root ... --output-dir ...
+python scripts/data_synthesis.py inject --image-dir ... --output-dir ...
+python scripts/data_synthesis.py manifest --dataset aircopbench --distorted-dir ... --output-dir ...
+python scripts/data_synthesis.py annotate --dataset aircopbench --manifest-dir ...
 ```
 
 1. **`extract`** — Extract clean reference frames from dataset → `data/processed/ref_images/`
@@ -65,7 +65,7 @@ python scripts/synthesize_data.py annotate --dataset aircopbench --manifest-dir 
 3. **`manifest`** — Scan distorted dir, generate train/val/test `manifest.json` → `data/processed/{train,val,test}/`
 4. **`annotate`** — Annotate manifest entries using annotations (if available) and degradation model: `score = ref_score × degradation_factor(distortion, intensity)` + noise
 5. **`main.py`** — Train UAVIQANet via LightningCLI + experiment config (reads `data/processed/`, writes `outputs/<experiment>_seed<N>/`)
-6. **`run_m2_benchmark.py`** — Evaluate existing IQA methods (PSNR, SSIM, LPIPS, BRISQUE, CLIP-IQA, MANIQA, etc.) on the test set
+6. **`benchmark_iqa_methods.py`** — Evaluate existing IQA methods (PSNR, SSIM, LPIPS, BRISQUE, CLIP-IQA, MANIQA, etc.) on the test set
 
 ## Setup and development commands
 
