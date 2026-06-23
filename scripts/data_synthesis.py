@@ -58,12 +58,27 @@ def _add_output_dir_arg(parser, default: str):
     parser.add_argument("--output-dir", default=default, help="Output directory")
 
 
+def _parse_ref_limits(raw: str | None) -> dict[str, int] | None:
+    """Parse ``"Sim_3_UAVs=500,Sim_5_UAVs=200"`` style string."""
+    if not raw:
+        return None
+    out: dict[str, int] = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if "=" not in pair:
+            raise ValueError(f"Invalid ref-limit format: '{pair}'. Expected KEY=VALUE")
+        k, v = pair.split("=", 1)
+        out[k.strip()] = int(v.strip())
+    return out
+
+
 def cmd_extract(args):
     pipeline = create_pipeline(args.dataset, seed=args.seed)
     pipeline.extract_references(
         input_root=args.input_root,
         output_dir=args.output_dir,
         copy=args.copy,
+        max_refs_per_source=_parse_ref_limits(args.max_refs),
     )
 
 
@@ -75,6 +90,7 @@ def cmd_inject(args):
         workers=args.workers,
         compress=not args.no_compress,
         dry_run=args.dry_run,
+        fmt=args.format,
     )
 
 
@@ -114,6 +130,8 @@ def cmd_all(args):
         task_map=task_map,
         noise_scale=args.noise_scale,
         dry_run=args.dry_run,
+        fmt=args.format,
+        max_refs_per_source=_parse_ref_limits(args.max_refs),
     )
 
 
@@ -129,6 +147,10 @@ def main():
     p_extract.add_argument("--input-root", required=True, help="Dataset root directory")
     _add_output_dir_arg(p_extract, "data/processed/ref_images")
     p_extract.add_argument("--copy", action="store_true", help="Copy instead of symlink")
+    p_extract.add_argument(
+        "--max-refs", default=None,
+        help="Per-source image limits, e.g. 'Sim_3_UAVs=500' (comma-separated KEY=VALUE)",
+    )
     _add_seed_arg(p_extract)
     p_extract.set_defaults(func=cmd_extract)
 
@@ -138,6 +160,7 @@ def main():
     _add_output_dir_arg(p_inject, "data/processed/distorted")
     p_inject.add_argument("--workers", type=int, default=4, help="Parallel workers")
     p_inject.add_argument("--no-compress", action="store_true", help="Disable PNG compression")
+    p_inject.add_argument("--format", default="png", choices=["png", "jpeg"], help="Output image format (default: png)")
     p_inject.add_argument("--dry-run", action="store_true", help="Process first 5 images only")
     _add_seed_arg(p_inject)
     p_inject.set_defaults(func=cmd_inject)
@@ -178,6 +201,7 @@ def main():
     p_all.add_argument("--copy", action="store_true", help="Copy ref images instead of symlink")
     p_all.add_argument("--workers", type=int, default=4, help="Parallel workers for injection")
     p_all.add_argument("--no-compress", action="store_true", help="Disable PNG compression")
+    p_all.add_argument("--format", default="png", choices=["png", "jpeg"], help="Output image format (default: png)")
     p_all.add_argument(
         "--split", nargs=3, type=float, default=[0.8, 0.1, 0.1],
         help="Train/val/test ratios",
@@ -185,6 +209,10 @@ def main():
     p_all.add_argument("--task-map", default=None, help="JSON task mapping file")
     p_all.add_argument("--noise-scale", type=float, default=0.02, help="Noise std multiplier")
     p_all.add_argument("--dry-run", action="store_true", help="Inject only 5 images")
+    p_all.add_argument(
+        "--max-refs", default=None,
+        help="Per-source image limits (e.g. 'Sim_3_UAVs=500') for extract step",
+    )
     _add_seed_arg(p_all)
     p_all.set_defaults(func=cmd_all)
 

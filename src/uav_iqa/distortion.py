@@ -640,7 +640,7 @@ class GenericDistortions:
 
 
 def _inject_one_image_mp(
-    img_path: str, output_dir: str, compress: bool, seed: int
+    img_path: str, output_dir: str, compress: bool, seed: int, fmt: str = "png"
 ) -> dict:
     """Pickle-safe worker for ProcessPoolExecutor. Creates its own pipeline instance."""
     from pathlib import Path
@@ -660,11 +660,17 @@ def _inject_one_image_mp(
         distorted = pipeline.generate_all(img, all_distortions)
 
         out_dir = Path(output_dir)
+        ext = ".jpg" if fmt == "jpeg" else ".png"
         for key, dist_img in distorted.items():
-            out_path = out_dir / f"{base_name}__{key}.png"
+            out_path = out_dir / f"{base_name}__{key}{ext}"
             dist_img_bgr = cv2.cvtColor(dist_img, cv2.COLOR_RGB2BGR)
-            params = [cv2.IMWRITE_PNG_COMPRESSION, 3] if compress else []
-            cv2.imwrite(str(out_path), dist_img_bgr, params or [])
+            if fmt == "jpeg":
+                params = [cv2.IMWRITE_JPEG_QUALITY, 92]
+            elif compress:
+                params = [cv2.IMWRITE_PNG_COMPRESSION, 3]
+            else:
+                params = []
+            cv2.imwrite(str(out_path), dist_img_bgr, params)
             local_results["distorted"] += 1
     except Exception as e:
         local_results["errors"].append(f"{img_path}: {e}")
@@ -735,11 +741,15 @@ class UAVDistortionPipeline:
         output_dir: str,
         compress: bool = True,
         max_workers: int = 4,
+        fmt: str = "png",
     ) -> dict:
         """Apply all distortions to all images and save to output_dir.
 
         Uses ProcessPoolExecutor for true multi-core parallelism on CPU-bound
         distortion operations. Falls back to serial processing if max_workers <= 1.
+
+        Args:
+            fmt: Output format, ``"png"`` or ``"jpeg"`` (JPEG quality 92).
         """
         import json
         from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -764,14 +774,14 @@ class UAVDistortionPipeline:
 
         if max_workers <= 1:
             for img_path in image_paths:
-                r = _inject_one_image_mp(img_path, str(output_dir), compress, self.seed)
+                r = _inject_one_image_mp(img_path, str(output_dir), compress, self.seed, fmt)
                 results["total_distorted"] += r["distorted"]
                 results["failed"] += r["failed"]
                 results["errors"].extend(r["errors"])
         else:
             with ProcessPoolExecutor(max_workers=max_workers) as executor:
                 futures = {
-                    executor.submit(_worker, p, str(output_dir), compress, self.seed): p
+                    executor.submit(_worker, p, str(output_dir), compress, self.seed, fmt): p
                     for p in image_paths
                 }
                 for future in as_completed(futures):

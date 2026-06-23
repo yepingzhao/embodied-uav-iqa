@@ -232,6 +232,7 @@ class DataSynthesisPipeline:
         input_root: str | Path,
         output_dir: str | Path,
         copy: bool = False,
+        max_refs_per_source: dict[str, int] | None = None,
     ) -> Path:
         """Extract clean reference frames into a flat directory.
 
@@ -239,6 +240,9 @@ class DataSynthesisPipeline:
             input_root: Dataset root directory.
             output_dir: Where to place extracted reference images.
             copy: If True, copy files; default is symlink to save disk space.
+            max_refs_per_source: Per-source image limit, keyed by the first
+                path component relative to ``input_root`` (e.g.
+                ``{"Sim_3_UAVs": 500}``). Sources not listed are unlimited.
 
         Returns:
             The output_dir Path for chaining.
@@ -249,6 +253,27 @@ class DataSynthesisPipeline:
 
         images = self.format.find_reference_images(input_root)
         _log.info("Found %d clean reference images in %s", len(images), input_root)
+
+        if max_refs_per_source:
+            rng = __import__("random").Random(self.seed)
+            by_source: dict[str, list[Path]] = {}
+            for img in images:
+                source = img.relative_to(input_root).parts[0]
+                by_source.setdefault(source, []).append(img)
+            images = []
+            for source, src_images in sorted(by_source.items()):
+                limit = max_refs_per_source.get(source, len(src_images))
+                rng.shuffle(src_images)
+                sampled = src_images[:limit]
+                images.extend(sampled)
+                _log.info(
+                    "  %s: %d -> %d (limit=%d)",
+                    source,
+                    len(by_source[source]),
+                    len(sampled),
+                    limit,
+                )
+            _log.info("Sampled %d total images", len(images))
 
         created = 0
         skipped = 0
@@ -289,15 +314,17 @@ class DataSynthesisPipeline:
         workers: int = 4,
         compress: bool = True,
         dry_run: bool = False,
+        fmt: str = "png",
     ) -> dict:
-        """Apply all 24 distortion types at 5 intensity levels.
+        """Apply all 36 distortion types at 5 intensity levels.
 
         Args:
             image_dir: Directory of reference images.
             output_dir: Where to save distorted images.
             workers: Parallel worker processes for distortion injection.
-            compress: Save distorted images as compressed PNG.
+            compress: Save distorted images with compression (PNG level 3, JPEG quality 92).
             dry_run: Process only the first 5 images.
+            fmt: Output format, ``"png"`` or ``"jpeg"``.
 
         Returns:
             The results dict from ``UAVDistortionPipeline.inject_directory()``
@@ -322,7 +349,7 @@ class DataSynthesisPipeline:
             n_variants,
         )
         _log.info("Total expected pairs: %d", len(images) * n_variants)
-        _log.info("Output: %s", output_dir)
+        _log.info("Output: %s (format: %s)", output_dir, fmt)
 
         pipeline = UAVDistortionPipeline(seed=self.seed)
         results = pipeline.inject_directory(
@@ -330,6 +357,7 @@ class DataSynthesisPipeline:
             output_dir=str(output_dir),
             compress=compress,
             max_workers=workers,
+            fmt=fmt,
         )
 
         _log.info(
@@ -590,6 +618,8 @@ class DataSynthesisPipeline:
         task_map: dict | None = None,
         noise_scale: float = 0.02,
         dry_run: bool = False,
+        fmt: str = "png",
+        max_refs_per_source: dict[str, int] | None = None,
     ) -> None:
         """Run the full data synthesis pipeline end-to-end.
 
@@ -601,11 +631,14 @@ class DataSynthesisPipeline:
                    ``"manifest"``, ``"annotate"``, or ``"all"``.
             copy: If True, copy reference images instead of symlinking.
             workers: Parallel workers for distortion injection.
-            compress: Save distorted images as compressed PNG.
+            compress: Save distorted images with compression.
             split: Train/val/test ratios.
             task_map: Optional dict for task assignment.
             noise_scale: Gaussian noise std for score degradation.
             dry_run: Inject only 5 images.
+            fmt: Output format, ``"png"`` or ``"jpeg"``.
+            max_refs_per_source: Per-source image limit for extraction
+                (e.g. ``{"Sim_3_UAVs": 500}``).
         """
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -618,6 +651,7 @@ class DataSynthesisPipeline:
                 input_root=input_root,
                 output_dir=output_dir / "ref_images",
                 copy=copy,
+                max_refs_per_source=max_refs_per_source,
             )
 
         if "inject" in step_set:
@@ -628,6 +662,7 @@ class DataSynthesisPipeline:
                 workers=workers,
                 compress=compress,
                 dry_run=dry_run,
+                fmt=fmt,
             )
 
         if "manifest" in step_set:
