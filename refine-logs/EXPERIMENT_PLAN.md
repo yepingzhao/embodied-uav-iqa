@@ -16,6 +16,8 @@
 | C2 | Synthetic UAV distortions correlate with real-world UAV distortion effects | Primary | If synthetic distortions don't match reality, the whole database is invalid | Overall SRCC > 0.6 between synthetic and real distortion impact on VLA behavior; gate-check SRCC > 0.5 at 20 flights | B2 (D2RB) |
 | C3 | Existing IQA methods fail to predict UAV task performance; database enables training effective UAV-IQA models | Primary | Justifies the need for the database — a benchmark result that defines the problem space | All 15+ existing methods SRCC < 0.5; UAV-IQANet trained on this database achieves SRCC > 0.65; statistically significant gap (p < 0.01) | B3 (B4H), B4 (ABL) |
 | C4 | Multi-task training enables cross-task quality generalization | Supporting | Broader impact — task-conditioned IQA transfers beyond single-task training | Cross-task SRCC within 0.05 of single-task; task embedding removal drops > 0.03 SRCC | B4 (XTG) |
+| C5 | The Moravec paradox holds for UAV embodied IQA — human quality ratings are misaligned with UAV task performance | Supporting | Justifies the entire task-performance-based annotation paradigm; without this gap, human-centric IQA would suffice | Human MOS vs. VLA decision score SRCC < 0.3; human MOS vs. Execution score SRCC < 0.25; statistically distinct from VLA-Execution SRCC | B6 (MVRX) |
+| C6 | Causal assessment (identifying distortion causes) provides annotation signal beyond simple quality scoring | Supporting | AirCopBench showed causal assessment is the cognitive ability most correlated with MLLM overall performance; establishing that this signal complements quality scores strengthens the annotation methodology | Causal assessment accuracy predicts VLA degradation patterns (SRCC > 0.4 between causal score and ΔVLA); causal score adds incremental value beyond quality score in predicting ΔVLA (partial correlation test) | B6 (CASL) |
 
 ### Anti-Claims to Rule Out
 
@@ -26,6 +28,8 @@
 | AC3 | "Frequency branch is unnecessary; a deeper CNN achieves the same" | W/o FAB ablation vs. full model; param-matched deeper baseline | B4-ABL (R016) |
 | AC4 | "Task-conditioning doesn't matter; a single generic IQA model is sufficient" | Task-agnostic variant vs. task-conditioned; cross-task generalization matrix | B4-ABL (R017), B4-XTG (R024) |
 | AC5 | "ViT backbones are the real gain; the CNN choice is incidental" | MobileViT-S and EfficientViT-B0 backbones; if ViT variants dominate, claim of CNN efficiency is false | B4-ABL (R019, R020) |
+| AC6 | "UAV distortions are just renamed ground-robot distortions; a model trained on Embodied-IQA/EPD would work on UAV data" | Cross-database evaluation: MA-EIQA (EPD-trained) zero-shot on UAV data; UAV-IQANet zero-shot on Embodied-IQA/EPD. If cross-database SRCC > 0.5, the UAV distortion taxonomy is not genuinely distinct | B6-CDBV (R036a, R036b) |
+| AC7 | "VLA ensemble labels are too noisy to serve as training targets; a single strong VLA is sufficient" | Compare VLA ensemble (weighted mean with calibration) vs. single-best-VLA labels for UAV-IQANet training; report ICC(3,k) per task/distortion | B6-VLAC (R037) |
 
 ---
 
@@ -43,6 +47,10 @@
 - Full VLA ensemble agreement statistics (ICC per task + distortion)
 - Curriculum training convergence curves
 - Additional backbone comparisons (EfficientNet-B0, ShuffleNetV2)
+- Human MOS vs. VLA/Execution scatter plots (C5 Moravec paradox evidence)
+- Causal assessment accuracy per distortion type and correlation with VLA degradation (C6 evidence)
+- Cross-database validation tables (UAV-IQANet on Embodied-IQA/EPD; MA-EIQA on UAV data)
+- Compound distortion analysis (per-pair SRCC breakdown)
 
 **Experiments intentionally cut**:
 - Full VLA fine-tuning comparison (deferred to Phase 3 model paper)
@@ -244,6 +252,102 @@ Total: 19 configs (15 distinct methods + 4 variants).
 
 ---
 
+### Block B6 — Causal Assessment, Cross-Database & VLA Calibration (CACV)
+
+**Claim tested**: C5 (Moravec paradox), C6 (causal assessment value), supporting C1 and C3. Anti-claims AC6, AC7.
+
+**Why this block exists**: Four literature-motivated sub-blocks that strengthen the paper's foundational claims:
+
+- **CASL**: AirCopBench (2511.11025) found causal assessment is the cognitive ability most correlated with MLLM performance. Testing whether VLM causal assessment accuracy predicts VLA degradation patterns validates annotating this dimension.
+- **MVRX**: EPD (2412.18774) demonstrated the Moravec paradox (PLCC < 0.22) for ground robots; quantifying this gap for UAV tasks justifies our task-performance-based annotation paradigm.
+- **CDBV**: Cross-database validation proves UAV-specific distortions are genuinely distinct from ground-robot distortions — if models trained on Embodied-IQA/EPD transfer well to UAV data, our taxonomy is decorative.
+- **VLAC**: VLA ensemble calibration addresses the low inter-model agreement (SRCC ≈ 0.25) revealed by Embodied-IQA (2505.16815).
+
+**Sub-blocks**:
+
+**B6a — Causal Assessment Signal (CASL)**:
+
+| Aspect | Detail |
+|--------|--------|
+| Dataset | 10% stratified subset (300 refs × 24 distortions × 5 levels = 36,000 pairs) |
+| VLM task | AirCopBench causal assessment VQA: "What type of visual degradation affects this image?" (6 UAV + 18 generic options) |
+| Metrics | Causal classification accuracy per distortion type; SRCC between causal confidence and ΔVLA; partial correlation (causal score → ΔVLA controlling for quality score) |
+| Success criterion | Causal accuracy > 60% for ≥4/6 UAV types; partial correlation significant (p < 0.05); SRCC(causal, ΔVLA) > 0.4 |
+| Runs | R034a (causal VLM annotation), R034b (causal-ΔVLA correlation analysis) |
+
+**B6b — Moravec Paradox Quantification (MVRX)**:
+
+| Aspect | Detail |
+|--------|--------|
+| Dataset | 5% stratified subset (~9,000 pairs), balanced across tasks and distortion types |
+| Human MOS | 15+ subjects, single-stimulus continuous quality scale (0-100), crowdsourced |
+| Compared signals | Human MOS vs. VLM quality score vs. VLA decision score vs. Execution score |
+| Metrics | SRCC/PLCC between all pairwise signal combinations; per-task and per-distortion breakdown |
+| Success criterion | SRCC(human MOS, VLA decision) < 0.3 AND SRCC(human MOS, Execution) < 0.25 AND SRCC(VLA, Execution) ≥ 0.5 (gap between human and robot-aligned signals is statistically significant) |
+| Failure interpretation | If human MOS correlates with VLA > 0.4 → Moravec paradox may not hold for UAV tasks; if VLA-Execution < 0.4 → annotation pipeline fundamentally unreliable |
+| Runs | R038 (human MOS collection), R039 (correlation analysis) |
+
+**B6c — Cross-Database Validation (CDBV)**:
+
+| Aspect | Detail |
+|--------|--------|
+| Dataset | UAV-Embodied-IQA test split (4,304 images); Embodied-IQA test split (~7,400 images); EPD test split (~2,500 images) |
+| Compared systems | MA-EIQA (EPD-trained, zero-shot on UAV data); UAV-IQANet (zero-shot on Embodied-IQA and EPD); MA-EIQA fine-tuned on UAV data; UAV-IQANet fine-tuned on Embodied-IQA |
+| Metrics | SRCC/PLCC on each target database; cross-database SRCC drop vs. in-domain SRCC |
+| Success criterion | MA-EIQA zero-shot on UAV SRCC < 0.4; UAV-IQANet zero-shot on Embodied-IQA SRCC < 0.4; cross-database SRCC drop > 0.15 vs. in-domain |
+| Failure interpretation | If cross-database SRCC > 0.5 → UAV distortion taxonomy is not meaningfully distinct from ground-robot distortions |
+| Runs | R036a (MA-EIQA on UAV data, zero-shot + fine-tuned); R036b (UAV-IQANet on Embodied-IQA/EPD, zero-shot); R036c (cross-database significance tests) |
+
+**B6d — VLA Ensemble Calibration (VLAC)**:
+
+| Aspect | Detail |
+|--------|--------|
+| Dataset | Full VLA annotation set (from M1 R007) |
+| Analysis | ICC(3,k) per task per distortion; compare single-best-VLA, simple ensemble mean, vs. weighted mean with SITL-calibrated confidence weights |
+| Metric | SRCC(ensemble label, execution score) for each calibration strategy |
+| Success criterion | Weighted ensemble SRCC > simple mean SRCC + 0.03; ICC(3,k) reported transparently for all task×distortion cells |
+| Runs | R037a (ICC computation), R037b (calibration weight learning on 5% SITL subset), R037c (calibrated vs. uncalibrated ensemble comparison) |
+
+**Priority**: MUST-RUN (B6a CASL, B6c CDBV, B6d VLAC); NICE-TO-HAVE (B6b MVRX — depends on human subject availability)
+
+---
+
+### Block B7 — Compound Distortion Analysis (CPDA)
+
+**Claim tested**: C1 (supporting), C3 (supporting). Anti-claim: "Single-distortion analysis is sufficient; compound effects are linear combinations."
+
+**Why this block exists**: AirCopBench images contain multiple simultaneous degradations (small targets + complex backgrounds + environmental interference). Embodied-IQA JND analysis showed compound effects can be fatal at low individual intensities — verifying non-linear compound degradation is essential for real-world relevance.
+
+**Dataset / task**: 20% stratified reference subset (~600 images) × 10 compound distortion pairs × 3 intensity level pairs = 18,000 compound-distorted pairs. VLA evaluation on a 5% subset (900 pairs).
+
+**Compound pairs** (10 combinations):
+1. Propeller vibration + atmospheric haze
+2. Propeller vibration + packet-loss blocks
+3. Atmospheric haze + low-res SR artifacts
+4. Atmospheric haze + 6DoF viewpoint change blur
+5. 6DoF blur + packet-loss blocks
+6. Low-res SR + propeller shadow
+7. Propeller vibration + propeller shadow
+8. Atmospheric haze + propeller shadow
+9. Packet-loss blocks + propeller shadow
+10. Low-res SR + packet-loss blocks
+
+**Metrics**:
+- **Primary**: ΔVLA for compound vs. sum of individual ΔVLA (non-linearity ratio); SRCC(compound quality score predicted by single-distortion IQA, actual compound ΔVLA)
+- **Secondary**: Per-pair degradation ranking, task interaction effects
+
+**Setup details**: 3 intensity level pairs: (low, low), (mid, mid), (high, low). Compare compound ΔVLA against additive model: ΔVLA(A+B) vs. ΔVLA(A) + ΔVLA(B) - baseline.
+
+**Success criterion**: Non-linearity ratio > 1.2 for ≥3/10 pairs (compound effect worse than additive model); existing single-distortion IQA methods fail to predict compound ΔVLA (SRCC < 0.4).
+
+**Failure interpretation**: If compound effects are approximately linear → compound distortion analysis is not necessary for the database paper; can be deferred to future work.
+
+**Table / figure target**: Table A2 in appendix (per-pair ΔVLA, non-linearity ratios); Figure A1 (compound vs. additive scatter).
+
+**Priority**: NICE-TO-HAVE (provides strong realism argument but C1/C3 are defended by B1/B3)
+
+---
+
 ## Run Order and Milestones
 
 | Milestone | Goal | Runs | Weeks | GPU-hrs | Decision Gate | Risk |
@@ -255,16 +359,23 @@ Total: 19 configs (15 distinct methods + 4 variants).
 | M4: Ablations | Ablation studies + cross-task | R016-R024 | 10-14 | ~250 | ≥2 ablations show meaningful SRCC drop; cross-task generalization confirmed or characterized | Ablations inconclusive (mitigation: train smaller variant to amplify differences, R023A) |
 | M5: Real UAV | Real-world validation flights | R025-R028 | 8-18 (async) | ~0 | Gate (20 flights): SRCC > 0.5 → proceed; Full (50): SRCC > 0.6 → claim validated | Weather, equipment, permits (mitigation: 2× flight buffer, indoor calibration) |
 | M6: Polish | Qualitative analysis + paper figures | R029-R033 | 14-18 | ~30 | All figures ready for paper | None (post-hoc analysis) |
+| M7: CACV+CPDA | Causal assessment, cross-database, VLA calibration, compound distortion | R034-R037 | 10-18 | ~120 | Causal accuracy > 60%; cross-database SRCC drop > 0.15; VLA calibration improves ensemble SRCC; compound non-linearity confirmed or characterized | Cross-database SRCC unexpectedly high (mitigation: add more distortion intensity levels); human subject recruitment for MVRX fails (mitigation: skip B6b, keep NICE) |
+| M8: Human MOS | Moravec paradox quantification (async, parallel) | R038-R039 | 12-22 (async) | ~0 | Human MOS vs. VLA SRCC < 0.3 → Moravec paradox confirmed for UAV | Low subject recruitment (mitigation: reduce subset to 3,000 pairs) |
+| M9: CPDA | Compound distortion VLA evaluation | R040a-R040c | 16-22 | ~40 | Compound non-linearity confirmed for ≥3/10 pairs; existing IQA fails on compound pairs | Compound distortion VLA throughput bottleneck (mitigation: reduce pairs × intensity levels) |
 
 ### Dependency Graph
 
 ```
-M0 (Sanity) ──→ M1 (Database) ──┬──→ M2 (Baselines) ──→ M3 (Main) ──→ M4 (Ablations) ──→ M6 (Polish)
-                                 │
-                                 └──→ M5 (Real UAV, parallel) ────────────────────────────→ M6
+M0 (Sanity) ──→ M1 (Database) ──┬──→ M2 (Baselines) ──→ M3 (Main) ──→ M4 (Ablations) ──┬──→ M6 (Polish)
+                                 │                                                        │
+                                 ├──→ M7 (CACV) ──→ M9 (CPDA) ─────────────────────────────┤
+                                 │                                                        │
+                                 └──→ M5 (Real UAV, parallel) ────────────────────────────┘
+                                 
+M8 (Human MOS, async parallel) ───────────────────────────────────────────────────────────→ M6
 ```
 
-M5 is fully parallel to M1-M4. M1 is on the critical path. M2 can start once M1 produces test images (Week 5-6, overlapping with M1 tail).
+M5 and M8 are fully parallel to M1-M4. M1 is on the critical path. M7 can start once M1 produces VLA annotations (Week 5-6, overlapping with M1 tail). M9 (CPDA) starts after M7 VLA calibration confirms reliable ensemble scoring. M2 can start once M1 produces test images.
 
 ### Stop/Go Decision Gates Summary
 
@@ -281,15 +392,17 @@ M5 is fully parallel to M1-M4. M1 is on the critical path. M2 can start once M1 
 
 | Category | GPU-hours | Details |
 |----------|-----------|---------|
-| Distortion synthesis | ~50 | Image processing (mostly CPU); GPU for SR upscaling (Real-ESRGAN inference) |
-| VLM annotation | ~300 | 180K pairs × 3 VLMs × ~2s per inference; batch inference on 4×A100 |
-| VLA annotation | ~200 | 180K pairs × 3 VLAs × sliding-window protocol; trajectory-level evaluation |
+| Distortion synthesis | ~60 | Image processing (mostly CPU); GPU for SR upscaling (Real-ESRGAN inference); +10 for compound distortion synthesis |
+| VLM annotation | ~350 | 180K pairs × 3 VLMs × ~2s per inference; batch inference on 4×A100; +50 for causal assessment VQA |
+| VLA annotation | ~220 | 180K pairs × 3 VLAs × sliding-window protocol; trajectory-level evaluation; +20 for compound distortion subset |
 | Execution annotation | ~50 | 5% subset (~9K pairs) in CARLA-Air SITL; 2 tasks (tracking, inspection) |
 | Baseline benchmarking | ~300 | 15+ methods inference; some require per-image optimization (BRISQUE, NIQE) |
-| UAV-IQANet training | ~100 | Full 3-stage curriculum, 50 epochs/stage; 3 seeds |
+| UAV-IQANet training | ~120 | Full 3-stage curriculum, 50 epochs/stage; 3 seeds; +20 for cross-database fine-tuning |
 | Ablation runs | ~250 | 10+ variants × 3 seeds × 50 epochs each |
-| Qualitative analysis | ~30 | Post-hoc; FFT computation, VLA ensemble analysis |
-| **Total** | **~1,280** | Within 1,700 budget; ~420 GPU-hours margin for retries and sweeps |
+| Cross-database evaluation | ~80 | MA-EIQA zero-shot + fine-tuned on UAV data; UAV-IQANet zero-shot on Embodied-IQA/EPD; significance tests |
+| Qualitative analysis | ~50 | Post-hoc; FFT computation, VLA ensemble analysis, causal correlation analysis, compound distortion analysis |
+| Compound distortion VLA | ~40 | 900 compound pairs × 3 VLAs × sliding-window protocol |
+| **Total** | **~1,520** | Within 2,000 budget; ~480 GPU-hours margin for retries and sweeps |
 
 **Data preparation needs**:
 - AirCopBench: download sim + real splits; verify frame counts and task labels
@@ -315,6 +428,10 @@ M5 is fully parallel to M1-M4. M1 is on the critical path. M2 can start once M1 
 | Weather prevents real flights within timeline | Medium | Medium | Buffer 2× flight window; schedule during historically stable season; indoor controlled-environment flights as fallback for vibration + 6DoF types |
 | Existing method achieves SRCC > 0.5 on our database | Medium | Low | Increase distortion intensity ceiling; add compound distortion types (e.g., haze + vibration); curate harder test split with only highest-intensity samples |
 | Database scale insufficient for training (> 180K pairs needed) | Low | Low | Current 180K pairs with data augmentation is adequate for < 5.5M param models; if not, add AirSim drone scenarios or Waymo/UAV cross-domain data |
+| Cross-database SRCC unexpectedly high (>0.5) | Medium | Low-Medium | Add more UAV-specific distortions or increase intensity ceiling; verify distortion implementation produces perceptually distinct artifacts |
+| Human MOS collection infeasible (recruitment/cost) | Medium | Medium | B6b MVRX is NICE-TO-HAVE; if infeasible, cite EPD's PLCC < 0.22 as prior evidence and skip this block |
+| Compound distortion VLA throughput bottleneck | Low | Medium | Compound analysis uses only 900 VLA pairs (manageable); if still too slow, reduce to 5 pairs × 2 intensity levels |
+| Causal assessment VQA accuracy too low (< 40%) | Medium | Low | VLMs may struggle with UAV-specific distortion identification; if so, narrow claim to generic-vs-UAV binary classification instead of fine-grained type identification |
 
 ---
 
@@ -323,12 +440,17 @@ M5 is fully parallel to M1-M4. M1 is on the critical path. M2 can start once M1 
 - [ ] Main paper tables are covered (Tables 1-5)
 - [ ] Claims C1-C3 have dedicated experiment blocks with success criteria
 - [ ] C4 (cross-task generalization) is properly scoped as supporting
+- [ ] C5 (Moravec paradox for UAV) has B6b MVRX block; NICE-TO-HAVE contingency documented
+- [ ] C6 (causal assessment signal) has B6a CASL block with partial correlation test
 - [ ] Novelty is isolated (B4 ablations: frequency branch, task embedding, UAV distortion pool)
 - [ ] Simplicity is defended (CNN justified against ViT; shared MLP justified against per-task heads)
 - [ ] Frontier contribution is justified (VLM/VLA annotation oracles are essential to methodology, not decorative; frequency branch is justified against deeper-CNN alternative)
 - [ ] Real-world validation bridges synthetic → real gap (B2, gate design)
-- [ ] Anti-claims AC1-AC5 are each addressed by at least one experiment
-- [ ] Nice-to-have runs are separated from must-run (curriculum ablations, appendix tables)
-- [ ] Compute budget has margin (~420 GPU-hours for retries and troubleshooting)
+- [ ] Cross-database validation proves domain specificity (B6c CDBV, AC6)
+- [ ] VLA ensemble calibration addresses annotation reliability (B6d VLAC, AC7)
+- [ ] Compound distortion analysis provides real-world relevance (B7 CPDA)
+- [ ] Anti-claims AC1-AC7 are each addressed by at least one experiment
+- [ ] Nice-to-have runs are separated from must-run (curriculum ablations, appendix tables, B6b MVRX, B7 CPDA)
+- [ ] Compute budget has margin (~480 GPU-hours for retries and troubleshooting)
 - [ ] Stop/go gates are defined at critical decision points
-- [ ] Dependency graph respects M1 → M2 → M3 → M4 chain; M5 is parallel
+- [ ] Dependency graph respects M1 → M2 → M3 → M4 chain; M5, M7, M8 are parallel

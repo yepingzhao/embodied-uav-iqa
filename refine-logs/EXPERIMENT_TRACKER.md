@@ -44,6 +44,22 @@
 | R031 | M6 | Hard case gallery | Select top 15 worst-prediction images from B3 | Test set | Qualitative patterns | MUST | TODO | Manual selection with quantitative criterion |
 | R032 | M6 | VLA ensemble agreement | ICC(3,k) per task, per distortion | Full VLA annotation set | ICC, confidence intervals | NICE | TODO | For appendix or supplementary |
 | R033 | M6 | Distortion intensity robustness | All methods × 5 intensity levels | Test set | Per-level SRCC curves | NICE | TODO | For appendix robustness analysis |
+| **M7: Causal Assessment & Cross-Database & VLA Calibration (CACV)** |
+| R034a | M7 | Causal VLM annotation | 3 VLMs → AirCopBench causal assessment VQA | 10% subset (36K pairs) | Causal classification accuracy per distortion | MUST | TODO | B6a CASL; identifies which UAV distortions VLMs can diagnose |
+| R034b | M7 | Causal-ΔVLA correlation | SRCC(causal confidence, ΔVLA); partial corr (causal → ΔVLA | quality) | Same 10% subset | SRCC, partial correlation p-value | MUST | TODO | B6a CASL; tests C6 — does causal assessment predict VLA degradation? |
+| R036a | M7 | Cross-database: MA-EIQA on UAV | MA-EIQA (EPD-trained) zero-shot + fine-tuned on UAV data | UAV test split | SRCC, PLCC vs. in-domain | MUST | TODO | B6c CDBV; tests AC6 — can ground-robot IQA transfer to UAV? |
+| R036b | M7 | Cross-database: UAV-IQANet on Embodied-IQA/EPD | UAV-IQANet (UAV-trained) zero-shot on Embodied-IQA + EPD test splits | Embodied-IQA (~7.4K) + EPD (~2.5K) | SRCC, PLCC drop vs. in-domain | MUST | TODO | B6c CDBV; tests AC6 reverse direction on both databases |
+| R036c | M7 | Cross-database significance tests | Statistical comparison of cross-database vs. in-domain SRCC | R036a/R036b results | Wilcoxon signed-rank, Holm-Bonferroni p-values | MUST | TODO | B6c CDBV; formal significance testing for domain specificity |
+| R037a | M7 | VLA ensemble ICC computation | ICC(3,k) per task per distortion for full VLA annotation set | Full VLA annotation set | ICC, 95% CI per task×distortion cell | MUST | TODO | B6d VLAC; quantifies annotation reliability (Embodied-IQA found SRCC≈0.25) |
+| R037b | M7 | VLA calibration weight learning | Per-model confidence weights via SITL execution score regression | 5% SITL subset | Weighted ensemble SRCC vs. simple mean SRCC | MUST | TODO | B6d VLAC; calibrates VLA ensemble using execution ground truth |
+| R037c | M7 | Calibrated vs. uncalibrated ensemble | Compare single-best-VLA, simple mean, weighted mean labels | Full VLA set | SRCC(ensemble label, execution score) | MUST | TODO | B6d VLAC; validates calibration benefit |
+| **M8: Human MOS (Moravec Paradox) — Async Parallel** |
+| R038 | M8 | Human MOS collection | 15+ subjects, single-stimulus continuous quality scale | 5% subset (~9K pairs) | MOS mean, std per image | NICE | TODO | B6b MVRX; crowdsourced; validates C5 Moravec paradox for UAV |
+| R039 | M8 | Moravec paradox quantification | Human MOS vs. VLM quality vs. VLA decision vs. Execution | R038 subset | SRCC/PLCC all pairwise; per-task breakdown | NICE | TODO | B6b MVRX; success: SRCC(human,VLA)<0.3, SRCC(VLA,Exec)≥0.5 |
+| **M9: Compound Distortion (CPDA)** |
+| R040a | M9 | Compound distortion synthesis | 10 compound pairs × 3 intensity levels × 600 refs | 20% stratified subset | Coverage, visual plausibility | NICE | TODO | B7 CPDA; generates ~18K compound-distorted pairs |
+| R040b | M9 | Compound VLA evaluation | VLA ensemble on compound-distorted frames | 5% compound subset (900 pairs) | ΔVLA, non-linearity ratio | NICE | TODO | B7 CPDA; tests whether compound effect > additive |
+| R040c | M9 | Compound IQA prediction | Existing IQA methods predict compound ΔVLA | 900 compound pairs | SRCC(predicted, actual compound ΔVLA) | NICE | TODO | B7 CPDA; tests whether single-distortion IQA generalizes to compounds |
 | **Deferred / Future Work** |
 | — | Phase 3 | Model novelty paper | UAV-IQANet with architectural novelties (VLM distillation, etc.) | — | — | FUTURE | — | Separate paper; not in database paper scope |
 | — | Phase 4 | SC³ closed-loop | IQA-driven UAV control adaptation | — | — | FUTURE | — | Deferred from original 4-phase roadmap |
