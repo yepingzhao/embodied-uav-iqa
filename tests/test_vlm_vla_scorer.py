@@ -654,3 +654,741 @@ class TestVLMScorerCoverage:
         """Numbers already in [0,1] range kept as-is (with clamping)."""
         scorer = VLMScorer()
         assert scorer._parse_vlm_response("0.75", "tracking") == 0.75
+
+
+# ===========================================================================
+# VLMConfig and MODEL_REGISTRY
+# ===========================================================================
+
+
+class TestVLMConfig:
+    """Tests for VLMConfig dataclass."""
+
+    def test_create_vlm_config_with_all_fields(self):
+        """VLMConfig can be created with all required fields."""
+        from uav_iqa.vlm_vla_scorer import VLMConfig
+
+        cfg = VLMConfig(
+            short_name="TestModel",
+            hf_model_id="org/TestModel-7B",
+            family="qwen",
+            chat_template="{prompt}",
+            model_class_name="AutoModelForVision2Seq",
+            processor_class_name="AutoProcessor",
+            trust_remote_code=True,
+        )
+        assert cfg.short_name == "TestModel"
+        assert cfg.hf_model_id == "org/TestModel-7B"
+        assert cfg.family == "qwen"
+        assert cfg.chat_template == "{prompt}"
+        assert cfg.model_class_name == "AutoModelForVision2Seq"
+        assert cfg.processor_class_name == "AutoProcessor"
+        assert cfg.trust_remote_code is True
+
+    def test_vlm_config_default_trust_remote_code(self):
+        """trust_remote_code defaults to True."""
+        from uav_iqa.vlm_vla_scorer import VLMConfig
+
+        cfg = VLMConfig(
+            short_name="M",
+            hf_model_id="org/M",
+            family="qwen",
+            chat_template="{prompt}",
+            model_class_name="AutoModelForVision2Seq",
+            processor_class_name="AutoProcessor",
+        )
+        assert cfg.trust_remote_code is True
+
+
+class TestModelRegistry:
+    """Tests for MODEL_REGISTRY — the 15 supported VLMs."""
+
+    def test_registry_has_exactly_15_models(self):
+        """MODEL_REGISTRY contains exactly 15 models."""
+        from uav_iqa.vlm_vla_scorer import MODEL_REGISTRY
+
+        assert len(MODEL_REGISTRY) == 15
+
+    def test_all_registry_entries_are_vlm_config(self):
+        """Every entry in MODEL_REGISTRY is a VLMConfig."""
+        from uav_iqa.vlm_vla_scorer import MODEL_REGISTRY, VLMConfig
+
+        for name, cfg in MODEL_REGISTRY.items():
+            assert isinstance(cfg, VLMConfig), f"{name} is not VLMConfig"
+            assert cfg.short_name == name, f"{name} short_name mismatch: {cfg.short_name}"
+
+    def test_registry_short_names_match_expected(self):
+        """Registry keys match the 15 expected model short names."""
+        from uav_iqa.vlm_vla_scorer import MODEL_REGISTRY
+
+        expected = {
+            "Mini-InternVL",
+            "InternVL2",
+            "InternVL2.5",
+            "InternVL3",
+            "InternLM-Xcomposer2",
+            "InternLM-Xcomposer2.5",
+            "Ovis1.5-Gemma",
+            "Ovis1.6-Llama",
+            "Ovis2",
+            "Phi3-Vision",
+            "Phi3.5-Vision",
+            "Phi4-Multimodal",
+            "Qwen2-VL",
+            "Qwen2.5-VL",
+            "MPlugOwl3",
+        }
+        assert set(MODEL_REGISTRY.keys()) == expected
+
+    def test_registry_models_have_valid_hf_ids(self):
+        """Every model has a valid-looking HuggingFace model ID."""
+        from uav_iqa.vlm_vla_scorer import MODEL_REGISTRY
+
+        for name, cfg in MODEL_REGISTRY.items():
+            assert "/" in cfg.hf_model_id, f"{name}: hf_model_id missing '/' separator"
+            parts = cfg.hf_model_id.split("/")
+            assert len(parts) == 2, f"{name}: hf_model_id should be 'org/model'"
+
+    def test_registry_models_have_valid_families(self):
+        """All registry entries use a known model family."""
+        from uav_iqa.vlm_vla_scorer import MODEL_REGISTRY
+
+        valid_families = {"qwen", "internvl", "internlm_xc", "ovis", "phi", "mplug"}
+        for name, cfg in MODEL_REGISTRY.items():
+            assert cfg.family in valid_families, (
+                f"{name}: unknown family '{cfg.family}'"
+            )
+
+    def test_registry_models_have_chat_template_with_prompt_placeholder(self):
+        """Every model has a chat template containing {prompt}."""
+        from uav_iqa.vlm_vla_scorer import MODEL_REGISTRY
+
+        for name, cfg in MODEL_REGISTRY.items():
+            assert "{prompt}" in cfg.chat_template, (
+                f"{name}: chat_template missing {{prompt}} placeholder"
+            )
+
+    def test_registry_qwen_family_models(self):
+        """Qwen family contains Qwen2-VL and Qwen2.5-VL."""
+        from uav_iqa.vlm_vla_scorer import MODEL_REGISTRY
+
+        assert MODEL_REGISTRY["Qwen2-VL"].family == "qwen"
+        assert MODEL_REGISTRY["Qwen2.5-VL"].family == "qwen"
+        assert MODEL_REGISTRY["Qwen2-VL"].hf_model_id == "Qwen/Qwen2-VL-7B-Instruct"
+        assert MODEL_REGISTRY["Qwen2.5-VL"].hf_model_id == "Qwen/Qwen2.5-VL-7B-Instruct"
+
+    def test_registry_internvl_family_models(self):
+        """InternVL family contains Mini, 2, 2.5, 3."""
+        from uav_iqa.vlm_vla_scorer import MODEL_REGISTRY
+
+        for name in ("Mini-InternVL", "InternVL2", "InternVL2.5", "InternVL3"):
+            assert MODEL_REGISTRY[name].family == "internvl"
+            assert MODEL_REGISTRY[name].hf_model_id.startswith("OpenGVLab/")
+
+    def test_registry_internlm_xc_family_models(self):
+        """InternLM-Xcomposer family contains 2 and 2.5."""
+        from uav_iqa.vlm_vla_scorer import MODEL_REGISTRY
+
+        for name in ("InternLM-Xcomposer2", "InternLM-Xcomposer2.5"):
+            assert MODEL_REGISTRY[name].family == "internlm_xc"
+            assert MODEL_REGISTRY[name].hf_model_id.startswith("internlm/")
+
+    def test_registry_ovis_family_models(self):
+        """Ovis family contains 1.5-Gemma, 1.6-Llama, 2."""
+        from uav_iqa.vlm_vla_scorer import MODEL_REGISTRY
+
+        for name in ("Ovis1.5-Gemma", "Ovis1.6-Llama", "Ovis2"):
+            assert MODEL_REGISTRY[name].family == "ovis"
+            assert MODEL_REGISTRY[name].hf_model_id.startswith("AIDC-AI/")
+
+    def test_registry_phi_family_models(self):
+        """Phi family contains Phi3, Phi3.5, Phi4."""
+        from uav_iqa.vlm_vla_scorer import MODEL_REGISTRY
+
+        for name in ("Phi3-Vision", "Phi3.5-Vision", "Phi4-Multimodal"):
+            assert MODEL_REGISTRY[name].family == "phi"
+            assert MODEL_REGISTRY[name].hf_model_id.startswith("microsoft/")
+
+    def test_registry_mplug_owl3(self):
+        """MPlugOwl3 in mplug family."""
+        from uav_iqa.vlm_vla_scorer import MODEL_REGISTRY
+
+        assert MODEL_REGISTRY["MPlugOwl3"].family == "mplug"
+        assert MODEL_REGISTRY["MPlugOwl3"].hf_model_id == "mPLUG/mPLUG-Owl3-7B-240728"
+
+
+# ===========================================================================
+# VLMScorer — registry-based model name resolution
+# ===========================================================================
+
+
+class TestVLMScorerRegistry:
+    """Tests for VLMScorer resolving model names from the registry."""
+
+    def test_init_with_registry_short_name(self):
+        """VLMScorer accepts a registry short name and resolves config."""
+        scorer = VLMScorer(model_name="InternVL2")
+        assert scorer.model_name == "OpenGVLab/InternVL2-8B"
+        assert scorer.vlm_config is not None
+        assert scorer.vlm_config.short_name == "InternVL2"
+        assert scorer.vlm_config.family == "internvl"
+
+    def test_init_with_all_registry_names(self):
+        """All 15 registry model names can be used to create VLMScorer."""
+        from uav_iqa.vlm_vla_scorer import MODEL_REGISTRY
+
+        for short_name in MODEL_REGISTRY:
+            scorer = VLMScorer(model_name=short_name)
+            assert scorer.vlm_config.short_name == short_name
+            assert scorer.vlm_config.hf_model_id == MODEL_REGISTRY[short_name].hf_model_id
+
+    def test_init_with_raw_hf_id_still_works(self):
+        """Backward compat: raw HF model ID creates a default VLMConfig."""
+        scorer = VLMScorer(model_name="Qwen/Qwen2.5-VL-7B-Instruct")
+        assert scorer.model_name == "Qwen/Qwen2.5-VL-7B-Instruct"
+        assert scorer.vlm_config is not None
+        assert scorer.vlm_config.family == "qwen"
+
+    def test_init_with_custom_hf_id_creates_qwen_family_config(self):
+        """Custom HF ID not in registry gets a default qwen-family config."""
+        scorer = VLMScorer(model_name="org/custom-model-7B")
+        assert scorer.model_name == "org/custom-model-7B"
+        assert scorer.vlm_config.family == "qwen"
+        assert scorer.vlm_config.hf_model_id == "org/custom-model-7B"
+        assert scorer.vlm_config.model_class_name == "AutoModelForVision2Seq"
+
+    def test_init_with_nonexistent_registry_name_raises(self):
+        """A name not in registry and not a valid HF ID raises ValueError."""
+        with pytest.raises(ValueError, match="Unknown model"):
+            VLMScorer(model_name="NonExistentModel")
+
+    def test_vlm_scorer_stores_default_short_name_for_registry_models(self):
+        """Default model is still in registry and resolves correctly."""
+        scorer = VLMScorer()
+        assert scorer.vlm_config is not None
+        # Default model_name is a full HF ID that happens to also be an entry
+        assert scorer.vlm_config.hf_model_id == "Qwen/Qwen2.5-VL-7B-Instruct"
+        assert scorer.vlm_config.family == "qwen"
+
+    def test_vlm_scorer_vlm_config_is_vlm_config_instance(self):
+        """vlm_config attribute is a VLMConfig instance."""
+        from uav_iqa.vlm_vla_scorer import VLMConfig
+
+        scorer = VLMScorer(model_name="Phi3-Vision")
+        assert isinstance(scorer.vlm_config, VLMConfig)
+
+
+# ===========================================================================
+# Per-family chat template formatting
+# ===========================================================================
+
+
+class TestChatTemplateFormatting:
+    """Tests for per-family chat template formatting in VLMScorer."""
+
+    def test_qwen_family_returns_raw_prompt(self):
+        """Qwen family template is just {prompt} — returns raw task prompt."""
+        scorer = VLMScorer(model_name="Qwen2-VL")
+        formatted = scorer._build_prompt("tracking")
+        assert "tracking" in formatted.lower()
+        assert "rate" in formatted.lower()
+        assert "<|im_start|>" not in formatted
+        assert "<|user|>" not in formatted
+
+    def test_internvl_family_formats_with_im_start_tags(self):
+        """InternVL family wraps prompt in <|im_start|> chat format."""
+        scorer = VLMScorer(model_name="InternVL2")
+        formatted = scorer._build_prompt("inspection")
+        assert "<|im_start|>system" in formatted
+        assert "<|im_start|>user" in formatted
+        assert "<|im_start|>assistant" in formatted
+        assert "<image>" in formatted
+        assert "inspection" in formatted.lower()
+
+    def test_internlm_xc_family_formats_with_user_bot_tags(self):
+        """InternLM-Xcomposer family wraps prompt in <|User|>: and <|Bot|>:."""
+        scorer = VLMScorer(model_name="InternLM-Xcomposer2")
+        formatted = scorer._build_prompt("sar")
+        assert formatted.startswith("<|User|>:")
+        assert formatted.endswith("<|Bot|>:")
+        assert "rescue" in formatted.lower()
+
+    def test_ovis_family_returns_raw_prompt(self):
+        scorer = VLMScorer(model_name="Ovis2")
+        formatted = scorer._build_prompt("delivery")
+        assert "delivery" in formatted.lower()
+        assert "<|im_start|>" not in formatted
+
+    def test_phi_family_formats_with_user_assistant_tags(self):
+        """Phi family wraps prompt in <|user|>...<|end|>...<|assistant|>."""
+        scorer = VLMScorer(model_name="Phi3-Vision")
+        formatted = scorer._build_prompt("tracking")
+        assert "<|user|>" in formatted
+        assert "<|assistant|>" in formatted
+        assert formatted.endswith("<|assistant|>\n")
+        assert "tracking" in formatted.lower()
+
+    def test_mplug_family_formats_with_user_assistant(self):
+        """MPlug family wraps prompt in USER:...ASSISTANT:."""
+        scorer = VLMScorer(model_name="MPlugOwl3")
+        formatted = scorer._build_prompt("inspection")
+        assert formatted.startswith("USER: ")
+        assert "ASSISTANT:" in formatted
+        assert "<image>" in formatted
+        assert "inspection" in formatted.lower()
+
+    def test_all_15_models_produce_non_empty_formatted_prompt(self):
+        """Every model in the registry produces a non-empty formatted prompt."""
+        from uav_iqa.vlm_vla_scorer import MODEL_REGISTRY
+
+        task_keywords = {
+            "tracking": "tracking",
+            "inspection": "infrastructure",
+            "delivery": "delivery",
+            "sar": "rescue",
+        }
+        for short_name in MODEL_REGISTRY:
+            scorer = VLMScorer(model_name=short_name)
+            for task, keyword in task_keywords.items():
+                formatted = scorer._build_prompt(task)
+                assert len(formatted) > 0, f"{short_name}/{task}: empty prompt"
+                assert keyword in formatted.lower(), (
+                    f"{short_name}/{task}: keyword '{keyword}' not in prompt: {formatted[:80]}..."
+                )
+
+    def test_internvl3_format_matches_internvl_pattern(self):
+        """InternVL3 uses same format as InternVL2."""
+        scorer2 = VLMScorer(model_name="InternVL2")
+        scorer3 = VLMScorer(model_name="InternVL3")
+        # Both use <|im_start|> format — raw content differs per task
+        p2 = scorer2._build_prompt("tracking")
+        p3 = scorer3._build_prompt("tracking")
+        assert "<|im_start|>system" in p2
+        assert "<|im_start|>system" in p3
+
+    def test_phi4_format_matches_phi_pattern(self):
+        """Phi4-Multimodal uses same format as Phi3-Vision."""
+        scorer3 = VLMScorer(model_name="Phi3-Vision")
+        scorer4 = VLMScorer(model_name="Phi4-Multimodal")
+        p3 = scorer3._build_prompt("tracking")
+        p4 = scorer4._build_prompt("tracking")
+        assert "<|user|>" in p3
+        assert "<|user|>" in p4
+        assert "<|assistant|>" in p3
+        assert "<|assistant|>" in p4
+
+
+# ===========================================================================
+# Per-family model loading (transformers backend, mocked)
+# ===========================================================================
+
+
+class TestVLMScorerModelLoading:
+    """Tests for per-family model loading in VLMScorer (transformers backend)."""
+
+    @staticmethod
+    def _fake_from_pretrained_factory(cls_name, call_tracker):
+        """Return a from_pretrained function that records calls and returns
+        a mock object supporting .to() and .eval()."""
+
+        class MockModel:
+            def to(self, device):
+                return self
+
+            def eval(self):
+                return self
+
+        def from_pretrained(*args, **kwargs):
+            call_tracker.append(cls_name)
+            return MockModel()
+
+        return staticmethod(from_pretrained)
+
+    @staticmethod
+    def _make_mock_module(class_names, call_tracker):
+        """Create a fake transformers module with given class names."""
+        mock_tf = type(sys)("transformers")
+        for cls_name in class_names:
+            mock_cls = type(cls_name, (), {})
+            mock_cls.from_pretrained = (
+                TestVLMScorerModelLoading._fake_from_pretrained_factory(
+                    cls_name, call_tracker
+                )
+            )
+            setattr(mock_tf, cls_name, mock_cls)
+        return mock_tf
+
+    def test_load_model_uses_vlm_config_model_class(self):
+        """_load_model uses model_class_name from VLMConfig (InternVL -> AutoModel)."""
+        import torch
+
+        called = []
+        mock_tf = self._make_mock_module(["AutoModel", "AutoTokenizer"], called)
+
+        with patch.dict("sys.modules", {"transformers": mock_tf, "torch": torch}):
+            scorer = VLMScorer(
+                model_name="InternVL2", backend="transformers", device="cpu"
+            )
+            scorer._load_model()
+            assert "AutoModel" in called
+            assert "AutoTokenizer" in called
+
+    def test_load_model_phi_uses_auto_model_for_causal_lm(self):
+        """Phi family models use AutoModelForCausalLM."""
+        import torch
+
+        called = []
+        mock_tf = self._make_mock_module(
+            ["AutoModelForCausalLM", "AutoProcessor"], called
+        )
+
+        with patch.dict("sys.modules", {"transformers": mock_tf, "torch": torch}):
+            scorer = VLMScorer(
+                model_name="Phi3-Vision", backend="transformers", device="cpu"
+            )
+            scorer._load_model()
+            assert "AutoModelForCausalLM" in called
+            assert "AutoProcessor" in called
+
+    def test_load_model_with_trust_remote_code(self):
+        """trust_remote_code from VLMConfig is passed to from_pretrained."""
+        import torch
+
+        trust_values = []
+        mock_tf = type(sys)("transformers")
+
+        class MockModel:
+            def to(self, d):
+                return self
+
+            def eval(self):
+                return self
+
+        def record_trust(*args, trust_remote_code=True, **kwargs):
+            trust_values.append(trust_remote_code)
+            return MockModel()
+
+        mock_tf.AutoModel = type("AutoModel", (), {})
+        mock_tf.AutoModel.from_pretrained = staticmethod(record_trust)
+
+        mock_tf.AutoTokenizer = type("AutoTokenizer", (), {})
+        mock_tf.AutoTokenizer.from_pretrained = staticmethod(
+            lambda *a, **kw: MockModel()
+        )
+
+        with patch.dict("sys.modules", {"transformers": mock_tf, "torch": torch}):
+            scorer = VLMScorer(
+                model_name="InternVL2", backend="transformers", device="cpu"
+            )
+            scorer._load_model()
+            assert trust_values == [True]
+
+    def test_load_model_qwen_uses_auto_model_for_vision2seq(self):
+        """Qwen family uses AutoModelForVision2Seq (backward compat)."""
+        import torch
+
+        called = []
+        mock_tf = self._make_mock_module(
+            ["AutoModelForVision2Seq", "AutoProcessor"], called
+        )
+
+        with patch.dict("sys.modules", {"transformers": mock_tf, "torch": torch}):
+            scorer = VLMScorer(
+                model_name="Qwen2-VL", backend="transformers", device="cpu"
+            )
+            scorer._load_model()
+            assert "AutoModelForVision2Seq" in called
+            assert "AutoProcessor" in called
+
+    def test_load_model_mplug_uses_auto_model_for_vision2seq(self):
+        """MPlug family uses AutoModelForVision2Seq."""
+        import torch
+
+        called = []
+        mock_tf = self._make_mock_module(
+            ["AutoModelForVision2Seq", "AutoProcessor"], called
+        )
+
+        with patch.dict("sys.modules", {"transformers": mock_tf, "torch": torch}):
+            scorer = VLMScorer(
+                model_name="MPlugOwl3", backend="transformers", device="cpu"
+            )
+            scorer._load_model()
+            assert "AutoModelForVision2Seq" in called
+            assert "AutoProcessor" in called
+
+    def test_load_model_internlm_xc_uses_auto_model_for_causal_lm(self):
+        """InternLM-Xcomposer uses AutoModelForCausalLM."""
+        import torch
+
+        called = []
+        mock_tf = self._make_mock_module(
+            ["AutoModelForCausalLM", "AutoTokenizer"], called
+        )
+
+        with patch.dict("sys.modules", {"transformers": mock_tf, "torch": torch}):
+            scorer = VLMScorer(
+                model_name="InternLM-Xcomposer2", backend="transformers", device="cpu"
+            )
+            scorer._load_model()
+            assert "AutoModelForCausalLM" in called
+            assert "AutoTokenizer" in called
+
+    def test_load_model_ovis_uses_auto_model_for_vision2seq(self):
+        """Ovis family uses AutoModelForVision2Seq."""
+        import torch
+
+        called = []
+        mock_tf = self._make_mock_module(
+            ["AutoModelForVision2Seq", "AutoProcessor"], called
+        )
+
+        with patch.dict("sys.modules", {"transformers": mock_tf, "torch": torch}):
+            scorer = VLMScorer(
+                model_name="Ovis2", backend="transformers", device="cpu"
+            )
+            scorer._load_model()
+            assert "AutoModelForVision2Seq" in called
+            assert "AutoProcessor" in called
+
+
+# ===========================================================================
+# Integration — full scoring pipeline with mocked VLM backends
+# ===========================================================================
+
+
+class _MockProcessorOutput(dict):
+    """Dict-like that supports .to(device) for transformers pipeline."""
+
+    def to(self, device):
+        return self
+
+
+class _MockProcessor:
+    """Mock processor that returns a fixed VLM response text."""
+
+    def __init__(self, response_text="4"):
+        self.response_text = response_text
+        self._last_texts = []
+
+    def __call__(self, text, images, return_tensors, **kwargs):
+        self._last_texts.append(text)
+        return _MockProcessorOutput({"input_ids": __import__("torch").tensor([[1]])})
+
+    def decode(self, token_ids, skip_special_tokens=True):
+        return self.response_text
+
+
+class _MockModel:
+    """Mock model with .to(), .eval(), .generate()."""
+
+    def to(self, device):
+        return self
+
+    def eval(self):
+        return self
+
+    def generate(self, **kwargs):
+        return [__import__("torch").tensor([1, 2, 3])]
+
+
+class _MockVLLMText:
+    def __init__(self, text="4"):
+        self.text = text
+
+
+class _MockVLLMOutput:
+    def __init__(self, text="4"):
+        self.outputs = [_MockVLLMText(text)]
+
+
+class _MockVLLMModel:
+    def generate(self, prompts, params):
+        return [_MockVLLMOutput()]
+
+
+class TestVLMScorerPipelineIntegration:
+    """Integration tests: public API with mocked real VLM backends."""
+
+    def test_score_image_transformers_mocked_returns_annotated_true(self):
+        """Full scoring pipeline with mocked transformers returns annotated=True."""
+        with tempfile.TemporaryDirectory() as tmp:
+            img_path = Path(tmp) / "test.png"
+            _make_dummy_image(img_path)
+
+            scorer = VLMScorer(model_name="Qwen2-VL", device="cpu")
+            scorer._processor = _MockProcessor("4")
+            scorer._model = _MockModel()
+
+            with patch.object(VLMScorer, "_resolve_backend", return_value="transformers"):
+                result = scorer.score_image(str(img_path), "tracking")
+
+            assert result["annotated"] is True
+            assert result["vlm_score"] == 0.8
+            assert result["vla_score"] == 0.72
+            assert result["execution_score"] == 0.68
+
+    def test_score_image_vllm_mocked_returns_annotated_true(self):
+        """Full scoring pipeline with mocked vllm returns annotated=True."""
+        fake_vllm = type(sys)("vllm")
+        fake_vllm.LLM = type("LLM", (), {})
+        fake_vllm.SamplingParams = type("SamplingParams", (), {})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            img_path = Path(tmp) / "test.png"
+            _make_dummy_image(img_path)
+
+            scorer = VLMScorer(model_name="Qwen2-VL", device="cpu")
+            scorer._model = _MockVLLMModel()
+            scorer._sampling_params = None
+
+            with patch.dict("sys.modules", {"vllm": fake_vllm}), patch.object(
+                VLMScorer, "_resolve_backend", return_value="vllm"
+            ):
+                result = scorer.score_image(str(img_path), "delivery")
+
+            assert result["annotated"] is True
+            assert result["vlm_score"] == 0.8
+
+    def test_all_15_models_produce_valid_scores_mocked(self):
+        """Every registered model works end-to-end with mocked transformers."""
+        from uav_iqa.vlm_vla_scorer import MODEL_REGISTRY
+
+        with tempfile.TemporaryDirectory() as tmp:
+            img_path = Path(tmp) / "test.png"
+            _make_dummy_image(img_path)
+
+            for short_name in sorted(MODEL_REGISTRY):
+                scorer = VLMScorer(model_name=short_name, device="cpu")
+                scorer._processor = _MockProcessor("3")
+                scorer._model = _MockModel()
+
+                with patch.object(
+                    VLMScorer, "_resolve_backend", return_value="transformers"
+                ):
+                    result = scorer.score_image(str(img_path), "inspection")
+
+                assert result["annotated"] is True, f"{short_name}: annot mismatch"
+                assert result["vlm_score"] == 0.6, f"{short_name}: score mismatch"
+                assert 0.0 <= result["vla_score"] <= 1.0
+                assert 0.0 <= result["execution_score"] <= 1.0
+
+    def test_score_batch_transformers_mocked_all_annotated(self):
+        """Batch scoring with mocked transformers returns annotated=True."""
+        with tempfile.TemporaryDirectory() as tmp:
+            p1 = Path(tmp) / "a.png"
+            p2 = Path(tmp) / "b.png"
+            _make_dummy_image(p1)
+            _make_dummy_image(p2)
+
+            scorer = VLMScorer(model_name="InternVL2", device="cpu")
+            scorer._processor = _MockProcessor("5")
+            scorer._model = _MockModel()
+
+            with patch.object(
+                VLMScorer, "_resolve_backend", return_value="transformers"
+            ):
+                results = scorer.score_batch(
+                    [str(p1), str(p2)], ["tracking", "sar"]
+                )
+
+            assert len(results) == 2
+            for r in results:
+                assert r["annotated"] is True
+                assert r["vlm_score"] == 1.0
+
+    def test_build_ref_lookup_transformers_mocked(self):
+        """Reference lookup with mocked transformers builds score cache."""
+        with tempfile.TemporaryDirectory() as tmp:
+            ref_dir = Path(tmp)
+            _make_dummy_image(ref_dir / "ref_a.png")
+            _make_dummy_image(ref_dir / "ref_b_clean.png")
+
+            scorer = VLMScorer(model_name="Phi3-Vision", device="cpu")
+            scorer._processor = _MockProcessor("4")
+            scorer._model = _MockModel()
+
+            with patch.object(
+                VLMScorer, "_resolve_backend", return_value="transformers"
+            ):
+                lookup = scorer.build_ref_lookup(ref_dir)
+
+            assert len(lookup) == 2
+            assert "ref_a" in lookup
+            assert "ref_b" in lookup
+            for ref_id, scores in lookup.items():
+                assert scores["annotated"] is True
+                assert scores["vlm_score"] == 0.8
+
+    def test_score_image_falls_back_on_vlm_error(self):
+        """When _call_vlm raises, score_image falls back to synthetic."""
+        with tempfile.TemporaryDirectory() as tmp:
+            img_path = Path(tmp) / "test.png"
+            _make_dummy_image(img_path)
+
+            scorer = VLMScorer(model_name="Qwen2-VL", device="cpu")
+
+            with patch.object(
+                VLMScorer, "_resolve_backend", return_value="transformers"
+            ):
+                # _model is None and _load_model won't find real transformers
+                # → _call_vlm will raise, score_image falls back
+                result = scorer.score_image(str(img_path), "tracking")
+
+            assert result["annotated"] is False  # fallback
+            assert "vlm_score" in result
+
+    def test_different_families_thread_chat_template_to_vlm(self):
+        """Each family passes its formatted chat template to the VLM."""
+        with tempfile.TemporaryDirectory() as tmp:
+            img_path = Path(tmp) / "test.png"
+            _make_dummy_image(img_path)
+
+            # Test one model per family
+            family_checks = {
+                "Qwen2-VL": {
+                    "present": ["object tracking"],
+                    "absent": ["<|im_start|>", "<|user|>", "USER:", "<|Bot|>"],
+                },
+                "InternVL2": {
+                    "present": ["<|im_start|>system", "<|im_start|>user", "<|im_start|>assistant"],
+                },
+                "InternLM-Xcomposer2": {
+                    "present": ["<|User|>", "<|Bot|>"],
+                    "absent": ["<|im_start|>"],
+                },
+                "Ovis2": {
+                    "present": ["delivery"],
+                    "absent": ["<|im_start|>", "<|user|>", "USER:"],
+                },
+                "Phi3-Vision": {
+                    "present": ["<|user|>", "<|assistant|>"],
+                    "absent": ["<|im_start|>system"],
+                },
+                "MPlugOwl3": {
+                    "present": ["USER:", "ASSISTANT:", "<image>"],
+                    "absent": ["<|im_start|>"],
+                },
+            }
+
+            for short_name, checks in family_checks.items():
+                scorer = VLMScorer(model_name=short_name, device="cpu")
+                proc = _MockProcessor("4")
+                scorer._processor = proc
+                scorer._model = _MockModel()
+
+                with patch.object(
+                    VLMScorer, "_resolve_backend", return_value="transformers"
+                ):
+                    task = "delivery" if short_name == "Ovis2" else "tracking"
+                    scorer.score_image(str(img_path), task)
+
+                prompt = proc._last_texts[-1]
+                for phrase in checks.get("present", []):
+                    assert phrase in prompt, (
+                        f"{short_name}: expected '{phrase}' in prompt: {prompt[:120]}..."
+                    )
+                for phrase in checks.get("absent", []):
+                    assert phrase not in prompt, (
+                        f"{short_name}: '{phrase}' should not be in prompt"
+                    )
