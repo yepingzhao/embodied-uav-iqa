@@ -50,6 +50,8 @@ trainer:
       vlm_epochs: 20
       vla_epochs: 20
       execution_epochs: 10
+  - class_path: uav_iqa.callbacks.MetricsHistoryCallback
+  - class_path: uav_iqa.callbacks.ResultsSavingCallback
   - class_path: lightning.pytorch.callbacks.ModelCheckpoint
     init_args:
       dirpath: null
