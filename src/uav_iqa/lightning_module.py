@@ -25,7 +25,7 @@ class UAVIQALightningModule(L.LightningModule):
     def __init__(
         self,
         backbone: str = "mobilenetv4_conv_small",
-        num_tasks: int = 4,
+        num_tasks: int = 14,
         use_fab: bool = True,
         use_cbam: bool = True,
         use_task_conditioning: bool = True,
@@ -36,7 +36,6 @@ class UAVIQALightningModule(L.LightningModule):
         weight_decay: float = 1e-4,
         warmup_epochs: int = 5,
         total_epochs: int = 50,
-        annotator_stage: str = "vla",
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -61,8 +60,6 @@ class UAVIQALightningModule(L.LightningModule):
         self.weight_decay = weight_decay
         self.warmup_epochs = warmup_epochs
         self.total_epochs = total_epochs
-        self.annotator_stage = annotator_stage
-        self.curriculum_stage = "vlm"
 
         self._val_preds: List[torch.Tensor] = []
         self._val_targets: List[torch.Tensor] = []
@@ -104,8 +101,7 @@ class UAVIQALightningModule(L.LightningModule):
     def training_step(self, batch: Dict, _: int) -> torch.Tensor:
         images = batch["image"]
         task_ids = batch["task_id"]
-        score_key = f"{self.curriculum_stage}_score"
-        scores = batch.get(score_key, batch.get("score"))
+        scores = batch.get("score", batch.get("cognitive_score"))
 
         # Share features: compute backbone+FPN+FAB once, reuse for both pred and cross-task
         f = self.model.forward_features(images)
@@ -148,8 +144,7 @@ class UAVIQALightningModule(L.LightningModule):
     def validation_step(self, batch: Dict, _: int) -> None:
         images = batch["image"]
         task_ids = batch["task_id"]
-        eval_stage = self.annotator_stage
-        scores = batch.get(f"{eval_stage}_score", batch.get("score"))
+        scores = batch.get("score", batch.get("cognitive_score"))
         if scores is None:
             scores = batch.get("score")
 
@@ -205,8 +200,7 @@ class UAVIQALightningModule(L.LightningModule):
     def test_step(self, batch: Dict, _: int) -> None:
         images = batch["image"]
         task_ids = batch["task_id"]
-        eval_stage = self.annotator_stage
-        scores = batch.get(f"{eval_stage}_score", batch.get("score"))
+        scores = batch.get("score", batch.get("cognitive_score"))
         if scores is None:
             scores = batch.get("score")
 
@@ -286,4 +280,3 @@ class UAVIQALightningModule(L.LightningModule):
                 "frequency": 1,
             },
         }
-

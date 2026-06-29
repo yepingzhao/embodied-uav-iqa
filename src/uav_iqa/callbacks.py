@@ -50,24 +50,23 @@ class CurriculumStageCallback(L.Callback):
 class SetupRunCallback(L.Callback):
     """Logs dataset/environment info at fit start.
 
-    - Computes and prints manifest SHA256 hash for dataset versioning.
+    - Computes and prints dataset SHA256 hash for versioning.
     - Prints trainable parameter count.
     """
 
     def on_fit_start(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
-        manifest_hash = self._compute_manifest_hash(trainer)
-        if manifest_hash and trainer.is_global_zero:
-            print(f"Manifest hash: {manifest_hash}")
+        dataset_hash = self._compute_dataset_hash(trainer)
+        if dataset_hash and trainer.is_global_zero:
+            print(f"Dataset hash: {dataset_hash}")
 
-        pl_module.manifest_hash = manifest_hash
+        pl_module.dataset_hash = dataset_hash
 
         n_params = count_parameters(pl_module.model)[0]
         if trainer.is_global_zero:
             print(f"Model params: {n_params:,}")
 
     @staticmethod
-    def _compute_manifest_hash(trainer: L.Trainer) -> str:
-        """Compute SHA256 hash of all manifest files for dataset versioning."""
+    def _compute_dataset_hash(trainer: L.Trainer) -> str:
         datamodule = trainer.datamodule
         if datamodule is None:
             return ""
@@ -76,12 +75,13 @@ class SetupRunCallback(L.Callback):
             return ""
         hasher = hashlib.sha256()
         files_read = 0
-        for split in ("train", "val", "test"):
-            manifest_path = Path(data_root) / split / "manifest.json"
-            if manifest_path.exists():
-                with open(manifest_path, "rb") as f:
-                    hasher.update(f.read())
-                files_read += 1
+        for split in ("train", "test"):
+            split_dir = Path(data_root) / split
+            if split_dir.is_dir():
+                for fpath in sorted(split_dir.glob("*_VQA_*.json")):
+                    with open(fpath, "rb") as f:
+                        hasher.update(f.read())
+                    files_read += 1
         return hasher.hexdigest()[:16] if files_read > 0 else ""
 
 
@@ -181,7 +181,7 @@ class ResultsSavingCallback(L.Callback):
                     else []
                 )
             },
-            "manifest_hash": getattr(pl_module, "manifest_hash", ""),
+            "dataset_hash": getattr(pl_module, "dataset_hash", ""),
             "git_commit": self._get_git_commit(),
         }
         run_dir.mkdir(parents=True, exist_ok=True)

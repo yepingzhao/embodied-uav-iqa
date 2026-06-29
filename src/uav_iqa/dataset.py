@@ -1,147 +1,123 @@
+"""UAV-IQA multi-image dataset loader.
+
+Loads grouped JSON files from the data synthesis pipeline.  Each training
+sample is a ``(scene+frame group, distortion type)`` pair that yields
+multiple UAV images with the same distortion, a subtask identifier, and
+a cognitive quality score.
+"""
+
+import json
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import List
 
-import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-_log = logging.getLogger(__name__)
+from uav_iqa.annotations import SUBTASK_TO_ID
 
-MANIFEST_REQUIRED_FIELDS = {"path", "task", "distortion", "intensity_level"}
-TASK_NAMES = ("tracking", "inspection", "delivery", "sar")
-TASK_TO_ID = {name: i for i, name in enumerate(TASK_NAMES)}
-VALID_TASKS = set(TASK_NAMES)
+_log = logging.getLogger(__name__)
 
 
 def validate_manifest(manifest_path: Path) -> dict:
-    """Validate a manifest.json file and return diagnostics.
+    """Validate a manifest JSON file (old flat format) or grouped JSON (new format).
 
-    Returns:
-        dict with keys: valid, n_entries, missing_fields, unknown_tasks,
-        missing_paths, score_stats
+    Returns a dict with keys ``valid`` (bool), ``count`` (int), and
+    optional ``warnings`` / ``score_stats``.
     """
-    import json
-
-    result = {
-        "valid": True,
-        "n_entries": 0,
-        "missing_fields": set(),
-        "unknown_tasks": set(),
-        "missing_paths": [],
-        "score_stats": {},
-    }
-
-    if not manifest_path.exists():
-        result["valid"] = False
-        result["error"] = f"Manifest not found: {manifest_path}"
-        return result
-
     try:
         with open(manifest_path) as f:
-            entries = json.load(f)
-    except json.JSONDecodeError as e:
-        result["valid"] = False
-        result["error"] = f"Invalid JSON: {e}"
-        return result
+            data = json.load(f)
+    except (json.JSONDecodeError, IOError) as e:
+        return {"valid": False, "count": 0, "warnings": [f"Cannot read: {e}"]}
 
-    result["n_entries"] = len(entries)
-    data_root = manifest_path.parent.parent
+    if not isinstance(data, list):
+        return {"valid": False, "count": 0, "warnings": ["Not a JSON array"]}
 
-    ref_path_missing = 0
-    scores = {"vlm_score": [], "vla_score": [], "execution_score": []}
+    return {"valid": True, "count": len(data), "warnings": []}
 
-    for i, entry in enumerate(entries):
-        missing = MANIFEST_REQUIRED_FIELDS - set(entry.keys())
-        if missing:
-            result["missing_fields"].update(missing)
-            result["valid"] = False
+TASK_NAMES = (
+    "scene_description", "scene_comparison", "observing_posture",
+    "object_recognition", "object_counting", "object_grounding",
+    "object_matching",
+    "quality_assessment", "usability_assessment", "causal_assessment",
+    "when_to_collaborate", "what_to_collaborate", "who_to_collaborate",
+    "why_to_collaborate",
+)
 
-        task = entry.get("task", "")
-        if task and task not in VALID_TASKS:
-            result["unknown_tasks"].add(task)
-            result["valid"] = False
+TASK_TO_ID: dict[str, int] = {name: i for i, name in enumerate(TASK_NAMES)}
 
-        img_path = entry.get("path", "")
-        if img_path and not (data_root / img_path).exists():
-            result["missing_paths"].append(img_path)
-            result["valid"] = False
-
-        if not entry.get("ref_path"):
-            ref_path_missing += 1
-
-        for key in scores:
-            val = entry.get(key)
-            if val is not None and isinstance(val, (int, float)):
-                scores[key].append(float(val))
-
-    for key, vals in scores.items():
-        if vals:
-            arr = np.array(vals)
-            result["score_stats"][key] = {
-                "mean": float(np.mean(arr)),
-                "std": float(np.std(arr)),
-                "min": float(np.min(arr)),
-                "max": float(np.max(arr)),
-            }
-
-    if ref_path_missing > 0:
-        result["ref_path_missing"] = ref_path_missing
-        _log.warning(
-            "%d/%d entries lack 'ref_path' — FR benchmarks will fail",
-            ref_path_missing,
-            len(entries),
-        )
-
-    return result
+NUM_TASKS = len(TASK_NAMES)
 
 
 class UAVIQADataset(Dataset):
-    """UAV-Embodied-IQA dataset loader.
+    """Multi-image UAV-IQA dataset from grouped processed JSONs.
 
-    Loads distorted image pairs with VLM/VLA/execution annotations.
+    Each ``__getitem__`` returns a dict with:
+      - ``images``: tensor (N_UAV, 3, H, W)
+      - ``task_id``: tensor (scalar), subtask id
+      - ``score``: tensor (scalar), cognitive_score
+      - ``sample_id``: str
+      - ``distortion``: str
+      - ``num_uavs``: int
     """
-
-    TASK_MAP = TASK_TO_ID
 
     def __init__(
         self,
         data_root: str,
         split: str = "train",
-        task: Optional[str] = None,
-        annotator_stage: str = "vla",
         image_size: int = 256,
-        num_tasks: int = 4,
         augment: bool = False,
-        samples: Optional[list] = None,
+        max_uavs: int = 6,
     ):
         self.data_root = Path(data_root)
         self.split = split
-        self.task = task
-        self.annotator_stage = annotator_stage
         self.image_size = image_size
-        self.num_tasks = num_tasks
         self.augment = augment
+        self.max_uavs = max_uavs
         self._augment_fn = self._build_augment() if augment else None
 
-        # Track warnings to avoid flooding per-epoch (capped per category)
-        self._warned_missing_score: set = set()
-        self._warned_unknown_task: set = set()
-        self._warned_corrupt_image: set = set()
-        self._MAX_WARNINGS = 50
+        self.samples = self._load()
 
-        if samples is not None:
-            self.samples = samples
-        else:
-            self.samples = self._load_manifest()
+    def _load(self) -> List[dict]:
+        split_dir = self.data_root / self.split
+        samples: List[dict] = []
 
-    def _load_manifest(self) -> list:
-        from uav_iqa.utils import load_manifest
+        for fpath in sorted(split_dir.glob("*_VQA_*.json")):
+            with open(fpath) as f:
+                groups = json.load(f)
 
-        manifest_path = self.data_root / self.split / "manifest.json"
-        if not manifest_path.exists():
-            return []
-        return load_manifest(manifest_path)
+            for group in groups:
+                distortions = group.get("distortions", {})
+                uav_paths = group.get("uav_paths", {})
+                uav_keys = group.get("uav_keys", [])
+                if not uav_paths or not uav_keys or not distortions:
+                    continue
+
+                for dist_key, dist_info in distortions.items():
+                    distorted_uav = dist_info.get("distorted_uav_paths", {})
+                    if not distorted_uav:
+                        continue
+
+                    samples.append({
+                        "uav_paths": uav_paths,
+                        "uav_keys": uav_keys,
+                        "num_uavs": group.get("num_uavs", len(uav_keys)),
+                        "distortion": dist_info.get("type", "unknown"),
+                        "intensity": dist_info.get("intensity", 0.0),
+                        "sample_id": dist_info.get("sample_id", ""),
+                        "distorted_uav_paths": distorted_uav,
+                        "vqa_entries": group.get("vqa_entries", []),
+                        "data_root": str(self.data_root.parent),
+                    })
+
+        _log.info(
+            "Loaded %d samples from %s/%s",
+            len(samples),
+            self.data_root.name,
+            self.split,
+        )
+        return samples
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -150,101 +126,81 @@ class UAVIQADataset(Dataset):
         from uav_iqa.utils import load_image_tensor
 
         sample = self.samples[idx]
+        uav_keys = sample["uav_keys"]
+        distorted_uav = sample["distorted_uav_paths"]
+        data_root = Path(sample["data_root"])
 
-        try:
-            image = load_image_tensor(
-                self.data_root / sample["path"], self.image_size
-            )
-        except (OSError, IOError, Exception):
-            path = sample.get("path", "?")
-            if (
-                len(self._warned_corrupt_image) < self._MAX_WARNINGS
-                and path not in self._warned_corrupt_image
-            ):
-                self._warned_corrupt_image.add(path)
-                _log.warning(f"Corrupted or missing image replaced with blank: {path}")
-            image = torch.zeros(3, self.image_size, self.image_size)
+        images = []
+        for k in uav_keys:
+            dp = distorted_uav.get(k, "")
+            img_path = data_root / dp.lstrip("/")
+            try:
+                img = load_image_tensor(img_path, self.image_size)
+            except (OSError, IOError, Exception):
+                img = torch.zeros(3, self.image_size, self.image_size)
+            images.append(img)
+
+        image_tensor = torch.stack(images)
 
         if self.augment:
-            image = self._augment(image)
+            image_tensor = self._augment(image_tensor)
 
-        task_name = sample.get("task", "tracking")
-        task_id = self.TASK_MAP.get(task_name)
-        if task_id is None:
-            if (
-                len(self._warned_unknown_task) < self._MAX_WARNINGS
-                and task_name not in self._warned_unknown_task
-            ):
-                self._warned_unknown_task.add(task_name)
-                _log.warning(
-                    f"Unknown task '{task_name}' — falling back to tracking (id=0). "
-                    f"Valid tasks: {list(self.TASK_MAP.keys())}"
-                )
-            task_id = 0
+        vqa_entries = sample.get("vqa_entries", [])
+        if not vqa_entries:
+            return {
+                "images": image_tensor,
+                "task_id": torch.tensor(0, dtype=torch.long),
+                "score": torch.tensor(0.0, dtype=torch.float32),
+                "sample_id": sample.get("sample_id", ""),
+                "distortion": sample.get("distortion", "unknown"),
+                "num_uavs": sample.get("num_uavs", len(uav_keys)),
+            }
 
-        score_key = f"{self.annotator_stage}_score"
-        score = sample.get(score_key)
-        if score is None:
-            score_key_short = score_key.split("_")[0] if "_" in score_key else score_key
-            if (
-                len(self._warned_missing_score) < self._MAX_WARNINGS
-                and score_key_short not in self._warned_missing_score
-            ):
-                self._warned_missing_score.add(score_key_short)
-                _log.warning(
-                    f"Score field '{score_key}' missing for sample — defaulting to 0.0. "
-                    f"Annotator stage: {self.annotator_stage}, split: {self.split}"
-                )
-            score = 0.0
-        if isinstance(score, list):
-            score = np.mean(score)
+        entry = vqa_entries[0]
+        subtask_type = entry.get("subtask_type", "")
+        task_id = SUBTASK_TO_ID.get(subtask_type, 0)
+        cognitive_score = entry.get("cognitive_score", 0.0)
+        if isinstance(cognitive_score, dict):
+            cognitive_score = 0.0
+        elif not isinstance(cognitive_score, (int, float)):
+            cognitive_score = 0.0
 
-        result = {
-            "image": image,
+        return {
+            "images": image_tensor,
             "task_id": torch.tensor(task_id, dtype=torch.long),
-            "score": torch.tensor(score, dtype=torch.float32),
+            "score": torch.tensor(float(cognitive_score), dtype=torch.float32),
+            "sample_id": sample.get("sample_id", ""),
             "distortion": sample.get("distortion", "unknown"),
-            "intensity": sample.get("intensity_level", 0.0),
-            "ref_id": sample.get("ref_id", -1),
+            "num_uavs": sample.get("num_uavs", len(uav_keys)),
         }
-
-        for key in ("vlm_score", "vla_score", "execution_score"):
-            val = sample.get(key)
-            if val is not None:
-                if isinstance(val, list):
-                    val = float(np.mean(val))
-                result[key] = torch.tensor(float(val), dtype=torch.float32)
-
-        return result
 
     @staticmethod
     def _build_augment():
         from torchvision import transforms as T
 
-        return T.Compose(
-            [
-                T.RandomHorizontalFlip(p=0.5),
-                T.ColorJitter(brightness=0.1, contrast=0.1),
-            ]
-        )
+        return T.Compose([
+            T.RandomHorizontalFlip(p=0.5),
+            T.ColorJitter(brightness=0.1, contrast=0.1),
+        ])
 
     def _augment(self, image: torch.Tensor) -> torch.Tensor:
+        if image.dim() == 4:
+            return torch.stack([self._augment_fn(img) for img in image])
         return self._augment_fn(image)
 
     @staticmethod
     def collate_fn(batch: list) -> dict:
-        images = torch.stack([b["image"] for b in batch])
+        images = torch.nn.utils.rnn.pad_sequence(
+            [b["images"] for b in batch], batch_first=True, padding_value=0.0
+        )
         task_ids = torch.stack([b["task_id"] for b in batch])
         scores = torch.stack([b["score"] for b in batch])
-        result = {
-            "image": images,
+
+        return {
+            "images": images,
             "task_id": task_ids,
             "score": scores,
+            "sample_id": [b["sample_id"] for b in batch],
             "distortion": [b["distortion"] for b in batch],
-            "intensity": [b["intensity"] for b in batch],
-            "ref_id": [b["ref_id"] for b in batch],
+            "num_uavs": [b["num_uavs"] for b in batch],
         }
-        for key in ("vlm_score", "vla_score", "execution_score"):
-            if key in batch[0]:
-                result[key] = torch.stack([b[key] for b in batch])
-        return result

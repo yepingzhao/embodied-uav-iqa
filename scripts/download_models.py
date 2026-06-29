@@ -49,7 +49,9 @@ def _load_registry():
     Uses importlib.util to load just vlm_vla_scorer.py (stdlib-only imports),
     avoiding the heavyweight lightning/torch import chain in uav_iqa.__init__.
     """
-    module_path = Path(__file__).resolve().parent.parent / "src" / "uav_iqa" / "vlm_vla_scorer.py"
+    module_path = (
+        Path(__file__).resolve().parent.parent / "src" / "uav_iqa" / "vlm_vla_scorer.py"
+    )
 
     spec = importlib.util.spec_from_file_location(
         "uav_iqa.vlm_vla_scorer", str(module_path)
@@ -70,15 +72,24 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=__doc__,
     )
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--all", action="store_true", help="Download all 15 registered models")
     group.add_argument(
-        "--models", nargs="+", metavar="NAME", help="Specific model short names to download"
+        "--all", action="store_true", help="Download all 15 registered models"
+    )
+    group.add_argument(
+        "--models",
+        nargs="+",
+        metavar="NAME",
+        help="Specific model short names to download",
     )
     parser.add_argument(
-        "--cache-dir", default=None, help="Custom cache directory (default: HF_HOME or ~/.cache/huggingface)"
+        "--cache-dir",
+        default=None,
+        help="Custom cache directory (default: HF_HOME or ~/.cache/huggingface)",
     )
     parser.add_argument(
-        "--token", default=None, help="HuggingFace API token for gated models (or set HF_TOKEN env var)"
+        "--token",
+        default=None,
+        help="HuggingFace API token for gated models (or set HF_TOKEN env var)",
     )
     parser.add_argument(
         "--validate",
@@ -91,10 +102,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip download, only validate models already in cache",
     )
     parser.add_argument(
-        "--device", default="cuda", help="Device for validation loading (default: cuda, use cpu if no GPU)"
+        "--device",
+        default="cuda",
+        help="Device for validation loading (default: cuda, use cpu if no GPU)",
     )
     parser.add_argument(
-        "--max-models", type=int, default=None, help="Limit to first N models (for testing)"
+        "--max-models",
+        type=int,
+        default=None,
+        help="Limit to first N models (for testing)",
     )
     return parser
 
@@ -183,7 +199,9 @@ def validate_model(config, cache_dir: str | None = None, device: str = "cuda"):
         elif device == "cuda" and torch.cuda.is_available():
             model = model.to("cuda")
         model.eval()
-        _log.info("    model: OK (%s, %s params)", type(model).__name__, _count_params(model))
+        _log.info(
+            "    model: OK (%s, %s params)", type(model).__name__, _count_params(model)
+        )
     except Exception as exc:
         _log.warning("    model load failed: %s (may need more GPU RAM)", exc)
         model = None
@@ -205,7 +223,9 @@ def main():
     try:
         import huggingface_hub  # noqa: F401
     except ImportError:
-        _log.error("huggingface_hub not installed. Run: uv sync --group dev --extra vlm")
+        _log.error(
+            "huggingface_hub not installed. Run: uv sync --group dev --extra vlm"
+        )
         sys.exit(1)
 
     if args.validate or args.validate_only:
@@ -213,7 +233,9 @@ def main():
             import transformers  # noqa: F401
             import torch  # noqa: F401
         except ImportError:
-            _log.error("transformers/torch not installed. Run: uv sync --group dev --extra vlm")
+            _log.error(
+                "transformers/torch not installed. Run: uv sync --group dev --extra vlm"
+            )
             sys.exit(1)
 
     MODEL_REGISTRY = _load_registry()
@@ -232,12 +254,16 @@ def main():
 
         try:
             if not args.validate_only:
-                local_path = download_model(config, cache_dir=args.cache_dir, token=args.token)
+                local_path = download_model(
+                    config, cache_dir=args.cache_dir, token=args.token
+                )
                 status["downloaded"] = True
                 status["path"] = local_path
 
             if args.validate or args.validate_only:
-                ok = validate_model(config, cache_dir=args.cache_dir, device=args.device)
+                ok = validate_model(
+                    config, cache_dir=args.cache_dir, device=args.device
+                )
                 status["validated"] = ok
                 if not ok:
                     status["error"] = "validation: model or processor load failed"

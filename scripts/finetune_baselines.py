@@ -33,7 +33,7 @@ from uav_iqa.metrics import (
     per_distortion_category_metrics,
     per_task_metrics,
 )
-from uav_iqa.utils import load_image_tensor, load_manifest, setup_logging
+from uav_iqa.utils import load_flat_samples, load_image_tensor, setup_logging
 
 _log = setup_logging(__name__)
 
@@ -154,7 +154,6 @@ class BaselineDataModule(L.LightningDataModule):
         batch_size: int = 64,
         num_workers: int = 8,
         image_size: int = 256,
-        annotator_stage: str = "vla",
         max_train_samples: int = 0,
     ):
         super().__init__()
@@ -162,21 +161,15 @@ class BaselineDataModule(L.LightningDataModule):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.image_size = image_size
-        self.annotator_stage = annotator_stage
         self.max_train_samples = max_train_samples
 
     def _load_split(self, split):
-        path = self.data_dir / split / "manifest.json"
-        if not path.exists():
-            return []
-        return load_manifest(path)
+        return load_flat_samples(self.data_dir, split)
 
     def _make_dataset(self, samples):
         return UAVIQADataset(
             data_root=str(self.data_dir),
             image_size=self.image_size,
-            annotator_stage=self.annotator_stage,
-            samples=samples,
         )
 
     def setup(self, stage=None):
@@ -234,7 +227,6 @@ def evaluate_checkpoint(
     method_name: str,
     data_dir: str,
     output_dir: str,
-    annotator_stage: str,
     image_size: int,
     device: str,
 ):
@@ -247,12 +239,7 @@ def evaluate_checkpoint(
     model.eval()
     model.to(device)
 
-    test_path = Path(data_dir) / "test" / "manifest.json"
-    if not test_path.exists():
-        _log.warning("Test manifest not found: %s", test_path)
-        return None
-
-    test_samples = load_manifest(test_path)
+    test_samples = load_flat_samples(Path(data_dir), "test")
 
     predictions = []
     targets = []
@@ -268,7 +255,7 @@ def evaluate_checkpoint(
             )
             pred = model(img_t).item()
 
-            score = s.get(f"{annotator_stage}_score", s.get("score", 0.0))
+            score = s.get("score", 0.0)
             if isinstance(score, list):
                 score = np.mean(score)
             predictions.append(float(pred))
@@ -296,7 +283,6 @@ def evaluate_checkpoint(
         "kendall_tau": float(metrics.get("kendall_tau", 0.0)),
         "per_task": per_task,
         "per_distortion_category": per_cat,
-        "annotator_stage": annotator_stage,
         "n_test_samples": len(test_samples),
     }
 
@@ -319,11 +305,6 @@ def main():
     parser.add_argument("--method", required=True, choices=list(FINETUNABLE_METHODS))
     parser.add_argument("--data-dir", default="data/processed")
     parser.add_argument("--output-dir", default="outputs/finetune")
-    parser.add_argument(
-        "--annotator-stage",
-        default="vla",
-        choices=["vlm", "vla", "execution"],
-    )
     parser.add_argument("--max-epochs", type=int, default=30)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
@@ -360,7 +341,6 @@ def main():
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         image_size=args.image_size,
-        annotator_stage=args.annotator_stage,
         max_train_samples=args.max_train_samples,
     )
 
@@ -410,7 +390,6 @@ def main():
             method_name=args.method,
             data_dir=args.data_dir,
             output_dir=str(output_dir),
-            annotator_stage=args.annotator_stage,
             image_size=args.image_size,
             device="cuda" if torch.cuda.is_available() else "cpu",
         )

@@ -4,7 +4,7 @@ from typing import Optional
 
 import cv2
 import numpy as np
-from scipy.signal import convolve2d
+from tqdm import tqdm
 
 
 def _load_image(image, mode="float32"):
@@ -38,6 +38,15 @@ def _motion_blur_kernel(size: int, angle_deg: float) -> np.ndarray:
     return kernel
 
 
+def _filter2d_wrap(image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+    """cv2.filter2D with wrap/circular boundary via manual padding."""
+    kh, kw = kernel.shape[:2]
+    ph, pw = kh // 2, kw // 2
+    padded = np.pad(image, ((ph, ph), (pw, pw), (0, 0)), mode="wrap")
+    result = cv2.filter2D(padded, -1, kernel, borderType=cv2.BORDER_CONSTANT)
+    return result[ph : ph + image.shape[0], pw : pw + image.shape[1]]
+
+
 class BaseDistortion(ABC):
     @abstractmethod
     def apply(self, image: np.ndarray, intensity: float) -> np.ndarray:
@@ -66,11 +75,7 @@ class PropellerVibrationBlur(BaseDistortion):
         angle = rng.uniform(0, 360)
         kernel = _motion_blur_kernel(int(params["size"]), angle)
 
-        result = np.zeros_like(image)
-        for c in range(image.shape[2]):
-            result[:, :, c] = convolve2d(
-                image[:, :, c], kernel, mode="same", boundary="wrap"
-            )
+        result = _filter2d_wrap(image, kernel)
 
         f = params["freq"]
         period_px = max(1, w / (f / 60.0))
@@ -153,11 +158,7 @@ class SixDoFViewpointBlur(BaseDistortion):
 
         kernel = _motion_blur_kernel(size, angle)
 
-        result = np.zeros_like(image)
-        for c in range(image.shape[2]):
-            result[:, :, c] = convolve2d(
-                image[:, :, c], kernel, mode="same", boundary="wrap"
-            )
+        result = _filter2d_wrap(image, kernel)
 
         return _to_uint8(np.clip(result, 0, 1))
 
@@ -663,6 +664,9 @@ def _inject_one_image_mp(
         ext = ".jpg" if fmt == "jpeg" else ".png"
         for key, dist_img in distorted.items():
             out_path = out_dir / f"{base_name}__{key}{ext}"
+            if out_path.exists():
+                local_results["distorted"] += 1
+                continue
             dist_img_bgr = cv2.cvtColor(dist_img, cv2.COLOR_RGB2BGR)
             if fmt == "jpeg":
                 params = [cv2.IMWRITE_JPEG_QUALITY, 92]
@@ -670,7 +674,12 @@ def _inject_one_image_mp(
                 params = [cv2.IMWRITE_PNG_COMPRESSION, 3]
             else:
                 params = []
-            cv2.imwrite(str(out_path), dist_img_bgr, params)
+            success, buf = cv2.imencode(ext, dist_img_bgr, params)
+            if not success:
+                local_results["errors"].append(f"Encoding failed: {out_path}")
+                local_results["failed"] += 1
+                continue
+            out_path.write_bytes(buf.tobytes())
             local_results["distorted"] += 1
     except Exception as e:
         local_results["errors"].append(f"{img_path}: {e}")
@@ -679,7 +688,7 @@ def _inject_one_image_mp(
 
 
 class UAVDistortionPipeline:
-    """Unified pipeline for applying all 36 distortion types at 5 intensity levels."""
+    """Unified pipeline for applying all 36 distortion types at 1 randomly selected intensity level."""
 
     UAV_DISTORTIONS = {
         "propeller_vibration_blur": PropellerVibrationBlur,
@@ -696,33 +705,65 @@ class UAVDistortionPipeline:
 
     def __init__(self, seed: int = 42):
         self.seed = seed
+        self._dist_cache = {}
+        for name in self.get_all_distortion_names():
+            if name in self.UAV_DISTORTIONS:
+                self._dist_cache[name] = self.UAV_DISTORTIONS[name](seed=self.seed)
+            else:
+                self._dist_cache[name] = GenericDistortions(name, seed=self.seed)
 
     def apply_distortion(
         self, image: np.ndarray, distortion_name: str, intensity: float
     ) -> np.ndarray:
-        if distortion_name in self.UAV_DISTORTIONS:
-            dist = self.UAV_DISTORTIONS[distortion_name](seed=self.seed)
-        elif distortion_name in self.GENERIC_DISTORTIONS:
-            dist = GenericDistortions(distortion_name, seed=self.seed)
-        else:
+        if distortion_name not in self._dist_cache:
             raise ValueError(f"Unknown distortion: {distortion_name}")
-        return dist.apply(image, intensity)
+        return self._dist_cache[distortion_name].apply(image, intensity)
 
     def generate_all(
         self,
         reference_image: np.ndarray,
         distortion_types: Optional[list] = None,
+        intensity: Optional[float] = None,
     ) -> dict:
         if distortion_types is None:
             distortion_types = (
                 list(self.UAV_DISTORTIONS.keys()) + self.GENERIC_DISTORTIONS
             )
 
+        rng = np.random.RandomState(self.seed)
         results = {}
         for dist_name in distortion_types:
-            for level in self.INTENSITY_LEVELS:
-                key = f"{dist_name}_L{int(level*10):02d}"
-                results[key] = self.apply_distortion(reference_image, dist_name, level)
+            level = (
+                intensity if intensity is not None else float(rng.choice(self.INTENSITY_LEVELS))
+            )
+            key = f"{dist_name}_L{int(level * 10):02d}"
+            results[key] = self.apply_distortion(reference_image, dist_name, level)
+        return results
+
+    def generate_group(
+        self,
+        images: list,
+        distortion_type: str,
+        intensity: float,
+    ) -> dict:
+        """Apply the SAME distortion to all images in a group.
+
+        All UAV images from the same scene+frame receive identical distortion
+        type and intensity, reflecting that environmental conditions affect
+        all UAVs simultaneously at a given capture moment.
+
+        Args:
+            images: List of images (paths or uint8 arrays) to distort.
+            distortion_type: Distortion name (e.g. 'gaussian_blur').
+            intensity: Distortion intensity level.
+
+        Returns:
+            Dict mapping integer index -> distorted uint8 array.
+        """
+        results = {}
+        for i, img in enumerate(images):
+            img_arr = _load_image(img)
+            results[str(i)] = self.apply_distortion(img_arr, distortion_type, intensity)
         return results
 
     @staticmethod
@@ -734,6 +775,19 @@ class UAVDistortionPipeline:
     @staticmethod
     def get_uav_distortion_names() -> list:
         return list(UAVDistortionPipeline.UAV_DISTORTIONS.keys())
+
+    @staticmethod
+    def get_distortion_categories() -> dict[str, str]:
+        """Return ``{distortion_name: category}`` for all 36 distortion types.
+
+        UAV distortions have category ``"uav"``; generic distortions use
+        their original category from ``GenericDistortions.CATEGORIES``
+        (blur, brightness, chromatic, noise, compression, spatial, other,
+        transmission).
+        """
+        cats = {name: "uav" for name in UAVDistortionPipeline.UAV_DISTORTIONS}
+        cats.update(GenericDistortions.CATEGORIES)
+        return cats
 
     def inject_directory(
         self,
@@ -762,29 +816,36 @@ class UAVDistortionPipeline:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         all_distortions = self.get_all_distortion_names()
-        total_expected = (
-            len(image_paths) * len(all_distortions) * len(self.INTENSITY_LEVELS)
-        )
+        total_expected = len(image_paths) * len(all_distortions)
         print(
             f"Processing {len(image_paths)} images × {len(all_distortions)} "
-            f"distortions × {len(self.INTENSITY_LEVELS)} levels = {total_expected} outputs"
+            f"distortions × 1 random level = {total_expected} outputs"
         )
 
         results = {"total_distorted": 0, "failed": 0, "errors": []}
 
         if max_workers <= 1:
-            for img_path in image_paths:
-                r = _inject_one_image_mp(img_path, str(output_dir), compress, self.seed, fmt)
+            for img_path in tqdm(image_paths, desc="Injecting distortions", unit="img"):
+                r = _inject_one_image_mp(
+                    img_path, str(output_dir), compress, self.seed, fmt
+                )
                 results["total_distorted"] += r["distorted"]
                 results["failed"] += r["failed"]
                 results["errors"].extend(r["errors"])
         else:
             with ProcessPoolExecutor(max_workers=max_workers) as executor:
                 futures = {
-                    executor.submit(_worker, p, str(output_dir), compress, self.seed, fmt): p
+                    executor.submit(
+                        _worker, p, str(output_dir), compress, self.seed, fmt
+                    ): p
                     for p in image_paths
                 }
-                for future in as_completed(futures):
+                for future in tqdm(
+                    as_completed(futures),
+                    total=len(image_paths),
+                    desc="Injecting distortions",
+                    unit="img",
+                ):
                     r = future.result()
                     results["total_distorted"] += r["distorted"]
                     results["failed"] += r["failed"]
@@ -795,8 +856,7 @@ class UAVDistortionPipeline:
             json.dump(results, f, indent=2)
 
         print(
-            f"Done: {results['total_distorted']} generated, "
-            f"{results['failed']} failed"
+            f"Done: {results['total_distorted']} generated, {results['failed']} failed"
         )
         return results
 

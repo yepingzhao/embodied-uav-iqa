@@ -243,14 +243,14 @@ class UAVIQANet(nn.Module):
     Total: ~5.4M params, INT8 quantized ~1.4MB.
     """
 
-    from .dataset import TASK_TO_ID
+    from .dataset import TASK_TO_ID, NUM_TASKS as _NUM_TASKS
 
     TASK_MAP = TASK_TO_ID
 
     def __init__(
         self,
         backbone: str = "mobilenetv4_conv_small",
-        num_tasks: int = 4,
+        num_tasks: int = _NUM_TASKS,
         freeze_backbone_stage: int = 2,
         use_fab: bool = True,
         use_cbam: bool = True,
@@ -260,6 +260,7 @@ class UAVIQANet(nn.Module):
         self.use_fab = use_fab
         self.use_cbam = use_cbam
         self.use_task_conditioning = use_task_conditioning
+        self.num_tasks = num_tasks
 
         import timm
 
@@ -322,7 +323,7 @@ class UAVIQANet(nn.Module):
             self.task_head = TaskConditionedHead(
                 in_features=fused_dim,
                 hidden_dim=128,
-                task_embed_dim=4,
+                task_embed_dim=min(num_tasks, 32),
                 num_tasks=num_tasks,
             )
         else:
@@ -360,9 +361,7 @@ class UAVIQANet(nn.Module):
 
         _log = logging.getLogger(__name__)
         if frozen_count == 0:
-            sample_names = list(
-                dict(self.backbone.named_parameters()).keys()
-            )[:5]
+            sample_names = list(dict(self.backbone.named_parameters()).keys())[:5]
             _log.warning(
                 "No parameters matched freeze patterns — backbone %s "
                 "may use different naming. Sample param names: %s",
@@ -370,7 +369,11 @@ class UAVIQANet(nn.Module):
                 sample_names,
             )
         else:
-            _log.info("Froze %d backbone parameters (first %d stages)", frozen_count, num_stages)
+            _log.info(
+                "Froze %d backbone parameters (first %d stages)",
+                frozen_count,
+                num_stages,
+            )
 
     def _extract_fused_features(self, x: torch.Tensor) -> torch.Tensor:
         """Shared backbone → FPN → CBAM → FAB → gate pipeline."""
@@ -423,4 +426,4 @@ class UAVIQANet(nn.Module):
             return torch.stack(scores, dim=1)
         else:
             q = self.shared_head(f).squeeze(-1)
-            return q.unsqueeze(-1).expand(-1, 4)
+            return q.unsqueeze(-1).expand(-1, self.num_tasks)

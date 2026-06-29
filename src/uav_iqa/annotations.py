@@ -1,4 +1,12 @@
-"""Utilities for parsing AirCopBench human annotations into numeric scores."""
+"""Utilities for AirCopBench VQA data processing.
+
+Provides functions for:
+- Parsing distortion keys from filenames
+- Building VQA split lookups from raw train/test JSONs
+- Grouping VQA entries by scene+frame
+- Extracting subtask types and building sample IDs
+- Resolving UAV image paths
+"""
 
 import hashlib
 import json
@@ -7,8 +15,6 @@ import os
 import re
 from pathlib import Path
 from typing import Optional, Tuple
-
-from .dataset import TASK_NAMES
 
 _log = logging.getLogger(__name__)
 
@@ -22,9 +28,9 @@ def parse_distortion_key(key: str) -> Tuple[Optional[str], Optional[float]]:
     """Parse a distortion filename into (distortion_name, intensity_level).
 
     Handles these formats:
-        'gaussian_blur_L04'                     → ('gaussian_blur', 0.4)
-        'ref_id__propeller_shadow_L4.png'       → ('propeller_shadow', 0.4)
-        'path/to/scene__color_noise_L0_5.jpeg'  → ('color_noise', 0.5)
+        'gaussian_blur_L04'                     -> ('gaussian_blur', 0.4)
+        'ref_id__propeller_shadow_L4.png'       -> ('propeller_shadow', 0.4)
+        'path/to/scene__color_noise_L0_5.jpeg'  -> ('color_noise', 0.5)
 
     Returns (None, None) if the string cannot be parsed.
     """
@@ -48,320 +54,299 @@ def parse_distortion_key(key: str) -> Tuple[Optional[str], Optional[float]]:
 
 
 # ---------------------------------------------------------------------------
-# Annotation parsing
+# VQA split lookup
 # ---------------------------------------------------------------------------
 
 
-def parse_quality_score(quality_str: Optional[str]) -> float:
-    """Parse 'Good (4/5)' → 0.8, 'Excellent (5/5)' → 1.0, etc."""
-    if quality_str is None:
-        return 0.5
-    match = re.search(r"\((\d+)(?:\.\d+)?/(\d+)\)", str(quality_str))
-    if match:
-        return float(match.group(1)) / float(match.group(2))
+def _ref_id_from_vqa_path(vqa_path: str) -> str:
+    """Convert a VQA path to its flat reference identifier.
+
+    'Sim_3_UAVs/Samples/images/scene_001/UAV1/UAV1_frame_001.jpg'
+    -> 'Sim_3_UAVs_Samples_images_scene_001_UAV1_UAV1_frame_001'
+    """
+    parts = vqa_path.replace("\\", "/").strip("/").split("/")
+    joined = "_".join(parts)
+    return str(Path(joined).stem)
+
+
+def build_vqa_split_lookup(aircopbench_dir: Path) -> dict[str, str]:
+    """Build a mapping from reference image stem to split ('train' or 'test').
+
+    Reads VQA JSON files from ``train/`` and ``test/`` subdirectories under
+    ``aircopbench_dir``, collects all image paths referenced in ``uav_paths``,
+    and assigns each image to the split it appears in.
+
+    Images referenced in test VQA files are assigned to 'test' (even if they
+    also appear in train VQA files).  Images only referenced in train VQA
+    files are assigned to 'train'.
+
+    The image stem format matches what ``extract_references()`` produces:
+    ``_``.join of the relative path parts (without extension).
+    """
+    train_dir = aircopbench_dir / "train"
+    test_dir = aircopbench_dir / "test"
+
+    train_images: set[str] = set()
+    test_images: set[str] = set()
+
+    for split_label, vqa_dir in [("train", train_dir), ("test", test_dir)]:
+        if not vqa_dir.is_dir():
+            _log.warning("VQA directory not found: %s", vqa_dir)
+            continue
+        for fpath in sorted(vqa_dir.glob("*.json")):
+            try:
+                with open(fpath) as f:
+                    data = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                continue
+            if not isinstance(data, list):
+                continue
+            for item in data:
+                for path_str in item.get("uav_paths", {}).values():
+                    ref_id = _ref_id_from_vqa_path(path_str)
+                    if ref_id:
+                        if split_label == "train":
+                            train_images.add(ref_id)
+                        else:
+                            test_images.add(ref_id)
+
+    lookup: dict[str, str] = {}
+    for ref_id in train_images - test_images:
+        lookup[ref_id] = "train"
+    for ref_id in test_images:
+        lookup[ref_id] = "test"
+
+    _log.info(
+        "VQA split lookup: %d train, %d test (%d in both -> test)",
+        len(train_images - test_images),
+        len(test_images),
+        len(train_images & test_images),
+    )
+    return lookup
+
+
+# ---------------------------------------------------------------------------
+# VQA entry grouping
+# ---------------------------------------------------------------------------
+
+
+def group_by_scene_frame(entries: list[dict]) -> dict[str, list[dict]]:
+    """Group VQA entries by ``sequence_frame``.
+
+    Each group represents all questions for a single multi-UAV capture moment.
+    Entries sharing the same ``sequence_frame`` have identical ``uav_paths``.
+
+    Returns:
+        Dict mapping ``sequence_frame`` -> list of entries.
+    """
+    groups: dict[str, list[dict]] = {}
+    for entry in entries:
+        seq_frame = entry.get("sequence_frame", "")
+        if not seq_frame:
+            continue
+        groups.setdefault(seq_frame, []).append(entry)
+    return groups
+
+
+# ---------------------------------------------------------------------------
+# Subtask type extraction
+# ---------------------------------------------------------------------------
+
+
+SUBTASK_NAMES: dict[str, str] = {
+    "1.1": "scene_description",
+    "1.2": "scene_comparison",
+    "1.3": "observing_posture",
+    "2.1": "object_recognition",
+    "2.2": "object_counting",
+    "2.3": "object_grounding",
+    "2.4": "object_matching",
+    "3.1": "quality_assessment",
+    "3.2": "usability_assessment",
+    "3.3": "causal_assessment",
+    "4.1": "when_to_collaborate",
+    "4.2": "what_to_collaborate",
+    "4.3": "who_to_collaborate",
+    "4.4": "why_to_collaborate",
+}
+
+SUBTASK_TO_ID: dict[str, int] = {
+    name: i for i, name in enumerate(sorted(SUBTASK_NAMES.keys()))
+}
+
+NUM_SUBTASKS = len(SUBTASK_NAMES)
+
+
+def extract_subtask_type(question_type: str) -> str:
+    """Extract the subtask type identifier from a question_type string.
+
+    '1.1 Scene Description (UAV2)' -> '1.1'
+    '4.2 What to Collaborate' -> '4.2'
+    'Object Matching' -> falls back to empty string
+    """
+    if not question_type:
+        return ""
+    m = re.match(r"(\d+\.\d+)", question_type.strip())
+    if m:
+        return m.group(1)
+    return ""
+
+
+def extract_subtask_id(question_type: str) -> int:
+    """Extract the subtask integer ID from a question_type string.
+
+    Returns 0 for unknown types.
+    """
+    subtask_type = extract_subtask_type(question_type)
+    return SUBTASK_TO_ID.get(subtask_type, 0)
+
+
+# ---------------------------------------------------------------------------
+# Sample ID construction
+# ---------------------------------------------------------------------------
+
+
+def build_sample_id(
+    dataset: str,
+    sequence_frame: str,
+    distortion_type: str,
+    level: int,
+) -> str:
+    """Build a unique sample identifier.
+
+    Format: ``{dataset}__{sequence_frame}__{distortion_type}_L{level:02d}``
+
+    Example: ``Sim3__scene_001_frame_001__gaussian_blur_L04``
+    """
+    safe_frame = sequence_frame.replace("/", "_").replace("\\", "_")
+    return f"{dataset}__{safe_frame}__{distortion_type}_L{level:02d}"
+
+
+def get_dataset_name(vqa_filename: str) -> str:
+    """Extract dataset name from a VQA JSON filename.
+
+    'Sim3_VQA_train.json' -> 'Sim3'
+    'Real2_VQA_test.json'  -> 'Real2'
+    """
+    stem = Path(vqa_filename).stem
+    m = re.match(r"(\w+)_VQA_", stem)
+    if m:
+        return m.group(1)
+    return stem.split("_")[0]
+
+
+def resolve_uav_path(uav_path: str, input_root: Path) -> Path:
+    """Resolve a VQA relative UAV path to an absolute path.
+
+    'Sim_3_UAVs/Samples/images/scene_001/UAV1/UAV1_frame_001.jpg'
+    -> input_root / 'Sim_3_UAVs/Samples/images/scene_001/UAV1/UAV1_frame_001.jpg'
+    """
+    return (input_root / uav_path.lstrip("/").replace("\\", "/")).resolve()
+
+
+# ---------------------------------------------------------------------------
+# Deterministic seed for distortion reproducibility
+# ---------------------------------------------------------------------------
+
+
+def seed_for_distortion(
+    dataset: str,
+    sequence_frame: str,
+    distortion_type: str,
+    base_seed: int = 42,
+) -> int:
+    """Derive a deterministic seed for a specific distortion application.
+
+    Ensures that re-running inject with the same base_seed produces
+    identical results for any given (dataset, scene_frame, distortion).
+    """
+    key = f"{dataset}__{sequence_frame}__{distortion_type}"
+    h = int(hashlib.md5(key.encode()).hexdigest(), 16)
+    return (base_seed + h) % (2**31)
+
+
+# ---------------------------------------------------------------------------
+# Legacy: AirCopBench annotation score parsing (for C2 correlation validation)
+# ---------------------------------------------------------------------------
+
+
+def parse_quality_score(quality_str: str) -> float:
+    """Parse a quality string like 'Good (4/5)' to a float score.
+
+    'Excellent (5/5)' -> 1.0
+    'Good (4/5)'       -> 0.8
+    'Fair (3/5)'       -> 0.6
+    'Poor (2/5)'       -> 0.4
+    'Very Poor (1/5)'  -> 0.2
+    """
+    import re
+
+    m = re.search(r"\((\d+)/5\)", quality_str)
+    if m:
+        return float(m.group(1)) / 5.0
     return 0.5
 
 
-def parse_usability(usability_str: Optional[str]) -> float:
-    """Parse '1 (Available)' → 1.0, '2 (Partially available)' → 0.5, etc."""
-    if usability_str is None:
-        return 0.0
-    s = str(usability_str)
-    if s.startswith("1"):
+def parse_usability(usability_str: str) -> float:
+    """Parse a usability string like '1 (Available)' to a float score.
+
+    '1 (Available)'           -> 1.0
+    '2 (Partially available)' -> 0.5
+    '3'                       -> 0.25
+    """
+    val = usability_str.strip()
+    if val.startswith("1"):
         return 1.0
-    if s.startswith("2"):
+    elif val.startswith("2"):
         return 0.5
-    if s.startswith("3"):
+    elif val.startswith("3"):
         return 0.25
     return 0.0
 
 
-# ---------------------------------------------------------------------------
-# Degradation factors — per-(distortion, task) degradation at max intensity
-# ---------------------------------------------------------------------------
-
-DEGRADATION_FACTORS = {
-    # UAV-specific distortions
-    "propeller_vibration_blur": {
-        "tracking": 0.55,
-        "inspection": 0.40,
-        "delivery": 0.70,
-        "sar": 0.50,
-    },
-    "atmospheric_scattering_haze": {
-        "tracking": 0.50,
-        "inspection": 0.35,
-        "delivery": 0.65,
-        "sar": 0.45,
-    },
-    "six_dof_viewpoint_blur": {
-        "tracking": 0.45,
-        "inspection": 0.35,
-        "delivery": 0.65,
-        "sar": 0.50,
-    },
-    "communication_packet_loss": {
-        "tracking": 0.60,
-        "inspection": 0.45,
-        "delivery": 0.70,
-        "sar": 0.55,
-    },
-    "low_res_super_resolution": {
-        "tracking": 0.50,
-        "inspection": 0.30,
-        "delivery": 0.65,
-        "sar": 0.50,
-    },
-    "propeller_shadow": {
-        "tracking": 0.70,
-        "inspection": 0.65,
-        "delivery": 0.80,
-        "sar": 0.75,
-    },
-    # Generic distortions
-    "gaussian_blur": {
-        "tracking": 0.60,
-        "inspection": 0.55,
-        "delivery": 0.75,
-        "sar": 0.65,
-    },
-    "lens_blur": {"tracking": 0.55, "inspection": 0.50, "delivery": 0.70, "sar": 0.60},
-    "motion_blur": {
-        "tracking": 0.50,
-        "inspection": 0.45,
-        "delivery": 0.65,
-        "sar": 0.55,
-    },
-    "brighten_max": {
-        "tracking": 0.85,
-        "inspection": 0.80,
-        "delivery": 0.90,
-        "sar": 0.85,
-    },
-    "brighten_min": {
-        "tracking": 0.90,
-        "inspection": 0.85,
-        "delivery": 0.92,
-        "sar": 0.88,
-    },
-    "brighten_avg": {
-        "tracking": 0.88,
-        "inspection": 0.83,
-        "delivery": 0.90,
-        "sar": 0.87,
-    },
-    "darken_max": {"tracking": 0.75, "inspection": 0.65, "delivery": 0.82, "sar": 0.70},
-    "darken_min": {"tracking": 0.80, "inspection": 0.72, "delivery": 0.85, "sar": 0.78},
-    "darken_avg": {"tracking": 0.78, "inspection": 0.70, "delivery": 0.84, "sar": 0.75},
-    "color_diffusion": {
-        "tracking": 0.82,
-        "inspection": 0.72,
-        "delivery": 0.88,
-        "sar": 0.80,
-    },
-    "color_shift": {
-        "tracking": 0.85,
-        "inspection": 0.75,
-        "delivery": 0.90,
-        "sar": 0.82,
-    },
-    "color_quantize": {
-        "tracking": 0.78,
-        "inspection": 0.68,
-        "delivery": 0.85,
-        "sar": 0.75,
-    },
-    "white_noise": {
-        "tracking": 0.72,
-        "inspection": 0.60,
-        "delivery": 0.80,
-        "sar": 0.68,
-    },
-    "color_noise": {
-        "tracking": 0.70,
-        "inspection": 0.58,
-        "delivery": 0.78,
-        "sar": 0.65,
-    },
-    "impulse_noise": {
-        "tracking": 0.75,
-        "inspection": 0.62,
-        "delivery": 0.82,
-        "sar": 0.70,
-    },
-    "multiplicative_noise": {
-        "tracking": 0.73,
-        "inspection": 0.60,
-        "delivery": 0.80,
-        "sar": 0.68,
-    },
-    "jpeg_compression": {
-        "tracking": 0.78,
-        "inspection": 0.70,
-        "delivery": 0.85,
-        "sar": 0.75,
-    },
-    "jp2k_compression": {
-        "tracking": 0.76,
-        "inspection": 0.68,
-        "delivery": 0.83,
-        "sar": 0.73,
-    },
-    "webp_compression": {
-        "tracking": 0.78,
-        "inspection": 0.70,
-        "delivery": 0.85,
-        "sar": 0.75,
-    },
-    "spatial_warp": {
-        "tracking": 0.60,
-        "inspection": 0.50,
-        "delivery": 0.72,
-        "sar": 0.62,
-    },
-    "spatial_rotation": {
-        "tracking": 0.70,
-        "inspection": 0.60,
-        "delivery": 0.78,
-        "sar": 0.68,
-    },
-    "spatial_scale": {
-        "tracking": 0.75,
-        "inspection": 0.65,
-        "delivery": 0.82,
-        "sar": 0.72,
-    },
-    "spatial_shear": {
-        "tracking": 0.68,
-        "inspection": 0.58,
-        "delivery": 0.76,
-        "sar": 0.65,
-    },
-    "resolution_limit": {
-        "tracking": 0.55,
-        "inspection": 0.40,
-        "delivery": 0.68,
-        "sar": 0.55,
-    },
-    "grayscale": {"tracking": 0.80, "inspection": 0.65, "delivery": 0.85, "sar": 0.78},
-    "sharpness": {"tracking": 0.88, "inspection": 0.85, "delivery": 0.92, "sar": 0.88},
-    "contrast": {"tracking": 0.85, "inspection": 0.82, "delivery": 0.90, "sar": 0.85},
-    "none": {"tracking": 0.95, "inspection": 0.95, "delivery": 0.95, "sar": 0.95},
-}
-
-_DEFAULT_DEG = {"tracking": 0.75, "inspection": 0.68, "delivery": 0.82, "sar": 0.72}
-
-
-def degradation_factor(distortion: str, task: str) -> float:
-    """Get degradation factor at max intensity for (distortion, task)."""
-    per_task = DEGRADATION_FACTORS.get(distortion, _DEFAULT_DEG)
-    return per_task.get(task, 0.75)
-
-
-# ---------------------------------------------------------------------------
-# Reference score lookup from AirCopBench
-# ---------------------------------------------------------------------------
-
-
 def build_ref_score_lookup(aircopbench_dir: Path) -> dict:
-    """Build a dict mapping ref_id → {vlm_score, vla_score, execution_score}."""
-    lookup = {}
+    """Build a mapping: ref_id -> {vlm_score, vla_score, execution_score}.
 
-    ann_dirs = list(aircopbench_dir.rglob("Annotations"))
-    for ann_dir in ann_dirs:
-        for ann_file in sorted(ann_dir.glob("*.json")):
-            if "VQA" in ann_file.name:
+    Reads AirCopBench Annotations/*.json files (single-image quality labels),
+    extracts Quality/Usibility fields, and computes an execution_score as
+    0.4*quality + 0.6*usability.
+
+    This is used by C2 correlation validation to compare VLM-predicted
+    cognitive scores against human annotations.
+    """
+    lookup: dict = {}
+    annotations_dirs = sorted(aircopbench_dir.rglob("Annotations"))
+    if not annotations_dirs:
+        _log.warning("No Annotations/ directories found under %s", aircopbench_dir)
+        return lookup
+
+    for ann_dir in annotations_dirs:
+        for fpath in sorted(ann_dir.glob("*.json")):
+            if "VQA" in fpath.name:
                 continue
             try:
-                with open(ann_file) as f:
-                    annotations = json.load(f)
+                with open(fpath) as f:
+                    data = json.load(f)
             except (json.JSONDecodeError, IOError):
                 continue
-
-            if not isinstance(annotations, list):
+            if not isinstance(data, list):
                 continue
-
-            for entry in annotations:
-                img1 = entry.get("img1", "")
-                fname = os.path.basename(img1)
-                ref_id = os.path.splitext(fname)[0]
-                quality = parse_quality_score(entry.get("Quality"))
-                usability = parse_usability(entry.get("Usibility"))
+            for entry in data:
+                img_path = entry.get("img1", "")
+                if not img_path:
+                    continue
+                ref_id = str(Path(img_path).stem)
+                quality = parse_quality_score(entry.get("Quality", "Fair (3/5)"))
+                usability = parse_usability(entry.get("Usibility", "1 (Available)"))
                 combined = 0.4 * quality + 0.6 * usability
                 lookup[ref_id] = {
-                    "vlm_score": round(quality, 4),
-                    "vla_score": round(usability, 4),
-                    "execution_score": round(combined, 4),
+                    "vlm_score": quality,
+                    "vla_score": usability,
+                    "execution_score": combined,
                     "annotated": True,
                 }
 
-    _log.info("Built ref score lookup: %d annotated references", len(lookup))
+    _log.info(
+        "Ref score lookup: %d annotated reference images", len(lookup)
+    )
     return lookup
-
-
-def assign_task_label(img_name: str, task_map: Optional[dict] = None) -> str:
-    """Extract task label from path structure, with configurable mapping.
-
-    Parses scene identifiers from file paths (e.g., 'scene_001', 'UAV1') and maps them
-    to task types. If no scene identifier is found, falls back to deterministic hash
-    with a logged warning.
-
-    Args:
-        img_name: File path or basename to extract task from.
-        task_map: Optional dict mapping scene/identifier strings to task names.
-                  Default mapping rotates scene_001→tracking, scene_002→inspection, etc.
-
-    Default scene mapping (can be overridden):
-        {'scene_001': 'tracking', 'scene_002': 'inspection',
-         'scene_003': 'delivery', 'scene_004': 'sar'}
-    """
-    if task_map is not None:
-        for key, task in task_map.items():
-            if key in img_name:
-                return task
-
-    scene_match = re.search(r"scene_(\d+)", img_name)
-    if scene_match:
-        scene_num = int(scene_match.group(1))
-        return TASK_NAMES[(scene_num - 1) % len(TASK_NAMES)]
-
-    task_match = re.search(
-        r"(tracking|inspection|delivery|sar)", img_name, re.IGNORECASE
-    )
-    if task_match:
-        return task_match.group(1).lower()
-
-    _log.warning(
-        "No scene or task identifier in path '%s' — falling back to hash-based "
-        "assignment. Consider providing an explicit --task-map.",
-        img_name,
-    )
-    hash_int = int(hashlib.md5(img_name.encode()).hexdigest(), 16)
-    return TASK_NAMES[hash_int % len(TASK_NAMES)]
-
-
-def compute_synthetic_score(distortion: str, task: str, intensity: float) -> float:
-    """Noiseless degradation-model score for a given (distortion, task, intensity).
-
-    Formula: score = 1.0 * (1.0 - alpha * intensity)
-    where alpha = 1.0 - degradation_factor(distortion, task)
-
-    Used by both score annotation and C2 correlation validation.
-    """
-    base = degradation_factor(distortion, task)
-    alpha = 1.0 - base
-    return max(0.0, min(1.0, 1.0 * (1.0 - alpha * intensity)))
-
-
-def synthetic_ref_scores(ref_id: str) -> dict:
-    """Generate deterministic synthetic scores for a reference without annotations."""
-    hash_int = int(hashlib.md5(ref_id.encode()).hexdigest(), 16)
-    ref_vlm = 0.4 + 0.5 * ((hash_int % 1000) / 1000.0)
-    ref_vla = 0.3 + 0.5 * (((hash_int // 1000) % 1000) / 1000.0)
-    ref_exec = 0.35 + 0.5 * (((hash_int // 1000000) % 1000) / 1000.0)
-    return {
-        "vlm_score": round(ref_vlm, 4),
-        "vla_score": round(ref_vla, 4),
-        "execution_score": round(ref_exec, 4),
-        "annotated": False,
-    }

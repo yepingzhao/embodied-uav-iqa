@@ -90,7 +90,7 @@ def test_generate_all():
     pipeline = UAVDistortionPipeline(seed=42)
     img = _make_test_image()
     results = pipeline.generate_all(img, distortion_types=["propeller_vibration_blur"])
-    assert len(results) == 5
+    assert len(results) == 1
     for key, val in results.items():
         assert val.shape == img.shape
         assert val.dtype == np.uint8

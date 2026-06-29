@@ -1,3 +1,5 @@
+"""LightningDataModule for multi-image UAV-IQA grouped dataset."""
+
 import logging
 from pathlib import Path
 from typing import Optional
@@ -6,13 +8,13 @@ import lightning as L
 from torch.utils.data import DataLoader
 
 from .dataset import UAVIQADataset
-from .distortion import UAV_DISTORTION_NAMES
+from .distortion import UAVDistortionPipeline
 
 _log = logging.getLogger(__name__)
 
 
 class UAVIQDataModule(L.LightningDataModule):
-    """LightningDataModule wrapping UAVIQADataset with manifest filtering."""
+    """LightningDataModule for multi-image UAV-IQA grouped JSONs."""
 
     def __init__(
         self,
@@ -20,130 +22,76 @@ class UAVIQDataModule(L.LightningDataModule):
         batch_size: int = 64,
         num_workers: int = 4,
         image_size: int = 256,
-        annotator_stage: str = "vla",
-        task: Optional[str] = None,
-        val_task: Optional[str] = None,
+        max_uavs: int = 6,
+        subtask_filter: Optional[str] = None,
         distortion_filter: Optional[str] = None,
-        leave_out_task: Optional[str] = None,
         dry_run: bool = False,
     ):
         super().__init__()
-        # Save all hyperparameters including task/distortion config for reproducibility
         self.save_hyperparameters()
 
         self.data_root = Path(data_root)
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.image_size = image_size
-        self.annotator_stage = annotator_stage
-        self.task = task
-        self.val_task = val_task
+        self.max_uavs = max_uavs
+        self.subtask_filter = subtask_filter
         self.distortion_filter = distortion_filter
-        self.leave_out_task = leave_out_task
         self.dry_run = dry_run
 
         self.train_dataset: Optional[UAVIQADataset] = None
         self.val_dataset: Optional[UAVIQADataset] = None
         self.test_dataset: Optional[UAVIQADataset] = None
 
-    def _load_and_filter(self, split: str, task_override: Optional[str] = None) -> list:
-        from uav_iqa.utils import load_manifest
-
-        manifest_path = self.data_root / split / "manifest.json"
-        if not manifest_path.exists():
-            _log.warning(
-                "Manifest not found: %s — %s split will be empty", manifest_path, split
-            )
-            return []
-        samples = load_manifest(manifest_path)
-        filtered = self._filter_manifest(samples, task=task_override)
-        if len(filtered) == 0 and len(samples) > 0:
-            _log.warning(
-                "All %d %s samples were filtered out "
-                "(task=%s, distortion_filter=%s, leave_out_task=%s)",
-                len(samples),
-                split,
-                self.task,
-                self.distortion_filter,
-                self.leave_out_task,
-            )
-        return filtered
-
-    def _filter_manifest(
-        self,
-        samples: list,
-        task: Optional[str] = None,
-    ) -> list:
-        filtered = []
-        for s in samples:
-            sample_task = s.get("task")
-            sample_dist = s.get("distortion", "")
-
-            if task and sample_task != task:
-                continue
-            if self.leave_out_task and sample_task == self.leave_out_task:
-                continue
-
-            if self.distortion_filter == "generic":
-                if sample_dist in UAV_DISTORTION_NAMES:
-                    continue
-            elif self.distortion_filter == "uav_only":
-                if sample_dist not in UAV_DISTORTION_NAMES:
-                    continue
-
-            filtered.append(s)
-        return filtered
-
-    def setup(self, stage: Optional[str] = None) -> None:
-        shared_kwargs = dict(
+    def _make_dataset(self, split: str, augment: bool = False) -> UAVIQADataset:
+        ds = UAVIQADataset(
             data_root=str(self.data_root),
+            split=split,
             image_size=self.image_size,
-            annotator_stage=self.annotator_stage,
+            augment=augment,
+            max_uavs=self.max_uavs,
         )
 
-        val_task = self.val_task or self.task
+        if self.subtask_filter:
+            valid_types = {t.strip() for t in self.subtask_filter.split(",")}
+            ds.samples = [
+                s for s in ds.samples
+                if s.get("vqa_entries", [{}])[0].get("subtask_type", "") in valid_types
+            ]
 
-        if stage in (None, "fit"):
-            train_samples = self._load_and_filter("train", task_override=self.task)
-            val_samples = self._load_and_filter("val", task_override=val_task)
-        elif stage == "validate":
-            train_samples = []
-            val_samples = self._load_and_filter("val", task_override=val_task)
-        else:
-            train_samples = []
-            val_samples = []
-
-        if stage in (None, "fit", "test"):
-            test_samples = self._load_and_filter("test", task_override=val_task)
-        else:
-            test_samples = []
+        if self.distortion_filter:
+            if self.distortion_filter == "generic":
+                uav_names = set(UAVDistortionPipeline.get_uav_distortion_names())
+                ds.samples = [
+                    s for s in ds.samples
+                    if s.get("distortion", "") not in uav_names
+                ]
+            elif self.distortion_filter == "uav_only":
+                uav_names = set(UAVDistortionPipeline.get_uav_distortion_names())
+                ds.samples = [
+                    s for s in ds.samples
+                    if s.get("distortion", "") in uav_names
+                ]
 
         if self.dry_run:
-            train_samples = train_samples[:100]
-            val_samples = val_samples[:50]
-            test_samples = test_samples[:50]
+            limit = 100 if split == "train" else 50
+            ds.samples = ds.samples[:limit]
+
+        return ds
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        if stage in (None, "fit", "validate"):
+            self.train_dataset = self._make_dataset("train", augment=True)
+            self.val_dataset = self._make_dataset("test", augment=False)
+        if stage in (None, "fit", "test"):
+            self.test_dataset = self._make_dataset("test", augment=False)
 
         _log.info(
             "Train: %d, Val: %d, Test: %d",
-            len(train_samples),
-            len(val_samples),
-            len(test_samples),
+            len(self.train_dataset) if self.train_dataset else 0,
+            len(self.val_dataset) if self.val_dataset else 0,
+            len(self.test_dataset) if self.test_dataset else 0,
         )
-
-        if stage in (None, "fit", "validate"):
-            self.train_dataset = UAVIQADataset(
-                samples=train_samples if train_samples else None,
-                **shared_kwargs,
-            )
-            self.val_dataset = UAVIQADataset(
-                samples=val_samples if val_samples else None,
-                **shared_kwargs,
-            )
-        if stage in (None, "fit", "test"):
-            self.test_dataset = UAVIQADataset(
-                samples=test_samples if test_samples else None,
-                **shared_kwargs,
-            )
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(

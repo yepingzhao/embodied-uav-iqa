@@ -1,41 +1,39 @@
 #!/usr/bin/env python3
 """UAV-IQA data synthesis pipeline — unified CLI.
 
-Replaces the 5 previous scripts (extract_aircopbench_refs, run_m1_inject,
-run_m1_manifest, annotate_scores, run_m1_aircopbench) with a single
-entry point backed by ``uav_iqa.data_synthesis``.
+Backed by ``uav_iqa.data_synthesis``.
 
 Subcommands:
-    extract     Extract clean reference frames from a dataset root.
-    inject      Apply distortions to reference images.
-    manifest    Generate train/val/test manifest.json from distorted images.
-    annotate    Annotate manifest entries with degradation-model scores.
-    all         Run the full pipeline end-to-end.
+    extract    Extract clean reference frames + copy VQA JSONs.
+    inject     Group by scene+frame, apply 36 distortions to all UAVs.
+    annotate   VLM multi-image inference for cognitive scores.
+    aggregate  Merge per-model scores into final cognitive_score.
+    all        Run the full pipeline end-to-end.
 
 Examples:
     # Full AirCopBench pipeline
-    python scripts/data_synthesis.py all \\
-        --dataset aircopbench \\
-        --input-root data/raw/AirCopBench \\
+    python scripts/data_synthesis.py all \
+        --dataset aircopbench \
+        --input-root data/raw/AirCopBench \
         --output-dir data/processed
 
     # Single step: inject only
-    python scripts/data_synthesis.py inject \\
-        --image-dir data/processed/ref_images \\
-        --output-dir data/processed/distorted \\
+    python scripts/data_synthesis.py inject \
+        --dataset aircopbench \
+        --input-root data/raw/AirCopBench \
+        --output-dir data/processed \
         --workers 8
 
-    # Generic image directory (no annotations)
-    python scripts/data_synthesis.py all \\
-        --dataset generic \\
-        --input-root /path/to/images \\
-        --output-dir data/processed
+    # Annotate with a specific VLM
+    python scripts/data_synthesis.py annotate \
+        --output-dir data/processed \
+        --scorer-model Qwen2.5-VL
 """
 
 import argparse
 
 from uav_iqa.data_synthesis import DatasetFormat, create_pipeline
-from uav_iqa.utils import load_task_map, setup_logging
+from uav_iqa.utils import setup_logging
 
 _log = setup_logging(__name__)
 
@@ -54,12 +52,37 @@ def _add_seed_arg(parser):
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
 
 
+def _add_scorer_args(parser):
+    parser.add_argument(
+        "--scorer-model",
+        default=None,
+        help="VLM model for scoring (e.g. Qwen2.5-VL). "
+        "If not set, the annotation step is skipped.",
+    )
+    parser.add_argument(
+        "--scorer-backend",
+        default="auto",
+        choices=["auto", "vllm", "transformers"],
+        help="VLM inference backend (default: auto)",
+    )
+    parser.add_argument(
+        "--scorer-device",
+        default="cuda",
+        help="Device for VLM inference (default: cuda)",
+    )
+    parser.add_argument(
+        "--scorer-batch-size",
+        type=int,
+        default=8,
+        help="Batch size for VLM scoring (default: 8)",
+    )
+
+
 def _add_output_dir_arg(parser, default: str):
     parser.add_argument("--output-dir", default=default, help="Output directory")
 
 
 def _parse_ref_limits(raw: str | None) -> dict[str, int] | None:
-    """Parse ``"Sim_3_UAVs=500,Sim_5_UAVs=200"`` style string."""
     if not raw:
         return None
     out: dict[str, int] = {}
@@ -70,6 +93,19 @@ def _parse_ref_limits(raw: str | None) -> dict[str, int] | None:
         k, v = pair.split("=", 1)
         out[k.strip()] = int(v.strip())
     return out
+
+
+def _make_scorer(args):
+    if not args.scorer_model:
+        return None
+    from uav_iqa.vlm import VLMScorer
+
+    return VLMScorer(
+        model_name=args.scorer_model,
+        backend=args.scorer_backend,
+        device=args.scorer_device,
+        seed=args.seed,
+    )
 
 
 def cmd_extract(args):
@@ -83,9 +119,9 @@ def cmd_extract(args):
 
 
 def cmd_inject(args):
-    pipeline = create_pipeline("generic", seed=args.seed)
+    pipeline = create_pipeline(args.dataset, seed=args.seed)
     pipeline.inject_distortions(
-        image_dir=args.image_dir,
+        input_root=args.input_root,
         output_dir=args.output_dir,
         workers=args.workers,
         compress=not args.no_compress,
@@ -94,31 +130,29 @@ def cmd_inject(args):
     )
 
 
-def cmd_manifest(args):
+def cmd_annotate(args):
     pipeline = create_pipeline(args.dataset, seed=args.seed)
-    task_map = load_task_map(args.task_map)
-    pipeline.generate_manifests(
-        distorted_dir=args.distorted_dir,
+    scorer = _make_scorer(args)
+    pipeline.annotate_scores(
         output_dir=args.output_dir,
-        ref_dir=args.ref_dir,
-        split=tuple(args.split),
-        task_map=task_map,
+        scorer=scorer,
+        scorer_batch_size=args.scorer_batch_size,
+        max_entries=args.max_entries,
     )
 
 
-def cmd_annotate(args):
+def cmd_aggregate(args):
     pipeline = create_pipeline(args.dataset, seed=args.seed)
-    pipeline.annotate_scores(
-        manifest_dir=args.manifest_dir,
-        input_root=args.input_root,
+    pipeline.aggregate_scores(
         output_dir=args.output_dir,
-        noise_scale=args.noise_scale,
+        strategy=args.strategy,
     )
 
 
 def cmd_all(args):
     pipeline = create_pipeline(args.dataset, seed=args.seed)
-    task_map = load_task_map(args.task_map)
+    scorer = _make_scorer(args)
+
     pipeline.run_full(
         input_root=args.input_root,
         output_dir=args.output_dir,
@@ -126,68 +160,73 @@ def cmd_all(args):
         copy=args.copy,
         workers=args.workers,
         compress=not args.no_compress,
-        split=tuple(args.split),
-        task_map=task_map,
-        noise_scale=args.noise_scale,
         dry_run=args.dry_run,
         fmt=args.format,
         max_refs_per_source=_parse_ref_limits(args.max_refs),
+        scorer=scorer,
+        scorer_batch_size=args.scorer_batch_size,
+        max_annotate_entries=args.max_annotate_entries,
     )
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="UAV-IQA data synthesis pipeline",
-    )
+    parser = argparse.ArgumentParser(description="UAV-IQA data synthesis pipeline")
     sub = parser.add_subparsers(dest="command", required=True)
 
     # ---- extract ----
-    p_extract = sub.add_parser("extract", help="Extract clean reference frames")
+    p_extract = sub.add_parser("extract", help="Extract clean reference frames + copy VQA JSONs")
     _add_dataset_arg(p_extract, required=True)
     p_extract.add_argument("--input-root", required=True, help="Dataset root directory")
     _add_output_dir_arg(p_extract, "data/processed/ref_images")
     p_extract.add_argument("--copy", action="store_true", help="Copy instead of symlink")
     p_extract.add_argument(
-        "--max-refs", default=None,
+        "--max-refs",
+        default=None,
         help="Per-source image limits, e.g. 'Sim_3_UAVs=500' (comma-separated KEY=VALUE)",
     )
     _add_seed_arg(p_extract)
     p_extract.set_defaults(func=cmd_extract)
 
     # ---- inject ----
-    p_inject = sub.add_parser("inject", help="Apply distortions to reference images")
-    p_inject.add_argument("--image-dir", required=True, help="Reference images directory")
-    _add_output_dir_arg(p_inject, "data/processed/distorted")
-    p_inject.add_argument("--workers", type=int, default=4, help="Parallel workers")
-    p_inject.add_argument("--no-compress", action="store_true", help="Disable PNG compression")
-    p_inject.add_argument("--format", default="png", choices=["png", "jpeg"], help="Output image format (default: png)")
-    p_inject.add_argument("--dry-run", action="store_true", help="Process first 5 images only")
+    p_inject = sub.add_parser("inject", help="Group by scene+frame and inject distortions")
+    _add_dataset_arg(p_inject, required=True)
+    p_inject.add_argument("--input-root", required=True, help="Raw dataset root directory")
+    _add_output_dir_arg(p_inject, "data/processed")
+    p_inject.add_argument("--workers", type=int, default=0, help="Parallel workers (0=auto)")
+    p_inject.add_argument("--no-compress", action="store_true", help="Disable compression")
+    p_inject.add_argument(
+        "--format", default="png", choices=["png", "jpeg"],
+        help="Output image format (default: png)",
+    )
+    p_inject.add_argument(
+        "--dry-run", action="store_true",
+        help="Process only 2 groups with 3 distortions",
+    )
     _add_seed_arg(p_inject)
     p_inject.set_defaults(func=cmd_inject)
 
-    # ---- manifest ----
-    p_manifest = sub.add_parser("manifest", help="Generate train/val/test manifest.json")
-    _add_dataset_arg(p_manifest)
-    p_manifest.add_argument("--distorted-dir", required=True, help="Distorted images directory")
-    _add_output_dir_arg(p_manifest, "data/processed")
-    p_manifest.add_argument("--ref-dir", default=None, help="Reference images directory")
-    p_manifest.add_argument(
-        "--split", nargs=3, type=float, default=[0.8, 0.1, 0.1],
-        help="Train/val/test ratios",
-    )
-    p_manifest.add_argument("--task-map", default=None, help="JSON task mapping file")
-    _add_seed_arg(p_manifest)
-    p_manifest.set_defaults(func=cmd_manifest)
-
     # ---- annotate ----
-    p_annotate = sub.add_parser("annotate", help="Annotate manifest with scores")
+    p_annotate = sub.add_parser("annotate", help="VLM multi-image annotation")
     _add_dataset_arg(p_annotate)
-    p_annotate.add_argument("--manifest-dir", default="data/processed", help="Manifest directory")
-    p_annotate.add_argument("--input-root", default=None, help="Dataset root for annotation lookup")
-    _add_output_dir_arg(p_annotate, None)
-    p_annotate.add_argument("--noise-scale", type=float, default=0.02, help="Noise std multiplier")
+    p_annotate.add_argument("--output-dir", default="data/processed", help="Processed output directory")
+    p_annotate.add_argument(
+        "--max-entries", type=int, default=None,
+        help="Limit entries per split (debugging)",
+    )
     _add_seed_arg(p_annotate)
+    _add_scorer_args(p_annotate)
     p_annotate.set_defaults(func=cmd_annotate)
+
+    # ---- aggregate ----
+    p_aggregate = sub.add_parser("aggregate", help="Merge per-model VLM scores")
+    _add_dataset_arg(p_aggregate)
+    p_aggregate.add_argument("--output-dir", default="data/processed", help="Processed output directory")
+    p_aggregate.add_argument(
+        "--strategy", default="mean", choices=["mean"],
+        help="Aggregation strategy (default: mean)",
+    )
+    _add_seed_arg(p_aggregate)
+    p_aggregate.set_defaults(func=cmd_aggregate)
 
     # ---- all ----
     p_all = sub.add_parser("all", help="Run full pipeline end-to-end")
@@ -196,24 +235,29 @@ def main():
     _add_output_dir_arg(p_all, "data/processed")
     p_all.add_argument(
         "--steps", default="all",
-        help="Comma-separated steps: extract,inject,manifest,annotate (or 'all')",
+        help="Comma-separated steps: extract,inject,annotate,aggregate (or 'all')",
     )
     p_all.add_argument("--copy", action="store_true", help="Copy ref images instead of symlink")
-    p_all.add_argument("--workers", type=int, default=4, help="Parallel workers for injection")
-    p_all.add_argument("--no-compress", action="store_true", help="Disable PNG compression")
-    p_all.add_argument("--format", default="png", choices=["png", "jpeg"], help="Output image format (default: png)")
+    p_all.add_argument("--workers", type=int, default=0, help="Parallel workers (0=auto)")
+    p_all.add_argument("--no-compress", action="store_true", help="Disable compression")
     p_all.add_argument(
-        "--split", nargs=3, type=float, default=[0.8, 0.1, 0.1],
-        help="Train/val/test ratios",
+        "--format", default="png", choices=["png", "jpeg"],
+        help="Output image format (default: png)",
     )
-    p_all.add_argument("--task-map", default=None, help="JSON task mapping file")
-    p_all.add_argument("--noise-scale", type=float, default=0.02, help="Noise std multiplier")
-    p_all.add_argument("--dry-run", action="store_true", help="Inject only 5 images")
+    p_all.add_argument(
+        "--dry-run", action="store_true",
+        help="Inject only 2 groups with 3 distortions",
+    )
     p_all.add_argument(
         "--max-refs", default=None,
         help="Per-source image limits (e.g. 'Sim_3_UAVs=500') for extract step",
     )
+    p_all.add_argument(
+        "--max-annotate-entries", type=int, default=None,
+        help="Limit annotation entries (debugging)",
+    )
     _add_seed_arg(p_all)
+    _add_scorer_args(p_all)
     p_all.set_defaults(func=cmd_all)
 
     args = parser.parse_args()

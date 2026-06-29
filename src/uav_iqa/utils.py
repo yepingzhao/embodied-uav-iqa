@@ -10,10 +10,26 @@ from PIL import Image
 IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
 
 
+_THIRD_PARTY_LOGGERS = (
+    "transformers",
+    "huggingface_hub",
+    "datasets",
+    "diffusers",
+    "accelerate",
+    "peft",
+    "safetensors",
+    "filelock",
+    "torch.distributed",
+)
+
+
 def setup_logging(name: str = None, level: int = logging.INFO):
     """Configure stdlib logging with uniform format for scripts.
 
-    Returns a logger instance. Call once at module top-level:
+    Suppresses verbose INFO logs from third-party libraries (transformers,
+    huggingface_hub, etc.) while keeping application logs at the requested
+    level.  Returns a logger instance.  Call once at module top-level::
+
         _log = setup_logging(__name__)
     """
     logging.basicConfig(
@@ -21,6 +37,12 @@ def setup_logging(name: str = None, level: int = logging.INFO):
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+    # Silence noisy third-party loggers below WARNING so they don't flood
+    # the terminal during model loading / dataset streaming.
+    for name_ in _THIRD_PARTY_LOGGERS:
+        logging.getLogger(name_).setLevel(logging.WARNING)
+
     return logging.getLogger(name)
 
 
@@ -81,21 +103,22 @@ def split_samples(
     ratios: list = None,
     seed: int = 42,
 ) -> dict:
-    """Shuffle and split a list into {'train': [...], 'val': [...], 'test': [...]}.
+    """Shuffle and split a list into train/test.
 
-    Uses numpy.RandomState for reproducible permutation.
+    Uses np.random.RandomState for reproducible permutation.
+    Default ratios: [0.8, 0.2].
     """
     if ratios is None:
-        ratios = [0.8, 0.1, 0.1]
+        ratios = [0.8, 0.2]
     rng = np.random.RandomState(seed)
     indices = rng.permutation(len(samples))
     n = len(samples)
+    if len(ratios) != 2:
+        raise ValueError(f"Expected 2 ratios (train, test), got {len(ratios)}")
     train_end = int(n * ratios[0])
-    val_end = int(n * (ratios[0] + ratios[1]))
     return {
         "train": [samples[i] for i in indices[:train_end]],
-        "val": [samples[i] for i in indices[train_end:val_end]],
-        "test": [samples[i] for i in indices[val_end:]],
+        "test": [samples[i] for i in indices[train_end:]],
     }
 
 
@@ -125,3 +148,55 @@ def write_manifest(entries: list, manifest_path: Path, _log=None) -> int:
         _log.warning("  Manifest validation warnings: %s", diag)
 
     return len(entries)
+
+
+def load_flat_samples(output_dir: Path, split: str) -> list[dict]:
+    """Load grouped processed JSONs and flatten to old manifest-compatible format.
+
+    Each returned dict has: path, ref_path, task (subtask_name), distortion,
+    intensity_level, score (cognitive_score), ref_id.
+
+    This provides backward compatibility for benchmarking/finetuning scripts
+    that expected the old manifest.json format.
+    """
+    import json as _json
+
+    split_dir = output_dir / split
+    samples: list[dict] = []
+
+    for fpath in sorted(split_dir.glob("*_VQA_*.json")):
+        with open(fpath) as f:
+            groups = _json.load(f)
+
+        for group in groups:
+            uav_paths = group.get("uav_paths", {})
+            uav_keys = group.get("uav_keys", [])
+            distortions = group.get("distortions", {})
+            vqa_entries = group.get("vqa_entries", [])
+
+            if not uav_paths or not uav_keys:
+                continue
+
+            for dist_key, dist_info in distortions.items():
+                for entry in vqa_entries:
+                    score = entry.get("cognitive_score", 0.0)
+                    subtask_name = entry.get("subtask_name", "unknown")
+
+                    samples.append({
+                        "path": str(dist_info.get("distorted_uav_paths", {}).get(
+                            uav_keys[0], ""
+                        )),
+                        "ref_path": str(uav_paths.get(uav_keys[0], "")),
+                        "uav_paths": uav_paths,
+                        "uav_keys": uav_keys,
+                        "distorted_uav_paths": dist_info.get("distorted_uav_paths", {}),
+                        "task": subtask_name,
+                        "distortion": dist_info.get("type", ""),
+                        "category": dist_info.get("category", "unknown"),
+                        "intensity_level": dist_info.get("intensity", 0.5),
+                        "score": score,
+                        "ref_id": str(Path(str(uav_paths.get(uav_keys[0], ""))).stem),
+                        "sample_id": dist_info.get("sample_id", ""),
+                    })
+
+    return samples

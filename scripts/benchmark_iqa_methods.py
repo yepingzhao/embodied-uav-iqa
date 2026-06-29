@@ -43,7 +43,7 @@ from uav_iqa.metrics import (
     per_distortion_category_metrics,
     per_task_metrics,
 )
-from uav_iqa.utils import load_image_tensor, load_manifest, setup_logging
+from uav_iqa.utils import load_flat_samples, load_image_tensor, setup_logging
 
 _log = setup_logging(__name__)
 
@@ -52,7 +52,7 @@ def load_image_and_score(sample, data_dir, image_size=256):
     img_path = Path(data_dir) / sample["path"]
     image_tensor = load_image_tensor(img_path, image_size).unsqueeze(0)
     image_np = image_tensor.squeeze(0).permute(1, 2, 0).contiguous().numpy()
-    score = sample.get("vla_score", 0.0)
+    score = sample.get("score", 0.0)
     if isinstance(score, list):
         score = np.mean(score)
     return (
@@ -344,7 +344,7 @@ def load_finetuned_checkpoint(ckpt_path: str, device: torch.device):
 
 
 def run_benchmark(
-    manifest: list,
+    entries: list,
     data_dir: Path,
     device: torch.device,
     methods: list,
@@ -361,8 +361,8 @@ def run_benchmark(
     targets = []
     task_ids = []
     distortion_labels = []
-    for s in manifest:
-        score = s.get("vla_score", 0.0)
+    for s in entries:
+        score = s.get("score", 0.0)
         if isinstance(score, list):
             score = np.mean(score)
         targets.append(float(score))
@@ -403,7 +403,7 @@ def run_benchmark(
         _log.info("  Running %s (%s, zero-shot)...", method_name, cat)
 
         predictions = []
-        for i, s in enumerate(manifest):
+        for i, s in enumerate(entries):
             img_np, img_t, score, task, dist, _, ref_path = load_image_and_score(
                 s, data_dir, image_size
             )
@@ -413,7 +413,7 @@ def run_benchmark(
                 pred = 0.0
             predictions.append(float(pred) if pred is not None else 0.0)
             if (i + 1) % 1000 == 0:
-                _log.info("    %d/%d", i + 1, len(manifest))
+                _log.info("    %d/%d", i + 1, len(entries))
 
         preds = np.array(predictions)
         metrics = evaluate_iqa(preds, targets)
@@ -442,7 +442,7 @@ def run_benchmark(
 
             ft_preds = []
             with torch.no_grad():
-                for i, s in enumerate(manifest):
+                for i, s in enumerate(entries):
                     img_t = (
                         load_image_tensor(Path(data_dir) / s["path"], image_size)
                         .unsqueeze(0)
@@ -475,7 +475,7 @@ def run_benchmark(
 
                     ft_preds.append(pred)
                     if (i + 1) % 1000 == 0:
-                        _log.info("    %d/%d", i + 1, len(manifest))
+                        _log.info("    %d/%d", i + 1, len(entries))
 
             ft_preds_arr = np.array(ft_preds)
             ft_metrics = evaluate_iqa(ft_preds_arr, targets)
@@ -535,17 +535,14 @@ def main():
     device = torch.device(args.device)
     _log.info("Using device: %s", device)
 
-    manifest_path = data_dir / "test" / "manifest.json"
-    if not manifest_path.exists():
-        raise FileNotFoundError(f"Manifest not found: {manifest_path}")
-    manifest = load_manifest(manifest_path)
+    entries = load_flat_samples(data_dir, "test")
     if args.max_samples > 0:
-        manifest = manifest[: args.max_samples]
-    _log.info("Evaluating %d samples", len(manifest))
+        entries = entries[: args.max_samples]
+    _log.info("Evaluating %d samples", len(entries))
 
     finetuned_dir = Path(args.finetuned_dir) if args.finetuned_dir else None
     results = run_benchmark(
-        manifest=manifest,
+        entries=entries,
         data_dir=data_dir,
         device=device,
         methods=args.methods,
@@ -554,7 +551,7 @@ def main():
     )
 
     with open(output_dir / "benchmark_results.json", "w") as f:
-        json.dump({"n_samples": len(manifest), "methods": results}, f, indent=2)
+        json.dump({"n_samples": len(entries), "methods": results}, f, indent=2)
 
     _log.info("=" * 80)
     _log.info("Benchmark Complete")
