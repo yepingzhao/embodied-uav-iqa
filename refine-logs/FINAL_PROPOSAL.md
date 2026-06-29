@@ -10,7 +10,7 @@
 
 - **Constraints**: University GPU cluster (A100-level); data assembled from existing open-source sources (AirCopBench, CARLA-Air, MotionScape, MDMT); 11 months; VLM/VLA-based annotation; ~50 real-UAV validation flights.
 
-- **Success condition**: A publicly available UAV-Embodied-IQA database with: (a) ~3,000 reference images across 4 UAV task categories, (b) 24 distortion types × 5 intensity levels with VLM+VLA+Execution task-performance annotations, (c) benchmark results for 15+ existing IQA methods showing they fail on UAV data (SRCC < 0.5), (d) small-scale real-UAV validation confirming synthetic distortion fidelity, and (e) a strong baseline model (SRCC > 0.65) demonstrating the database enables training effective UAV-specific IQA models.
+- **Success condition**: A publicly available UAV-Embodied-IQA database with: (a) ~3,000 reference images across 4 UAV task categories, (b) 36 distortion types × 1 randomly selected intensity level with VLM+VLA+Execution task-performance annotations, (c) benchmark results for 15+ existing IQA methods showing they fail on UAV data (SRCC < 0.5), (d) small-scale real-UAV validation confirming synthetic distortion fidelity, and (e) a strong baseline model (SRCC > 0.65) demonstrating the database enables training effective UAV-specific IQA models.
 
 ## Technical Gap
 
@@ -18,7 +18,7 @@ Four existing resource lines have not yet intersected:
 
 1. **Embodied-IQA (2505.16815)**: Provides the VLM→VLA→Execution annotation methodology and the Mertonian perception-cognition-decision-execution theory, but only covers ground manipulators with generic distortions. Critically, it reveals VLA inter-model SRCC ≈ 0.25 (low annotation consistency) and VLM inter-model SRCC ≈ 0.3 — problems that must be addressed for UAV-scale annotation reliability.
 
-2. **AirCopBench (2511.11025)**: Provides multi-UAV task protocols across 14 task types in 4 dimensions, including Perception Assessment (quality/availability/causal VQA, ~5,000 pairs). Key finding: causal assessment (identifying degradation causes) is the cognitive ability most correlated with overall performance. Yet AirCopBench lacks distortion-level annotations and continuous quality scores.
+2. **AirCopBench (2511.11025)**: Provides multi-UAV task protocols across 14 task types in 4 dimensions, including Perception Assessment (quality/availability VQA, ~5,000 pairs). Yet AirCopBench lacks distortion-level annotations and continuous quality scores.
 
 3. **EPD + MA-EIQA (2412.18774)**: First demonstration of the Moravec paradox in IQA — human MOS vs. robot task score PLCC < 0.22, proving human-centric IQA is fundamentally misaligned with robot needs. Color distortion impacts tasks most, noise least (opposite of human perception). This gap has never been quantified for UAV scenarios.
 
@@ -31,7 +31,7 @@ The UAV-Embodied-IQA database bridges these four lines: AirCopBench task protoco
 **Single contribution**: The UAV-Embodied-IQA database — the first benchmark for visual quality assessment in aerial embodied intelligence. Components:
 1. 6 UAV-specific distortion types with physically-motivated mathematical models (+ compound distortion pairs)
 2. ~3,000 reference images from AirCopBench, CARLA-Air, MotionScape, MDMT, spanning 4 UAV task categories
-3. ~180,000 distorted+annotated image pairs with VLM (cognitive + causal assessment), VLA (decision, with ensemble calibration), and CARLA-Air Execution quality scores; plus human MOS on a 5% stratified subset for Moravec paradox quantification
+3. ~108,000 distorted+annotated image pairs with VLM (cognitive), VLA (decision, with ensemble calibration), and CARLA-Air Execution quality scores; plus human MOS on a 5% stratified subset for Moravec paradox quantification
 4. Comprehensive benchmark of 15+ existing NR-IQA and FR-IQA methods on UAV data, plus cross-database validation against Embodied-IQA and EPD
 5. Strong baseline model (UAV-IQANet, <5.5M params) demonstrating database utility; zero-shot cross-database testing against Embodied-IQA/EPD to establish domain specificity
 
@@ -50,13 +50,16 @@ The UAV-Embodied-IQA database bridges these four lines: AirCopBench task protoco
 5. **Low-Resolution + Super-Resolution Artifacts**: Bicubic downsample → Real-ESRGAN upscale chain
 6. **Propeller Shadow**: Periodic localized brightness modulation, α ∈ [0.05, 0.3]
 
-Plus 18 generic distortion types inherited from Embodied-IQA catalog. All at 5 intensity levels.
+Plus 24 generic distortion types inherited from Embodied-IQA catalog. Each at 1 randomly selected intensity level (from {0.2, 0.4, 0.6, 0.8, 1.0}).
 Plus 10 compound distortion pairs (UAV-specific × UAV-specific pairwise combinations) at 3 intensity level pairs, applied to a 20% stratified subset (~600 reference images → ~18,000 compound-distorted pairs).
 
 ### Annotation Pipeline
-- **Cognitive (VLM) — Two Dimensions**:
-  - *Quality Assessment*: Qwen2.5-VL-7B, InternVL2-8B, LLaVA-NeXT-13B → AirCopBench perception assessment VQA → cognitive quality score (as in Embodied-IQA)
-  - *Causal Assessment*: Same VLMs → AirCopBench causal assessment VQA → distortion cause identification accuracy. **Rationale**: AirCopBench found causal assessment is the cognitive ability most correlated with overall MLLM performance; adding this dimension as a VLM annotation task provides diagnostic value beyond quality scores alone
+- **Cognitive (VLM) — Three Dimensions**:
+  - *Quality Assessment (3D)*: Qwen2.5-VL-7B → task-conditioned structured scene description prompt via AirCopBench VQA questions → text output on clean reference image. Same VLM applied to each distorted version; outputs compared via:
+    - **BLEU** (precision): how faithfully the distorted output matches the reference at the token level
+    - **ROUGE-L** (recall): how much critical information is retained under distortion
+    - **CIDEr** (semantic): how much task-relevant semantic understanding is preserved
+    - Weighted average BLEU:ROUGE:CIDEr = 1:1:0.1 (following Embodied-IQA) per VQA question, averaged across all questions → cognitive quality score. **Rationale**: Embodied-IQA demonstrated that distortions impact precision, recall, and semantics at different rates — this 3D decomposition reveals whether UAV distortions follow the same pattern or exhibit domain-specific sensitivity profiles
 - **Decision (VLA)**: UAV-Track VLA, CognitiveDrone-R1, Qwen-VLA (fallback: OpenVLA-7B × 3 seeds) → sliding-window single-frame replacement protocol → decision score
   - **VLA Ensemble Calibration**: Embodied-IQA revealed VLA inter-model SRCC ≈ 0.25. We address this via: (a) per-model confidence weighting derived from execution-layer validation on the 5% SITL subset, (b) reporting ICC(3,k) per task/distortion for transparency, (c) weighted mean with outlier rejection (models outside 1.5σ of ensemble mean are down-weighted)
 - **Execution (CARLA-Air SITL)**: Tracking + Inspection tasks (5% stratified subset) → execution score
@@ -83,12 +86,12 @@ Positioned as a strong baseline — no architectural novelty claimed. Benchmarke
 
 ## Key Claims
 
-1. **UAV-specific distortions produce distinct VLA performance degradation patterns vs. generic distortions** — supported by causal assessment showing distortion-type-conditional degradation signatures that differ from both ground-robot (EPD/Embodied-IQA) and human perception patterns
+1. **UAV-specific distortions produce distinct VLA performance degradation patterns vs. generic distortions** — validated via per-distortion VLA decision score analysis showing degradation signatures that differ from both ground-robot (EPD/Embodied-IQA) and human perception patterns
 2. **Synthetic UAV distortions correlate with real-world UAV distortion effects** (SRCC > 0.6) — validated via AirCopBench-inspired sim-to-real protocol with telemetry-based parameter estimation
 3. **Existing IQA methods fail to predict UAV task performance** (SRCC < 0.5); the UAV-Embodied-IQA database enables training effective UAV-IQA models (SRCC > 0.65) — with cross-database validation confirming that Embodied-IQA/EPD-trained models also fail on UAV data and vice versa
 4. **(Optional) Multi-task training enables cross-task quality generalization**
 5. **(Supporting) The Moravec paradox holds for UAV embodied IQA** — human MOS correlates with UAV task performance at SRCC < 0.3, quantitatively establishing the gap that justifies task-performance-based annotation
-6. **(Supporting) Causal assessment (identifying distortion causes) provides annotation signal beyond simple quality scoring** — VLM causal assessment accuracy is predictive of VLA decision degradation patterns
+
 
 ## Compute & Timeline
 - ~2,000 GPU-hours on A100 (~22 days on 4×A100)

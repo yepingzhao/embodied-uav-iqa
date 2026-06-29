@@ -9,14 +9,14 @@
 - R004 (overfit test): DONE — loss → 0.000099 < 0.001 threshold
 
 ## M1: Database Construction — PARTIALLY DONE
-- R005 (distorted dataset): DONE — 43,032 pairs generated (261 ref images × 33 distortions × 5 levels)
-  - Train: 34,425 / Val: 4,303 / Test: 4,304
+- R005 (distorted dataset): DONE — 8,613 pairs generated (261 ref images × 33 distortions × 1 random level)
+  - Train: 6,889 / Val: 861 / Test: 863
   - 33 distortion types, 4 task categories
   - Scores: synthetic
 - R006-R008 (VLM/VLA/Execution annotation): TODO — requires external models
 
 ## M2: Baseline Benchmark — RUNNING
-- R009-R012: Full benchmark running on CPU: 12 methods × 4,304 test images
+- R009-R012: Full benchmark running on CPU: 12 methods × 863 test images
 - Output: outputs/benchmark_v2/ (pending results)
 
 ## M3: Main Model Training — RUNNING

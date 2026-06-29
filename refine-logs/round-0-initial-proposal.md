@@ -23,7 +23,7 @@
 
 1. **Embodied-IQA (2505.16815) and EPD/MA-EIQA (2412.18774)** established the paradigm: define image quality by robot task success, not human preference. But their scope is limited to fixed-base manipulators (UR5 arm, SAPIEN simulator) with 25-30 generic distortion types (Gaussian blur, JPEG, color shifts, etc.). These distortions capture indoor manipulation degradation but miss the UAV-specific frequency-domain degradations that dominate aerial perception.
 
-2. **AirCopBench (2511.11025)** provides multi-UAV collaborative perception data with built-in perception assessment VQA protocols (quality/availability/causality assessment across 14.6k questions). It includes real-world UAV degradations (motion blur, noise, data loss) in its sim+real data. But it uses generic MLLM scoring for quality assessment — it has NO dedicated IQA model, NO task-specific quality metrics, and NO distortion-level annotations. It's a perception benchmark, not an IQA database.
+2. **AirCopBench (2511.11025)** provides multi-UAV collaborative perception data with built-in perception assessment VQA protocols (quality/availability assessment across 14.6k questions). It includes real-world UAV degradations (motion blur, noise, data loss) in its sim+real data. But it uses generic MLLM scoring for quality assessment — it has NO dedicated IQA model, NO task-specific quality metrics, and NO distortion-level annotations. It's a perception benchmark, not an IQA database.
 
 3. **The gap**: Embodied-IQA provides the annotation methodology (VLM→VLA→robot pipeline) and the theoretical framework (Mertonian perception-cognition-decision-execution pipeline). AirCopBench provides UAV-specific task protocols and multi-view degraded data. But these two lines of work have never been combined. No one has applied embodied IQA methodology to UAV perception data.
 
@@ -31,7 +31,7 @@
 
 - **Just adding UAV images to existing IQA databases**: Doesn't work because the annotation must be task-conditioned. A blur that's acceptable for scene description may be catastrophic for precision tracking.
 
-- **Just using AirCopBench's VQA scores as IQA labels**: AirCopBench's perception assessment VQA produces discrete accuracy scores, not continuous quality scores. The 3 assessment dimensions (quality/availability/causality) are MLLM-centric, not task-performance-centric.
+- **Just using AirCopBench's VQA scores as IQA labels**: AirCopBench's perception assessment VQA produces discrete accuracy scores, not continuous quality scores. The 2 assessment dimensions (quality/availability) are MLLM-centric, not task-performance-centric.
 
 - **Just fine-tuning MA-EIQA on UAV data**: MA-EIQA's 48.83M parameters are too large for UAV onboard deployment. Its ResNet50 backbone has no frequency-aware processing for UAV-specific distortions. Its single regression head cannot handle multi-task conditioning.
 

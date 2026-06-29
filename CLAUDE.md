@@ -13,33 +13,39 @@ UAV-Embodied-IQA: visual quality assessment for aerial embodied intelligence (re
 ## Project structure
 
 ```
-src/uav_iqa/           # Core library (~2.2K LOC total)
+src/uav_iqa/           # Core library (~5.8K LOC total, 16 modules)
   __init__.py          #   Public API: exports 35 symbols
   distortion.py        #   36 distortion models (UAVDistortionPipeline + 6 UAV + 30 generic)
   model.py             #   UAVIQANet (backbone → PANet FPN → CBAM → FAB → task heads)
   dataset.py           #   UAVIQADataset — loads manifest.json, image/scores/task_id
   losses.py            #   ListMLELoss + CrossTaskRegularization
-  annotations.py  #   AirCopBench annotation parsing, degradation factors, score synthesis
-  data_synthesis.py   #   Dataset-agnostic data pipeline (DatasetFormat ABC + AirCopBenchFormat + GenericImageDirFormat + DataSynthesisPipeline)
-  lightning_module.py   #   UAVIQALightningModule (training_step, validation_step, etc.)
-  data_module.py    #   UAVIQDataModule (train/val/test dataloaders, manifest filtering)
-  metrics.py          #   SRCC, PLCC, RMSE, Kendall tau metrics
-  callbacks.py         #   SetupRunCallback, CurriculumStageCallback
+  annotations.py       #   AirCopBench annotation parsing, degradation factors, score synthesis
+  data_synthesis.py    #   Dataset-agnostic data pipeline (DatasetFormat ABC + AirCopBenchFormat + GenericImageDirFormat + DataSynthesisPipeline)
+  lightning_module.py  #   UAVIQALightningModule (training_step, validation_step, etc.)
+  data_module.py       #   UAVIQDataModule (train/val/test dataloaders, manifest filtering)
+  metrics.py           #   SRCC, PLCC, RMSE, Kendall tau metrics
+  callbacks.py         #   SetupRunCallback, CurriculumStageCallback, MetricsHistoryCallback, ResultsSavingCallback
+  text_metrics.py      #   BLEU, ROUGE-L, CIDEr text similarity for VLM comparison scoring
+  vlm/                 #   VLM scoring subpackage: config, scorer, VQA index
+  vla_scorer.py        #   BaseScorer: VLA/execution score interface
+  batch_annotator.py   #   BatchAnnotator: multi-GPU batch annotation across splits
   utils.py             #   Utilities: count_parameters, logging, image I/O, manifest helpers
 configs/               # YAML-driven configuration
   default.yaml         #   Default training/model/distortion config template
   experiments/         #   21 per-experiment configs (r013–r024c)
 scripts/               # Data pipeline + benchmark + experiment scripts
   data_synthesis.py                  # Unified data synthesis CLI (extract/inject/manifest/annotate/all)
-   train.py                           # Training entry point (LightningCLI wrapper, replaces main.py)
-   benchmark_iqa_methods.py           # Benchmark 15+ IQA methods via pyiqa
-   finetune_baselines.py              # Fine-tune FR/NR baselines on UAV data
+  download_models.py                 # Download VLM model weights from HuggingFace Hub
+  vlm_annotate.py                    # Batch VLM annotation CLI with checkpoint/resume
+  train.py                           # Training entry point (LightningCLI wrapper, replaces main.py)
+  benchmark_iqa_methods.py           # Benchmark 15+ IQA methods via pyiqa
+  finetune_baselines.py              # Fine-tune FR/NR baselines on UAV data
   fix_configs.py                     # Config migration/validation helper
   visualize_distortions.py           # Verify all 36 distortions produce visually plausible outputs
   overfit_sanity_check.py            # Overfit test: train on 100 random images, verify loss → 0
   validate_synth_real_correlation.py # C2 correlation validation: synthetic vs real scores
 data/                  # Datasets (raw = external inputs, processed = generated artifacts)
-tests/                 # pytest tests (test_distortion.py, test_lightning.py)
+tests/                 # pytest tests (8 files: test_distortion, test_lightning, test_data_synthesis, test_text_metrics, test_vlm_config, test_vlm_scorer, test_vlm_smoke, test_batch_annotator)
 refine-logs/           # Research-refine artifacts (FINAL_PROPOSAL, EXPERIMENT_PLAN, etc.)
 docs/                  # CODEMAPS, literature reviews, research roadmap, and EXPERIMENTS.md
 ```
@@ -63,7 +69,7 @@ python scripts/data_synthesis.py annotate --dataset aircopbench --manifest-dir .
 ```
 
 1. **`extract`** — Extract clean reference frames from dataset → `data/processed/ref_images/`
-2. **`inject`** — Apply all 36 distortions × 5 intensity levels → `data/processed/distorted/`
+2. **`inject`** — Apply all 36 distortions × 1 random intensity level → `data/processed/distorted/`
 3. **`manifest`** — Scan distorted dir, generate train/val/test `manifest.json` → `data/processed/{train,val,test}/`
 4. **`annotate`** — Annotate manifest entries using annotations (if available) and degradation model: `score = ref_score × degradation_factor(distortion, intensity)` + noise
 5. **`scripts/train.py`** — Train UAVIQANet via LightningCLI + experiment config (reads `data/processed/`, writes `outputs/<experiment>_seed<N>/`)
@@ -112,6 +118,7 @@ Task types: `tracking=0`, `inspection=1`, `delivery=2`, `sar=3`
 - **Manifest format**: JSON list of `{path, task, distortion, intensity_level, ref_id, vlm_score, vla_score, execution_score, annotated}`
 - **3-stage curriculum**: VLM annotations (epochs 1-20) → VLA (21-40) → Execution (41-50)
 - **Loss**: MSE + λ_rank * ListMLE (per-distortion ranking) + λ_cross_task * CrossTaskRegularization (negative pairwise score variance)
+- **Callbacks**: `SetupRunCallback` (manifest hash, DDP-safe), `CurriculumStageCallback` (VLM→VLA→Execution, DDP-safe), `MetricsHistoryCallback` (epoch metrics → `history.json`), `ResultsSavingCallback` (best ckpt → `results.json`)
 - **Ablation toggles**: configured via `model.init_args.use_fab/cbam/task_conditioning` in experiment YAML (e.g., `r016_no_fab.yaml`)
 - **Distortion naming**: `{name}_L{intensity*10:02d}` (e.g., `propeller_vibration_blur_L04`)
 

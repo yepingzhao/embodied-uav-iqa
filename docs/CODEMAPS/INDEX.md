@@ -1,6 +1,6 @@
 # UAV-Embodied-IQA — Codemap Index
 
-**Last Updated:** 2026-06-21
+**Last Updated:** 2026-06-27
 **Project:** Visual Quality Assessment for Aerial Embodied Intelligence
 **arXiv:** 2511.11025
 
@@ -42,12 +42,15 @@ docs/                  →  Literature reviews and research roadmap
 |-------------|---------|
 | `scripts/train.py` | **Unified training entry point** — LightningCLI with YAML configs |
 | `scripts/data_synthesis.py` | Full M1 data synthesis pipeline (extract/inject/manifest/annotate) |
+| `scripts/download_models.py` | Download VLM model weights from HuggingFace Hub for offline annotation scoring |
+| `scripts/vlm_annotate.py` | Batch VLM annotation CLI — score manifest entries with real VLMs via VLMScorer + BatchAnnotator |
 | `scripts/benchmark_iqa_methods.py` | Benchmark 15+ existing IQA methods |
 | `scripts/finetune_baselines.py` | Fine-tune DL-based IQA baselines (brisque/niqe/clipiqa/maniqa/topiq_nr) on UAV data |
 | `scripts/overfit_sanity_check.py` | Model correctness overfit test |
 | `scripts/validate_synth_real_correlation.py` | C2 correlation validation |
 | `scripts/fix_configs.py` | Convert experiment configs from nested to flat `init_args` format |
-| `scripts/visualize_distortions.py` | Visual sanity check: grid of all 36 distortions × 5 intensities |
+| `scripts/visualize_distortions.py` | Visual sanity check: grid of all 36 distortions × 1 random intensity |
+
 
 ## Experiment Configs (`configs/experiments/`)
 
@@ -81,16 +84,17 @@ docs/                  →  Literature reviews and research roadmap
 
 ## Key Public API (`__init__.py`)
 
-The package now exports **35 symbols** (up from 22), including new data-synthesis, manifest-validation, and utility functions:
+The package exports **35 symbols**:
 
-| Category | Count | New Additions |
-|----------|-------|---------------|
-| Distortion models | 7 | (unchanged) |
-| Model | 1 | (unchanged) |
-| Dataset | 2 | `validate_manifest` |
-| Metrics | 4 | `per_distortion_category_metrics` |
-| Lightning wrappers | 2 | (unchanged) |
-| Losses | 2 | (unchanged) |
-| Annotation utilities | 8 | `parse_distortion_key`, `compute_synthetic_score` |
-| Data synthesis | 3 | `DatasetFormat`, `DataSynthesisPipeline`, `create_pipeline` |
+| Category | Count | Symbols |
+|----------|-------|---------|
+| Distortion models | 7 | `UAVDistortionPipeline`, 6 UAV-specific distortion classes |
+| Model | 1 | `UAVIQANet` |
+| Dataset | 2 | `UAVIQADataset`, `validate_manifest` |
+| Metrics | 4 | `compute_srcc`, `compute_plcc`, `evaluate_iqa`, `per_distortion_category_metrics` |
+| Lightning wrappers | 2 | `UAVIQALightningModule`, `UAVIQDataModule` |
+| Losses | 2 | `ListMLELoss`, `CrossTaskRegularization` |
+| Annotation utilities | 5 | `parse_distortion_key`, `parse_quality_score`, `parse_usability`, `build_ref_score_lookup`, `assign_task_label` |
 | Utility functions | 6 | `setup_logging`, `find_images`, `load_task_map`, `load_manifest`, `split_samples`, `write_manifest` |
+| Data synthesis | 3 | `DatasetFormat`, `DataSynthesisPipeline`, `create_pipeline` |
+| VLM/VLA scoring | 3 | `BaseScorer`, `VLMScorer`, `BatchAnnotator` |

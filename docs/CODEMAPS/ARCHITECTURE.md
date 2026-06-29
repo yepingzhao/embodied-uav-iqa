@@ -1,6 +1,6 @@
 # Architecture Codemap
 
-**Last Updated:** 2026-06-21
+**Last Updated:** 2026-06-27
 
 ## High-Level System Overview
 
@@ -44,6 +44,26 @@
                                     │
                                     ▼
 ┌──────────────────────────────────────────────────────────────────────┐
+│                    VLM ANNOTATION (M1.5)                             │
+│                                                                      │
+│  scripts/vlm_annotate.py ──► BatchAnnotator ──► VLMScorer           │
+│  (multi-model CLI)          │                       │                │
+│                              ├── filter_entries     ├── MODEL_REGISTRY│
+│                              ├── annotate_manifest   │   (15 models,  │
+│                              │   (checkpoint/resume) │    6 families) │
+│                              ├── save/load_checkpoint├── score_image  │
+│                              └── write_manifest      └── score_batch  │
+│                                        │                  via vLLM   │
+│                                        ▼                  or         │
+│                                vlm_annotated/              transformers│
+│                                {model}/manifest.json                  │
+│                                                                      │
+│  scripts/download_models.py ── snapshot_download all 15 models       │
+│  (HF Hub download + optional validate)                               │
+└──────────────────────────────────┬───────────────────────────────────┘
+                                    │
+                                    ▼
+┌──────────────────────────────────────────────────────────────────────┐
 │                    BENCHMARKING (M2)                                 │
 │                                                                      │
 │  Test manifest ──► benchmark_iqa_methods.py ──► metrics table        │
@@ -79,17 +99,18 @@ Reference Image (3×H×W, uint8)
 │  └─ PropellerShadow         ─── periodic           │
 │                              brightness modulation  │
 │                                                     │
-│  27 Generic ───────────┐                            │
+│  30 Generic ───────────┐                            │
 │  (via Albumentations)   │                            │
 │  ├─ blur (3)            │                            │
-  │  ├─ brightness (6)      │                            │
+│  ├─ brightness (6)      │                            │
 │  ├─ chromatic (3)       │                            │
-│  ├─ noise (4)           │                            │
+│  ├─ noise (6)           │                            │
 │  ├─ compression (3)     │                            │
-│  ├─ spatial (4)         │                            │
-│  └─ other (4)           │                            │
+│  ├─ spatial (3)         │                            │
+│  ├─ transmission (3)    │                            │
+│  └─ other (3)           │                            │
 │                                                     │
-│  5 intensity levels per distortion                   │
+│  1 randomly selected intensity per distortion              │
 └──────────────────────────────────────────────────┘
     │
     ▼
@@ -210,6 +231,21 @@ scripts/finetune_baselines.py
   └── owns → BaselineDataModule (standalone, no LightningCLI)
                  └── owns → UAVIQADataset (reuses manifest data loading)
 
+scripts/vlm_annotate.py
+  └── calls → BatchAnnotator (batch_annotator.py)
+                  │
+                  ├── uses → VLMScorer (vlm/scorer.py)
+                  │              ├── owns → MODEL_REGISTRY (vlm/config.py)
+                  │              ├── uses → BaseScorer ABC (vla_scorer.py)
+                  │              ├── uses → text_metrics.py (compute_cognitive_score)
+                  │              ├── resolves → backend (vllm / transformers / none)
+                  │              └── dynamic patches per model family
+                  └── uses → utils.py (checkpoint I/O)
+
+scripts/download_models.py
+  └── uses → MODEL_REGISTRY (via importlib lazy-import from vlm/config.py)
+  └── uses → huggingface_hub.snapshot_download
+
 scripts/fix_configs.py
   └── utility — batch-converts experiment YAML configs from nested to flat format
 
@@ -230,8 +266,10 @@ LightningCLI (scripts/train.py)
   ├── calls → UAVIQDataModule
   │              └── owns → UAVIQADataset
   │                     └── uses → utils.py (load_image_tensor, load_manifest)
-  ├── adds → SetupRunCallback (manifest SHA256, param count)
-  ├── adds → CurriculumStageCallback (VLM→VLA→Execution)
+  ├── adds → SetupRunCallback (manifest SHA256, param count, DDP-safe)
+  ├── adds → CurriculumStageCallback (VLM→VLA→Execution, DDP-safe)
+  ├── adds → MetricsHistoryCallback (epoch metrics → history.json)
+  ├── adds → ResultsSavingCallback (test results → results.json with git hash)
   ├── adds → ModelCheckpoint (val/srcc, top-1)
 ```
 

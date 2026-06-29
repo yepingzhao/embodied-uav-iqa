@@ -25,6 +25,7 @@ dependencies = [
     "pyyaml>=6.0",
     "pyiqa>=0.1.15.post2",
     "python-dotenv>=1.0",
+    "tqdm>=4.66.0",
 ]
 
 [project.optional-dependencies]
@@ -67,6 +68,10 @@ target-version = "py310"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "smoke: slow or resource-intensive smoke/end-to-end tests",
+    "gpu: tests that require a CUDA-capable GPU",
+]
 filterwarnings = [
     "ignore",
     "ignore::DeprecationWarning",

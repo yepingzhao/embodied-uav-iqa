@@ -1,15 +1,15 @@
 # File Tree Codemap
 
-**Last Updated:** 2026-06-21
+**Last Updated:** 2026-06-27
 
 ## Root Layout
 
 ```
 embodied-uav-iqa/
-├── src/uav_iqa/           # Core library (12 modules, 3,343 LOC total)
-├── scripts/               # 8 executable experiment scripts
+├── src/uav_iqa/           # Core library (16 modules, 5,769 LOC total)
+├── scripts/               # 10 executable experiment scripts
 ├── configs/               # YAML configuration (LightningCLI) + 21 experiment configs
-├── tests/                 # pytest test suite (3 files, 54 tests)
+├── tests/                 # pytest test suite (8 files, 154 tests)
 ├── refine-logs/           # 17 research refinement artifacts
 ├── docs/                  # Literature reviews, research roadmap, codemaps
 ├── scripts/train.py        # Unified training entry point (LightningCLI)
@@ -29,22 +29,28 @@ embodied-uav-iqa/
 
 ---
 
-## `src/uav_iqa/` — Core Library
+## `src/uav_iqa/` — Core Library (16 modules, 5,769 LOC)
+
+*(Note: `vlm_vla_scorer.py` backward-compat shim was removed; its contents are now split into `vlm/` subpackage, `vla_scorer.py`, `text_metrics.py`, and `batch_annotator.py`.)*
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `__init__.py` | 83 | Public API: exports **35 symbols** (was 22) |
-| `distortion.py` | 748 | 36 distortion models (6 UAV + 30 generic) + UAVDistortionPipeline + `UAV_DISTORTION_NAMES` constant |
+| `__init__.py` | 84 | Public API: exports **35 symbols** |
+| `distortion.py` | **787** | 36 distortion models (6 UAV + 30 generic) + UAVDistortionPipeline + `UAV_DISTORTION_NAMES` constant. Supports JPEG output format. |
 | `model.py` | **426** | UAVIQANet: backbone → FPN → CBAM → FAB → task heads, `forward_features()` feature sharing. **Dynamic stage probing** + **regex-based freeze** for backbone-agnostic compatibility |
 | `dataset.py` | 250 | UAVIQADataset + `validate_manifest()` + constants (TASK_NAMES, TASK_TO_ID) |
-| `losses.py` | 30 | ListMLELoss + CrossTaskRegularization (replaces former `trainer.py`) |
+| `text_metrics.py` | **318** | BLEU, ROUGE-L, CIDEr text similarity metrics for VLM comparison-based scoring. Pure Python (no nltk). |
+| `vla_scorer.py` | 79 | Base scoring: `BaseScorer` ABC + `extract_ref_id()` + task type constants |
+| `vlm/` | **1472** | VLM scoring subpackage: `VLMConfig` + `MODEL_REGISTRY` (config.py, 175 lines), `VLMScorer` with vLLM/transformers backends + `VQAIndex` (scorer.py 1232 + vqa_index.py 58 + __init__.py 7) |
+| `batch_annotator.py` | **365** | Batch annotation engine: `BatchAnnotator` with manifest I/O, filtering, checkpoint/resume, multi-split orchestration |
+| `losses.py` | 30 | ListMLELoss + CrossTaskRegularization |
 | `metrics.py` | 145 | SRCC, PLCC, RMSE, Kendall τ + per-task / per-distortion / **per-category** metrics |
-| `annotations.py` | 367 | AirCopBench annotation parsing, degradation factors, score synthesis, **parse_distortion_key**, **compute_synthetic_score** |
-| `data_synthesis.py` | **686** | Dataset-agnostic pipeline: DatasetFormat (ABC + registry), AirCopBenchFormat, GenericImageDirFormat, DataSynthesisPipeline, create_pipeline |
+| `annotations.py` | 162 | AirCopBench annotation parsing: `parse_distortion_key`, `parse_quality_score`, `parse_usability`, `build_ref_score_lookup`, `assign_task_label`. |
+| `data_synthesis.py` | **822** | Dataset-agnostic pipeline: DatasetFormat (ABC + registry), AirCopBenchFormat, GenericImageDirFormat, DataSynthesisPipeline, create_pipeline. Supports `fmt` (png/jpeg) and `max_refs_per_source`. |
 | `lightning_module.py` | 289 | LightningModule: UAVIQANet + MSE/ListMLE/cross-task, feature sharing, per-distortion ranking, DDP gathering |
 | `data_module.py` | 176 | LightningDataModule: manifest filtering (task/distortion/leave-out), stage-aware setup, DDP-compatible |
-| `callbacks.py` | 79 | SetupRunCallback + CurriculumStageCallback |
-| `utils.py` | 127 | `count_parameters()`, `find_images()`, `load_image_tensor()`, `load_manifest()`, `write_manifest()`, `split_samples()`, `load_task_map()`, `setup_logging()` |
+| `callbacks.py` | **215** | SetupRunCallback + CurriculumStageCallback + **MetricsHistoryCallback** + **ResultsSavingCallback** (DDP-safe) |
+| `utils.py` | **149** | `count_parameters()`, `find_images()`, `load_image_tensor()`, `load_manifest()`, `write_manifest()`, `split_samples()`, `load_task_map()`, `setup_logging()` |
 
 ### Per-File Dependencies
 
@@ -52,17 +58,43 @@ embodied-uav-iqa/
 __init__.py
   → distortion.py, model.py, dataset.py, metrics.py,
     losses.py, annotations.py, utils.py, data_synthesis.py,
-    lightning_module.py, data_module.py
-  (10 internal deps)
+    lightning_module.py, data_module.py,
+    vla_scorer.py, vlm/ (config, scorer), batch_annotator.py
+  (13 internal deps)
+
+text_metrics.py
+  → math, collections, numpy (stdlib + numpy)
 
 distortion.py
-  → cv2, numpy, scipy.signal, albumentations
+  → cv2, numpy, tqdm, albumentations
+  → basicsr + realesrgan (optional, for LowResSuperResolution)
 
 model.py
   → torch, timm, math, re
 
 dataset.py
   → torch, numpy
+
+vla_scorer.py
+  → hashlib, abc, pathlib (stdlib)
+
+vlm/config.py
+  → logging, dataclasses (stdlib)
+
+vlm/scorer.py
+  → vla_scorer.py (BaseScorer, extract_ref_id)
+  → vlm/config.py (VLMConfig, MODEL_REGISTRY)
+  → vlm/vqa_index.py (VQAIndex)
+  → vllm (optional), transformers (optional), PIL, torch, tqdm
+
+vlm/vqa_index.py
+  → json, logging, pathlib (stdlib)
+
+batch_annotator.py
+  → vla_scorer.py (BaseScorer)
+  → vlm/scorer.py (VLMScorer, for type hints)
+  → json, tempfile, os, time, pathlib (stdlib)
+  → tqdm (optional)
 
 losses.py
   → torch
@@ -89,8 +121,9 @@ data_module.py
   → lightning, dataset.py (UAVIQADataset), distortion.py (UAV_DISTORTION_NAMES)
 
 callbacks.py
-  → lightning, hashlib, pathlib
+  → lightning, hashlib, pathlib, json, logging, subprocess
   → utils.py (count_parameters)
+  → yaml (for ResultsSavingCallback._read_seed_from_config)
 
 utils.py
   → torch, numpy, PIL.Image, json, logging, pathlib
@@ -103,22 +136,34 @@ utils.py
 
 | File | Lines | Purpose | Pipeline Stage |
 |------|-------|---------|----------------|
-| `data_synthesis.py` | 196 | Unified data synthesis CLI (extract/inject/manifest/annotate/all). Uses `DataSynthesisPipeline` from `src/uav_iqa/data_synthesis.py` | M1 |
+| `data_synthesis.py` | 306 | Unified data synthesis CLI (extract/inject/manifest/annotate/all). Uses `DataSynthesisPipeline` from `src/uav_iqa/data_synthesis.py`. Supports `--max-refs` and `--format` (png/jpeg). | M1 |
+| `download_models.py` | **277** | Download VLM model weights from HuggingFace Hub for offline use. Supports all 15 registered models, auth token, validation loading. | M1.5 |
+| `vlm_annotate.py` | **261** | Batch VLM annotation CLI — score manifest entries with real VLM models via VLMScorer + BatchAnnotator. Supports single-model, multi-model ensemble, all 15 models, distortion/task filtering, checkpoint/resume | M1.5 |
 | `benchmark_iqa_methods.py` | 594 | Benchmark 15+ IQA methods (pyiqa) on test set | M2 |
 | `finetune_baselines.py` | **420** | Fine-tune DL-based IQA baselines (brisque/niqe/clipiqa/maniqa/topiq_nr) on UAV training data. Uses standalone LightningModule + LightningDataModule, no LightningCLI | M2 |
 | `overfit_sanity_check.py` | 105 | Overfit correctness test: train on 100 images, verify loss → 0 | Validation |
-| `visualize_distortions.py` | 108 | Visual sanity check: grid of all 36 distortions × 5 intensities | Validation |
-| `validate_synth_real_correlation.py` | 132 | C2 correlation validation: synthetic vs real scores | Validation |
-| `fix_configs.py` | **130** | Convert experiment YAML configs from nested `class_path+init_args` to flat format; ensures CurriculumStageCallback and CSVLogger `save_dir` are present | Utility |
-| `train.py` | **35** | **Unified training entry point** — vanilla LightningCLI (fit/test/predict). Usage: `python scripts/train.py fit --config configs/experiments/<name>.yaml` | M3 |
+| `visualize_distortions.py` | 108 | Visual sanity check: grid of all 36 distortions × 1 random intensity | Validation |
+| `validate_synth_real_correlation.py` | 188 | C2 correlation validation: synthetic vs real scores | Validation |
+
+| `fix_configs.py` | 130 | Convert experiment YAML configs from nested `class_path+init_args` to flat format; ensures CurriculumStageCallback and CSVLogger `save_dir` are present | Utility |
+| `train.py` | 35 | **Unified training entry point** — vanilla LightningCLI (fit/test/predict). Usage: `python scripts/train.py fit --config configs/experiments/<name>.yaml` | M3 |
 
 ### Script Execution Order (Standard Pipeline)
 
 ```
 1. data_synthesis.py all            # Extract → inject → manifest → annotate (full M1 pipeline)
-2. scripts/train.py                 # Train UAVIQANet via LightningCLI + experiment config
-3. benchmark_iqa_methods.py         # Benchmark zero-shot IQA methods (optional, after training)
-4. finetune_baselines.py            # Fine-tune DL baselines on UAV data (optional, M2-R009a)
+2. download_models.py --all         # Download VLM model weights (optional, M1.5)
+3. vlm_annotate.py                  # Batch VLM annotation (optional, M1.5)
+4. scripts/train.py                 # Train UAVIQANet via LightningCLI + experiment config
+5. benchmark_iqa_methods.py         # Benchmark zero-shot IQA methods (optional, after training)
+6. finetune_baselines.py            # Fine-tune DL baselines on UAV data (optional, M2-R009a)
+
+Utility:
+
+- fix_configs.py                   # Batch-convert experiment configs between formats
+- visualize_distortions.py         # Visual sanity check for all 36 distortions
+- overfit_sanity_check.py          # Model correctness verification (100-image overfit)
+- validate_synth_real_correlation.py  # C2 synthetic↔real score correlation
 ```
 
 ### Script CLI Patterns
@@ -128,8 +173,10 @@ All scripts support `--help` (argparse). Common conventions:
 ```bash
 # Data paths: --manifest-dir, --aircopbench-dir, --data-root, --image-dir
 # Training via scripts/train.py: python scripts/train.py fit --config configs/experiments/<name>.yaml
-# Parallelism via --workers (default 4, 8, or 16)
+# Parallelism via --workers (default 0 = auto-detect up to 16, or --workers 8)
 # Most scripts import from installed package (`pip install -e .` or `uv sync`)
+# scripts/download_models.py uses importlib lazy-import of MODEL_REGISTRY from
+#   src/uav_iqa/vlm/config.py (stdlib-only import path, avoids lightning/torch chain)
 # Only test_lightning.py still uses sys.path.insert for src/ resolution
 ```
 
@@ -245,13 +292,18 @@ trainer:
 
 ---
 
-## `tests/` — Test Suite
+## `tests/` — Test Suite (8 files, 154 tests)
 
 | File | Lines | Tests | Coverage |
 |------|-------|-------|----------|
-| `test_distortion.py` | 181 | **19** | All 6 UAV distortions + pipeline + 7 generic distortion categories + intensity range + determinism |
+| `test_distortion.py` | 187 | **19** | All 6 UAV distortions + pipeline + 7 generic distortion categories + intensity range + determinism |
 | `test_lightning.py` | 94 | **6** | LightningModule init, ablations, optimizer config, training step; DataModule setup with mock data |
-| `test_data_synthesis.py` | 335 | **29** | DatasetFormat registry (4), AirCopBenchFormat (10), GenericImageDirFormat (4), create_pipeline (3), PipelineExtract (2), PipelineManifest (1), PipelineAnnotate (2), PipelineStepsParsing (3) |
+| `test_data_synthesis.py` | 265 | **27** | DatasetFormat registry (4), AirCopBenchFormat (10), GenericImageDirFormat (4), create_pipeline (3), PipelineExtract (2), PipelineManifest (1), PipelineStepsParsing (3) |
+| `test_text_metrics.py` | 79 | **10** | BLEU identical/different/completely different, brevity penalty, smoothing; ROUGE-L identical/different/partial/precision/recall; CIDEr identical/different/multi-ref; cognitive score defaults/custom weights, empty inputs, length mismatch |
+| `test_vlm_config.py` | 197 | **21** | VLMConfig creation/validation (4), MODEL_REGISTRY (15 models, 6 families, required fields, chat templates, trust_remote_code), VLMScorer model name resolution (2) |
+| `test_vlm_scorer.py` | 924 | **45** | BaseScorer ABC (abstract, return type, batch format), VLMScorer init/backend config, prompt building (single, batch, all tasks), scoring pipeline (offline, error handling, mock), text metrics integration, chat template formatting |
+| `test_vlm_smoke.py` | 61 | **15** (1 function × 15 parametrized) | GPU smoke test: load each VLM model and score one image (requires GPU + vlm extras). Skip with `pytest -m "not smoke"`. |
+| `test_batch_annotator.py` | 286 | **11** | BatchAnnotator: filtering (unannotated, task, distortion, none, combined, max), checkpoint save/load, manifest write, resume skip, resume partial, end-to-end synthetic |
 
 ### Test Dependencies
 
@@ -260,6 +312,11 @@ test_distortion.py        → uav_iqa.distortion
 test_lightning.py         → uav_iqa.lightning_module, uav_iqa.data_module
 test_data_synthesis.py    → uav_iqa.data_synthesis (DatasetFormat, DataSynthesisPipeline,
                              AirCopBenchFormat, GenericImageDirFormat, create_pipeline)
+test_text_metrics.py      → uav_iqa.text_metrics (compute_bleu, compute_rouge_l, compute_cider, compute_cognitive_score)
+test_vlm_config.py        → uav_iqa.vlm (VLMConfig, MODEL_REGISTRY, VLMScorer)
+test_batch_annotator.py   → uav_iqa.batch_annotator, uav_iqa.vla_scorer
+test_vlm_scorer.py        → uav_iqa.vla_scorer, uav_iqa.vlm (scorer, config)
+test_vlm_smoke.py         → uav_iqa.vlm (GPU required)
 ```
 
 ---

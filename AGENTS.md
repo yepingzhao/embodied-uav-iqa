@@ -21,6 +21,12 @@ pytest tests/test_distortion.py::test_pipeline_has_all_distortions -v
 
 # Overfit test (fast correctness check of the model)
 python scripts/overfit_sanity_check.py
+
+# Download VLM/VLA model weights for annotation scoring (optional)
+python scripts/download_models.py --all
+
+# Validate downloaded models load correctly
+python scripts/download_models.py --all --validate
 ```
 
 ## Architecture at a glance
@@ -31,15 +37,22 @@ src/uav_iqa/
   model.py            # UAVIQANet (MobileNetV4-S + PANet FPN + CBAM + FAB + task-conditioned heads)
   dataset.py          # UAVIQADataset: manifest.json → image/scores/task_id
   losses.py           # ListMLELoss + CrossTaskRegularization (ranking & cross-task losses)
-  annotations.py # AirCopBench annotation parsing, degradation factors, score synthesis
-  data_synthesis.py  # Dataset-agnostic data pipeline (DatasetFormat + DataSynthesisPipeline)
-  metrics.py         # SRCC, PLCC, RMSE, Kendall tau
-  lightning_module.py  # UAVIQALightningModule (MSE + ListMLE + cross-task loss, curriculum)
-  data_module.py   # UAVIQDataModule (manifest filtering, task/distortion/LOO filters)
-  callbacks.py        # CurriculumStageCallback, SetupRunCallback
+  annotations.py      # AirCopBench annotation parsing, degradation factors, score synthesis
+  data_synthesis.py   # Dataset-agnostic data pipeline (DatasetFormat + DataSynthesisPipeline)
+  metrics.py          # SRCC, PLCC, RMSE, Kendall tau
+  lightning_module.py # UAVIQALightningModule (MSE + ListMLE + cross-task loss, curriculum)
+  data_module.py      # UAVIQDataModule (manifest filtering, task/distortion/LOO filters)
+  callbacks.py        # CurriculumStageCallback, SetupRunCallback, MetricsHistoryCallback, ResultsSavingCallback
+  text_metrics.py     # BLEU, ROUGE-L, CIDEr text similarity for VLM comparison scoring
+  vlm/                # VLM scoring subpackage: config, scorer, VQA index
+  vla_scorer.py       # BaseScorer: VLA/execution score interface
+  batch_annotator.py  # BatchAnnotator: multi-GPU batch annotation across splits
+  utils.py            # count_parameters, find_images, manifest I/O, logging
 
 scripts/
   data_synthesis.py              # Unified data synthesis CLI (extract/inject/manifest/annotate/all)
+  download_models.py             # Download VLM model weights from HuggingFace Hub
+  vlm_annotate.py                # Batch VLM annotation CLI with checkpoint/resume
   benchmark_iqa_methods.py       # Benchmark existing IQA methods (pyiqa)
   visualize_distortions.py       # Visual sanity check of all distortions
   overfit_sanity_check.py        # 100-image overfit test
@@ -62,7 +75,8 @@ scripts/train.py              # Unified training entry point (LightningCLI)
 - **Distortion naming**: `{name}_L{intensity*10:02d}` (e.g., `propeller_vibration_blur_L04`).
 - **4 task types**: `tracking=0`, `inspection=1`, `delivery=2`, `sar=3`.
 - **Ablation toggles**: use per-experiment config in `configs/experiments/` (e.g., `r016_no_fab.yaml`), or override via CLI: `--model.init_args.use_fab false`.
-- **Test coverage is sparse** (only `test_distortion.py`, `test_lightning.py`, and `test_data_synthesis.py` exist). Add tests to `tests/` when implementing new functionality.
+- **Test coverage is sparse** (only `test_distortion.py`, `test_lightning.py`, `test_data_synthesis.py`, `test_text_metrics.py`, `test_vlm_config.py`, `test_vlm_scorer.py`, `test_vlm_smoke.py`, and `test_batch_annotator.py` exist). Add tests to `tests/` when implementing new functionality.
+- **`scipy` removed as a direct dependency** for distortion models (`distortion.py` uses `cv2.filter2D` with manual wrap padding instead of `scipy.signal.convolve2d`). The runtime `scipy` dep is retained for metric computation.
 - **Training entry point**: `scripts/train.py` (vanilla LightningCLI). `main.py`, `run_m3_train.py` and `UAVIQACLI` were removed in 2026-06 refactor.
 
 ## Research context

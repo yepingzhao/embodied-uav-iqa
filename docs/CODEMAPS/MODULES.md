@@ -1,6 +1,6 @@
 # Module Codemap
 
-**Last Updated:** 2026-06-21
+**Last Updated:** 2026-06-27
 
 ## Package: `uav_iqa` (src/uav_iqa/)
 
@@ -54,11 +54,10 @@ distortion.py (standalone)
   → UAV_DISTORTION_NAMES (exported, used by data_module & lightning_module)
 
 annotations.py
-  → parse_distortion_key, compute_synthetic_score
-  → build_ref_score_lookup, degradation_factor, synthetic_ref_scores
-  → assign_task_label, parse_quality_score, parse_usability
+  → parse_distortion_key, parse_quality_score, parse_usability
+  → build_ref_score_lookup, assign_task_label
 
-data_synthesis.py (686 lines)
+data_synthesis.py (822 lines)
   │
   ├── DatasetFormat (ABC + registry)
   │     ├── AirCopBenchFormat
@@ -69,7 +68,33 @@ data_synthesis.py (686 lines)
        ├── uses → distortion.py (UAVDistortionPipeline)
        ├── uses → annotations.py (build_ref_score_lookup, parse_distortion_key, etc.)
        └── uses → utils.py (find_images, split_samples, write_manifest)
+
+vla_scorer.py (standalone, no internal deps)
+  │
+  ├── BaseScorer (ABC)
+  └── extract_ref_id, task constants
+
+vlm/ (subpackage)
+  │
+  ├── config.py → VLMConfig (dataclass), MODEL_REGISTRY (dict of 15 models)
+  ├── vqa_index.py → VQAIndex (AirCopBench VQA question index)
+  └── scorer.py → VLMScorer (vLLM / transformers backend)
+       │
+       └── imports → vla_scorer.py (BaseScorer, extract_ref_id)
+
+batch_annotator.py
+  │
+  └── uses → vla_scorer.py (BaseScorer)
+       │
+       ├── BatchAnnotator (orchestrates manifest scoring with checkpoint/resume)
+       └── SPLIT_NAMES = ("train", "val", "test")
+
+text_metrics.py (standalone)
+  → compute_bleu, compute_rouge_l, compute_cider, compute_cognitive_score
+  → used by vlm/scorer.py for text similarity scoring
+
 ```
+*(Note: `vlm_vla_scorer.py` backward-compat shim was removed — its contents are now split into `vlm/` subpackage, `vla_scorer.py`, `text_metrics.py`, and `batch_annotator.py`.)*
 
 ---
 
@@ -78,7 +103,7 @@ data_synthesis.py (686 lines)
 **Purpose:** 36 distortion models (6 UAV-specific + 30 generic) for injecting quality degradation.
 
 **Location:** `src/uav_iqa/distortion.py`
-**Lines:** 748
+**Lines:** 786
 
 *Note: Pipeline docstring says "36 types" — actual is 36: 6 UAV-specific + 30 generic.*
 
@@ -94,7 +119,7 @@ data_synthesis.py (686 lines)
 | `LowResSuperResolution` | Bicubic downsample + Real-ESRGAN (optional) or bicubic+sharpen fallback |
 | `PropellerShadow` | Periodic brightness modulation with spatially localized mask |
 | `GenericDistortions` | 18 types via Albumentations: blur(3), brightness(5), chromatic(3), noise(4), compression(3), spatial(4), other(4) |
-| `UAVDistortionPipeline` | Unified orchestrator — applies all 24 × 5 intensity levels; supports parallel batch injection via `ProcessPoolExecutor` |
+| `UAVDistortionPipeline` | Unified orchestrator — applies all 36 × 1 random intensity level; supports parallel batch injection via `ProcessPoolExecutor`. Caches distortion instances in `_dist_cache` for reuse. Skips existing output files on re-run. Uses `cv2.imencode` + `write_bytes` for safer file writing. |
 
 ### Public Exports
 
@@ -114,9 +139,9 @@ Also exports `UAV_DISTORTION_NAMES` — a `frozenset` of the 6 UAV-specific dist
 
 ### Dependencies
 
-- `cv2` (opencv-python) — image I/O, filtering, resizing
+- `cv2` (opencv-python) — image I/O, filtering (incl. `cv2.filter2D` with manual wrap padding), resizing
 - `numpy` — array operations
-- `scipy.signal.convolve2d` — blur kernels
+- `tqdm` — progress bars for batch injection
 - `albumentations` — generic distortion transforms (18 types)
 - `basicsr` + `realesrgan` — (optional) super-resolution
 
@@ -407,20 +432,23 @@ Test results are now logged via `self.log()` in `on_test_epoch_end()` instead of
 **Purpose:** PyTorch Lightning callbacks for dataset verification and curriculum switching.
 
 **Location:** `src/uav_iqa/callbacks.py`
-**Lines:** 79
+**Lines:** 215
 
 ### Key Classes
 
 | Class | Description |
 |-------|-------------|
-| `SetupRunCallback` | At fit start: computes manifest SHA256 hash for dataset versioning, prints model param count. Exposes `pl_module.manifest_hash` |
-| `CurriculumStageCallback` | Sets `pl_module.curriculum_stage` (vlm/vla/execution) based on epoch boundaries |
+| `SetupRunCallback` | At fit start: computes manifest SHA256 hash for dataset versioning, prints model param count. Exposes `pl_module.manifest_hash`. DDP-safe via `trainer.is_global_zero`. |
+| `CurriculumStageCallback` | Sets `pl_module.curriculum_stage` (vlm/vla/execution) based on epoch boundaries. DDP-safe. |
+| `MetricsHistoryCallback` | Tracks epoch-level metrics (`train/loss_epoch`, `val/srcc`, `val/plcc`, etc.) across validation epochs, records best val SRCC, writes `history.json` on fit end. |
+| `ResultsSavingCallback` | On fit end: loads best checkpoint, runs test, saves structured `results.json` with test metrics, per-task SRCC, model params, git commit hash, seed, and config. |
 
 ### SetupRunCallback
 
 - Computes SHA256 hash of concatenated train/val/test `manifest.json` files (first 16 chars)
 - Useful for verifying dataset version consistency across experiment runs
 - Exposed as `pl_module.manifest_hash`
+- Prints only on global rank 0 (`trainer.is_global_zero`)
 
 ### CurriculumStageCallback
 
@@ -430,54 +458,61 @@ Test results are now logged via `self.log()` in `on_test_epoch_end()` instead of
 | VLA | 21–40 |
 | Execution | 41–50 |
 
-Configurable via `vlm_epochs`, `vla_epochs`, `execution_epochs` init args.
+Configurable via `vlm_epochs`, `vla_epochs`, `execution_epochs` init args. DDP-safe print on global rank 0.
+
+### MetricsHistoryCallback
+
+- Tracks scalar metrics per validation epoch via `on_validation_epoch_end`
+- Writes `history.json` to run directory on fit end
+- Exposes `pl_module.best_val_srcc` tracked across epochs
+
+### ResultsSavingCallback
+
+- On fit end: finds best checkpoint, runs `trainer.test()` with it
+- Saves `results.json` containing:
+  - `seed` (read from config.yaml)
+  - `n_params`, `best_val_srcc`
+  - `test_metrics`: srcc, plcc, rmse
+  - `per_task`: per-task SRCC
+  - `hparams`, `data_config`, `manifest_hash`
+  - `git_commit`: short SHA via `git rev-parse`
+- Only runs on global rank 0
 
 ### Dependencies
 
 - `lightning`
-- `pathlib`, `hashlib`
+- `pathlib`, `hashlib`, `json`, `logging`, `subprocess`
+- `yaml` (for reading config.yaml)
 
 ---
 
 ## Module: `annotations.py`
 
-**Purpose:** AirCopBench human annotation parsing, degradation factor computation, and synthetic score generation for manifest annotation.
+**Purpose:** AirCopBench human annotation parsing — distortion key extraction, Quality/Usability score parsing, reference score lookup, and task label assignment from path structure.
 
 **Location:** `src/uav_iqa/annotations.py`
-**Lines:** 367
+**Lines:** 162
 
 ### Key Functions
 
 | Function | Description |
 |----------|-------------|
-| `parse_distortion_key(key) -> (str, float)` | Parse `'gaussian_blur_L04'` → `('gaussian_blur', 0.4)`. Handles `__` separator, nanme `_L4` / `_L04` / `_L0_5` formats. |
+| `parse_distortion_key(key) -> (str, float)` | Parse `'gaussian_blur_L04'` → `('gaussian_blur', 0.4)`. Handles `__` separator, `_L4` / `_L04` / `_L0_5` formats. |
 | `parse_quality_score(quality_str)` | Parse `'Good (4/5)'` → 0.8, `'Excellent (5/5)'` → 1.0, etc. |
 | `parse_usability(usability_str)` | Parse `'1 (Available)'` → 1.0, `'3 (Unavailable)'` → 0.25 |
-| `degradation_factor(distortion, task)` | Get degradation at max intensity for (distortion, task) pair |
-| `compute_synthetic_score(distortion, task, intensity)` | Noiseless degradation-model score: `score = 1.0 * (1.0 - alpha * intensity)`. Used by C2 correlation validation. |
 | `build_ref_score_lookup(aircopbench_dir)` | Walk AirCopBench Annotations dirs → dict of `{ref_id: {vlm_score, vla_score, execution_score, annotated}}` |
 | `assign_task_label(img_name, task_map)` | Extract task label from path (scene_001→tracking, etc.), with configurable `task_map` override |
-| `synthetic_ref_scores(ref_id)` | Deterministic synthetic scores via MD5 hash for refs without annotations |
 
-### DEGRADATION_FACTORS Table
+### Score Construction
 
-248-entry dict mapping 31 distortion names × 4 tasks to degradation coefficients, plus utility keys. Example:
+Reference scores are built from AirCopBench human annotations:
+- `Quality` → `vlm_score` (via `parse_quality_score`)
+- `Usibility` → `vla_score` (via `parse_usability`)
+- `execution_score = 0.4 × vlm_score + 0.6 × vla_score`
 
-```python
-"propeller_vibration_blur": {
-    "tracking": 0.55, "inspection": 0.40, "delivery": 0.70, "sar": 0.50
-}
-```
+Unannotated references fall back to deterministic scoring in `vla_scorer.py`.
 
-Lower values = more severe degradation. The `"none"` entry is 0.95 for all tasks.
-
-### Score Synthesis Model
-
-```
-distorted_score = ref_score × (1 - (1 - degradation_factor) × intensity) + noise
-```
-
-Combines real AirCopBench annotations (Quality → vlm, Usability → vla, 0.4Q + 0.6U → execution) with degradation physics.
+*(Note: `degradation_factor`, `compute_synthetic_score`, `synthetic_ref_scores`, and `SyntheticScorer` were removed in the 2026-06 refactor. Score synthesis lives in `data_synthesis.py` `DataSynthesisPipeline`.)*
 
 ### Dependencies
 
@@ -490,7 +525,7 @@ Combines real AirCopBench annotations (Quality → vlm, Usability → vla, 0.4Q 
 **Purpose:** Utility helpers — image I/O, manifest management, logging setup, parameter counting.
 
 **Location:** `src/uav_iqa/utils.py`
-**Lines:** 127
+**Lines:** 149
 
 ### Functions
 
@@ -518,7 +553,7 @@ Combines real AirCopBench annotations (Quality → vlm, Usability → vla, 0.4Q 
 **Purpose:** Dataset-agnostic data synthesis pipeline — extract references, inject distortions, generate manifests, annotate scores. Supports AirCopBench and generic image directories.
 
 **Location:** `src/uav_iqa/data_synthesis.py`
-**Lines:** 686
+**Lines:** 822
 
 ### Key Classes
 
@@ -534,17 +569,52 @@ Combines real AirCopBench annotations (Quality → vlm, Usability → vla, 0.4Q 
 
 | Step | Method | Description |
 |------|--------|-------------|
-| 1 | `extract_references()` | Symlinks or copies clean reference frames to flat directory |
-| 2 | `inject_distortions()` | Applies all 36 distortions × 5 intensities via parallel workers |
+| 1 | `extract_references()` | Symlinks or copies clean reference frames to flat directory (uses `ThreadPoolExecutor` for parallel I/O). Supports `max_refs_per_source` (dict of per-source image limits for stratified sampling). |
+| 2 | `inject_distortions()` | Applies all 36 distortions × 1 random intensity level via parallel workers. Supports `fmt="png"|"jpeg"` (JPEG quality 92). Auto-detects worker count when `workers=0`. Skips existing outputs. |
 | 3 | `generate_manifests()` | Scans distorted directory, parses filenames, builds entries, splits train/val/test |
 | 4 | `annotate_scores()` | Assigns VLM/VLA/execution scores using real annotations or synthetic fallback + degradation model |
+| Full | `run_full()` | End-to-end pipeline: extract → inject → manifest → annotate. Accepts all per-step parameters (`fmt`, `max_refs_per_source`, etc.). |
+
+All steps include `tqdm` progress bars and support `dry_run` mode.
 
 ### Dependencies
 
 - `numpy`
+- `tqdm` — progress bars for manifest building and score annotation
 - `uav_iqa.distortion` — `UAVDistortionPipeline`
 - `uav_iqa.annotations` — `build_ref_score_lookup`, `parse_distortion_key`, etc.
 - `uav_iqa.utils` — `find_images`, `split_samples`, `write_manifest`
+
+---
+
+## Module: `text_metrics.py`
+
+**Purpose:** Text similarity metrics for VLM comparison-based annotation scoring. Implements BLEU, ROUGE-L, and CIDEr in pure Python (no nltk dependency).
+
+**Location:** `src/uav_iqa/text_metrics.py`
+**Lines:** 318
+
+### Key Functions
+
+| Function | Description |
+|----------|-------------|
+| `compute_bleu(reference, hypothesis, max_n=4, smooth=True)` | Sentence-level BLEU score with Chen & Cherry smoothing method 7. Returns `[0, 1]`. |
+| `compute_rouge_l(reference, hypothesis, beta=1.0)` | ROUGE-L F-score based on longest common subsequence. Returns `[0, 1]`. |
+| `compute_cider(references, hypothesis, corpus=None, max_n=4)` | CIDEr TF-IDF weighted n-gram cosine similarity. Returns `[0, ~10]`. |
+| `compute_cognitive_score(ref_texts, dist_texts, weights=(1.0, 1.0, 0.1), cider_corpus=None)` | Combined cognitive quality score via BLEU + ROUGE-L + CIDEr weighting. Averages across prompt pairs. Returns `{bleu, rouge_l, cider, cognitive_score, per_prompt}`. |
+
+### Score Formulas
+
+```
+BLEU: BP × exp(Σ log(p_n) / 4), where BP = brevity penalty
+ROUGE-L: (1+β²) × recall × precision / (recall + β² × precision), LCS-based
+CIDEr: avg(cosine_sim(TF-IDF(ref), TF-IDF(hyp))) × 10
+Cognitive: (w_b · BLEU + w_r · ROUGE + w_c · CIDEr) / (w_b + w_r + w_c)
+```
+
+### Dependencies
+
+- `math`, `collections`, `numpy` (stdlib + numpy)
 
 ---
 
@@ -553,7 +623,7 @@ Combines real AirCopBench annotations (Quality → vlm, Usability → vla, 0.4Q 
 **Purpose:** Public API exports.
 
 **Location:** `src/uav_iqa/__init__.py`
-**Lines:** 83
+**Lines:** 84
 
 ### Exports (35 total)
 
@@ -575,12 +645,10 @@ __all__ = [
     "UAVIQALightningModule", "UAVIQDataModule",
     # Losses (2)
     "ListMLELoss", "CrossTaskRegularization",
-    # Annotation utilities (8)
+    # Annotation utilities (5)
     "parse_distortion_key", "parse_quality_score",
-    "parse_usability", "degradation_factor",
-    "compute_synthetic_score",
+    "parse_usability",
     "build_ref_score_lookup", "assign_task_label",
-    "synthetic_ref_scores",
     # Utility functions (6)
     "setup_logging", "load_task_map",
     "load_manifest", "split_samples",
@@ -588,5 +656,9 @@ __all__ = [
     # Data synthesis (3)
     "DatasetFormat",
     "DataSynthesisPipeline", "create_pipeline",
+    # VLM/VLA scoring (3)
+    "BaseScorer", "VLMScorer", "BatchAnnotator",
 ]
 ```
+
+**Note**: Exports removed since last update: `count_parameters` remains importable from `utils.py` but is no longer part of the public `__all__` API. `degradation_factor`, `compute_synthetic_score`, and `synthetic_ref_scores` were fully removed from `annotations.py` — score synthesis now lives in `vla_scorer.py` (SyntheticScorer) and `data_synthesis.py` (DataSynthesisPipeline).

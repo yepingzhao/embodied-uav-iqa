@@ -111,7 +111,7 @@
 
 1. **Embodied-IQA (2505.16815) and EPD (2412.18774)** established the paradigm: define image quality by robot task success, not human preference. Their databases cover fixed-base manipulators (UR5 arm, SAPIEN simulator) with 25-30 generic distortion types. Critically, they contain ZERO UAV-specific distortions — no propeller vibration, no atmospheric scattering, no packet-loss artifacts. A model trained on these databases has never seen the frequency-domain degradation patterns that dominate aerial perception.
 
-2. **AirCopBench (2511.11025)** provides multi-UAV collaborative perception data with built-in perception assessment VQA protocols. It includes real UAV degradations (motion blur, noise, data loss) and 3 perception assessment dimensions (quality/availability/causality). But it is a perception benchmark, not an IQA database: (a) no continuous quality scores — only discrete VQA accuracy; (b) no distortion-level annotations — you can't train a regression model on accuracy; (c) no distortion injection — images have whatever natural degradation they happened to capture; (d) no task-specific quality differentiation.
+2. **AirCopBench (2511.11025)** provides multi-UAV collaborative perception data with built-in perception assessment VQA protocols. It includes real UAV degradations (motion blur, noise, data loss) and 2 perception assessment dimensions (quality/availability). But it is a perception benchmark, not an IQA database: (a) no continuous quality scores — only discrete VQA accuracy; (b) no distortion-level annotations — you can't train a regression model on accuracy; (c) no distortion injection — images have whatever natural degradation they happened to capture; (d) no task-specific quality differentiation.
 
 3. **The gap**: Embodied-IQA provides the annotation methodology (VLM→VLA→robot pipeline). AirCopBench provides UAV task protocols and multi-view degraded data. CARLA-Air provides stable UAV simulation for controlled distortion injection. These three components have never been combined. No database applies embodied IQA's task-performance-centric annotation to UAV-specific distortions.
 
@@ -316,7 +316,7 @@ This is a resource contribution claim, not a method claim. The claim is falsifia
 
 | Stage | Annotators | Protocol | Output Metric | Weight in Final MOS |
 |-------|-----------|----------|---------------|---------------------|
-| Cognitive | 3 VLMs (Qwen2.5-VL-7B, InternVL2-8B, LLaVA-NeXT-13B) | AirCopBench perception VQA (quality/availability/causality) | Text similarity (BLEU/ROUGE/CIDEr) vs. clean reference | 0.25 |
+| Cognitive | 1 VLM (Qwen2.5-VL-7B) | AirCopBench perception VQA (quality/availability) | Text similarity (BLEU/ROUGE/CIDEr) vs. clean reference | 0.25 |
 | Decision | 3 VLAs (UAV-Track VLA, CognitiveDrone-R1, Qwen-VLA) | Tracking + cognitive task execution | Trajectory deviation (position/velocity/heading) from clean reference | 0.50 |
 | Execution | CARLA-Air SITL flight (5% subset) | Task completion in simulation | Success rate (0-100) | 0.25 (for subset); used to calibrate VLA labels |
 

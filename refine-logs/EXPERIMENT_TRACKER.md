@@ -8,7 +8,7 @@
 | R003 | M0 | Annotation pipeline check | VLM/VLA/Execution annotation | 100-image subset | Score range validity | MUST | TODO | Requires VLM/VLA models; synthetic scores used for pipeline testing |
 | R004 | M0 | Overfit test | UAV-IQANet (full) | 100 random images, 50 epochs | Training loss → 0 | MUST | DONE | min_loss=0.000099 < 0.001 → PASSED |
 | **M1: Database Construction** |
-| R005 | M1 | Distorted dataset generation | 33 distortion types × 5 levels × 261 refs | Full reference set (43,032 pairs) | Coverage | MUST | DONE | 34,425/4,303/4,304 train/val/test; manifests with scores |
+| R005 | M1 | Distorted dataset generation | 33 distortion types × 1 random level × 261 refs | Full reference set (8,613 pairs) | Coverage | MUST | DONE | 6,889/861/863 train/val/test; manifests with scores |
 | R006 | M1 | VLM annotation | Qwen2.5-VL-7B, InternVL2-8B, LLaVA-NeXT-13B | — | Cognitive score | MUST | TODO | Requires VLM models + GPU servers |
 | R007 | M1 | VLA annotation | VLA ensemble (3 models) | — | Decision score | MUST | TODO | Requires VLA models + CARLA-Air |
 | R008 | M1 | Execution annotation | CARLA-Air SITL | — | Execution success rate | MUST | TODO | Requires CARLA-Air deployment |
@@ -44,10 +44,8 @@
 | R031 | M6 | Hard case gallery | Select top 15 worst-prediction images from B3 | Test set | Qualitative patterns | MUST | TODO | Manual selection with quantitative criterion |
 | R032 | M6 | VLA ensemble agreement | ICC(3,k) per task, per distortion | Full VLA annotation set | ICC, confidence intervals | NICE | TODO | For appendix or supplementary |
 | R033 | M6 | Distortion intensity robustness | All methods × 5 intensity levels | Test set | Per-level SRCC curves | NICE | TODO | For appendix robustness analysis |
-| **M7: Causal Assessment & Cross-Database & VLA Calibration (CACV)** |
-| R034a | M7 | Causal VLM annotation | 3 VLMs → AirCopBench causal assessment VQA | 10% subset (36K pairs) | Causal classification accuracy per distortion | MUST | TODO | B6a CASL; identifies which UAV distortions VLMs can diagnose |
-| R034b | M7 | Causal-ΔVLA correlation | SRCC(causal confidence, ΔVLA); partial corr (causal → ΔVLA | quality) | Same 10% subset | SRCC, partial correlation p-value | MUST | TODO | B6a CASL; tests C6 — does causal assessment predict VLA degradation? |
-| R036a | M7 | Cross-database: MA-EIQA on UAV | MA-EIQA (EPD-trained) zero-shot + fine-tuned on UAV data | UAV test split | SRCC, PLCC vs. in-domain | MUST | TODO | B6c CDBV; tests AC6 — can ground-robot IQA transfer to UAV? |
+| **M7: Cross-Database & VLA Calibration (CDVC)** |
+| R036a | M7 | Cross-database: MA-EIQA on UAV | MA-EIQA (EPD-trained) zero-shot + fine-tuned on UAV data | UAV test split | SRCC, PLCC vs. in-domain | MUST | TODO | B6b CDBV; tests AC6 — can ground-robot IQA transfer to UAV? |
 | R036b | M7 | Cross-database: UAV-IQANet on Embodied-IQA/EPD | UAV-IQANet (UAV-trained) zero-shot on Embodied-IQA + EPD test splits | Embodied-IQA (~7.4K) + EPD (~2.5K) | SRCC, PLCC drop vs. in-domain | MUST | TODO | B6c CDBV; tests AC6 reverse direction on both databases |
 | R036c | M7 | Cross-database significance tests | Statistical comparison of cross-database vs. in-domain SRCC | R036a/R036b results | Wilcoxon signed-rank, Holm-Bonferroni p-values | MUST | TODO | B6c CDBV; formal significance testing for domain specificity |
 | R037a | M7 | VLA ensemble ICC computation | ICC(3,k) per task per distortion for full VLA annotation set | Full VLA annotation set | ICC, 95% CI per task×distortion cell | MUST | TODO | B6d VLAC; quantifies annotation reliability (Embodied-IQA found SRCC≈0.25) |

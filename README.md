@@ -58,44 +58,58 @@ Input (3×256×256)
 | Low-Res + Super-Resolution | Bicubic downsample + Real-ESRGAN (optional) | scale ∈ [2, 8]× |
 | Propeller Shadow | Periodic localized brightness modulation | α ∈ [0.05, 0.3] |
 
-### 27 Generic Distortions
+### 30 Generic Distortions
 
-Categories: blur (3), brightness (6), chromatic (3), noise (4), compression (3), spatial (4), and other (4) — applied via **Albumentations**.
+Categories: blur (3), brightness (5), chromatic (3), noise (6), compression (3), spatial (3), transmission (3), and other (4) — applied via **Albumentations**.
 
 ---
 
 ## Project Layout
 
 ```
-src/uav_iqa/               # Core library (~2.2K LOC)
+src/uav_iqa/               # Core library (~5.8K LOC, 16 modules)
   __init__.py              # Public API exports (35 symbols)
-   distortion.py            # 36 distortion models (UAVDistortionPipeline)
+  distortion.py            # 36 distortion models (UAVDistortionPipeline)
   model.py                 # UAVIQANet (backbone → FPN → CBAM → FAB → task heads)
   dataset.py               # UAVIQADataset — manifest.json loader
   losses.py                # ListMLELoss + CrossTaskRegularization
-  annotations.py      # AirCopBench annotation parsing, degradation factors, score synthesis
-  lightning_module.py       # LightningModule with MSE + ListMLE + cross-task loss
-  data_module.py        # LightningDataModule with manifest filtering
-  metrics.py              # SRCC, PLCC, RMSE, Kendall τ metrics
-  callbacks.py             # SetupRunCallback, CurriculumStageCallback
-  utils.py                 # count_parameters()
+  annotations.py           # AirCopBench annotation parsing, degradation factors, score synthesis
+  data_synthesis.py        # Dataset-agnostic data pipeline (DatasetFormat + DataSynthesisPipeline)
+  lightning_module.py      # LightningModule with MSE + ListMLE + cross-task loss
+  data_module.py           # LightningDataModule with manifest filtering
+  metrics.py               # SRCC, PLCC, RMSE, Kendall τ metrics
+  callbacks.py             # SetupRunCallback, CurriculumStageCallback, MetricsHistoryCallback, ResultsSavingCallback
+  text_metrics.py          # BLEU, ROUGE-L, CIDEr text similarity for VLM comparison scoring
+  vlm/                     # VLM scoring subpackage: config, scorer, VQA index
+  vla_scorer.py            # BaseScorer: VLA/execution score interface
+  batch_annotator.py       # BatchAnnotator: multi-GPU batch annotation across splits
+  utils.py                 # count_parameters, find_images, manifest I/O, logging
 
-scripts/                   # Executable experiment scripts
+scripts/                   # Executable experiment scripts (10 total)
   data_synthesis.py              # Unified data synthesis CLI (extract/inject/manifest/annotate/all)
+  download_models.py             # Download VLM model weights from HuggingFace Hub
+  vlm_annotate.py                # Batch VLM annotation CLI with checkpoint/resume
   benchmark_iqa_methods.py       # Benchmark 15+ existing IQA methods
+  finetune_baselines.py          # Fine-tune DL-based IQA baselines on UAV data
+  fix_configs.py                 # Config migration/format converter
   visualize_distortions.py       # Visual sanity check of all 36 distortions
   overfit_sanity_check.py        # 100-image overfit test (model correctness)
   validate_synth_real_correlation.py  # C2 correlation validation
+  train.py                       # Unified training entry point (LightningCLI)
 
 configs/
-  default.yaml                 # LightningCLI config template
+  default.yaml                 # LightningCLI config template (70 lines)
   experiments/                 # 21 per-experiment configs (r013–r024c)
 
 tests/
-  test_distortion.py           # 10 tests for distortion models
+  test_distortion.py           # 19 tests for distortion models
   test_lightning.py            # Tests for LightningModule & DataModule
-
-scripts/train.py               # Unified training entry point (LightningCLI)
+  test_data_synthesis.py       # 29 tests for data pipeline
+  test_text_metrics.py         # Tests for BLEU, ROUGE-L, CIDEr text metrics
+  test_vlm_config.py           # Tests for VLMConfig & MODEL_REGISTRY (15 models)
+  test_vlm_scorer.py           # 109 tests for VLMScorer, prompts, pipeline
+  test_vlm_smoke.py            # GPU smoke tests × 15 parametrized models
+  test_batch_annotator.py      # Tests for BatchAnnotator (filter, checkpoint, resume)
 
 refine-logs/                   # Research refinement artifacts
   FINAL_PROPOSAL.md            # Method thesis (score 9.0/10)
@@ -243,7 +257,7 @@ python scripts/overfit_sanity_check.py
 
 ```bash
 python scripts/visualize_distortions.py --output-dir outputs/m0_distortion_check
-# Generates visual grid of all 36 distortions × 5 intensity levels.
+# Generates visual grid of all 36 distortions × 1 random intensity level.
 ```
 
 ---
@@ -315,6 +329,12 @@ pytest tests/ -v --cov=src/uav_iqa --cov-report=term-missing
 # Single test
 pytest tests/test_distortion.py::test_pipeline_has_all_distortions -v
 
+# Run smoke tests only (slow/GPU tests excluded)
+pytest tests/ -v -m "not smoke"
+
+# Run GPU tests only
+pytest tests/ -v -m gpu
+
 # Lint
 ruff check src/ tests/ scripts/
 
@@ -325,13 +345,16 @@ black src/ tests/ scripts/
 ### Key Concepts
 
 - **Manifest format:** JSON list of `{path, task, distortion, intensity_level, ref_id, vlm_score, vla_score, execution_score, annotated}`
-- **Distortion naming:** `{name}_L{intensity*10:02d}` (e.g., `propeller_vibration_blur_L04`)
+- **Distortion naming:** `{name}_L{intensity*10:02d}` (e.g., `propeller_vibration_blur_L04`). Supports `.png` and `.jpg` extensions.
 - **3-stage curriculum:** VLM annotations (epochs 1-20) → VLA (21-40) → Execution (41-50). Annotation source gated by kwargs.
 - **Loss layers:** MSE + λ_rank · ListMLE (per-distortion ranking) + λ_cross_task · CrossTaskRegularization (negative pairwise score variance)
-- **Real-ESRGAN** is optional; falls back to bicubic + sharpen if not installed
+- **Real-ESRGAN** is optional (`LowResSuperResolution` distortion); falls back to bicubic+sharpen if not installed
 - **openVLA/CARLA** are manual installs (not on PyPI); not needed for basic training/inference
+- **VLM extras** (`vllm`, `transformers`, `accelerate`) for annotation scoring: `uv sync --group dev --extra vlm`
 - **Training entry:** `scripts/train.py` (vanilla LightningCLI). `main.py`, `run_m3_train.py` and `UAVIQACLI` were removed in the 2026-06 refactor.
 - **Score annotation:** `scripts/data_synthesis.py annotate` applies degradation model: `score = ref_score × degradation_factor(distortion, task, intensity)`
+- **`scipy` removed as a direct dependency** for distortion models — uses `cv2.filter2D` with manual wrap padding. `scipy` is retained for metric computation.
+- **Model download:** `scripts/download_models.py` provides offline VLM model weight download from HuggingFace Hub for VLM annotation scoring. Supports `--all`, `--models <name>`, `--validate`, and `--validate-only`.
 
 ---
 

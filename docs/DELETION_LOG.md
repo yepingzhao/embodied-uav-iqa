@@ -275,3 +275,92 @@
 - Ruff lint: All checks passed
 - pytest: 54/54 tests passing
 - No functional changes — only cleanup of imports, formatting, and permissions
+
+## [2026-06-25] Dead Code Cleanup Session (Batch 6)
+
+### Unused Import Removed
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `scripts/smoke_test_vlm.py` | `import traceback` | Imported but never used anywhere in file |
+
+### Multiple Imports Fixed on One Line
+
+| File | Change | Reason |
+|------|--------|--------|
+| `src/uav_iqa/vlm_vla_scorer.py:988` | `import sys as _sys, importlib as _il, os as _os` → split into 3 separate imports | E401: Multiple imports on one line |
+
+### Unused Methods Detected (Left in Place for Future Use)
+
+| File | Method | Reason |
+|------|--------|--------|
+| `src/uav_iqa/batch_annotator.py:353` | `BatchAnnotator.annotate_all_splits()` | Defined but never called anywhere in codebase. Left in place as future-proof utility for batch annotation across splits. |
+
+### Impact
+
+- Files modified: 2
+- Imports removed: 1
+- Multiple imports split: 1
+- Ruff lint: 0 violations (was 1 E401 + 1 F401)
+- All 65 tests passing
+
+### Clarifications on False Positives
+
+The following vulture/ruff findings were reviewed and determined to be **not dead code**:
+
+| Item | Reason |
+|------|--------|
+| `CurriculumStageCallback`, `SetupRunCallback`, `MetricsHistoryCallback`, `ResultsSavingCallback` | Lightning framework hooks — called dynamically |
+| `UAVIQALightningModule` methods (`training_step`, `validation_step`, `test_step`, etc.) | Lightning framework hooks — called dynamically |
+| `UAVIQDataModule` methods (`setup`, `train_dataloader`, `val_dataloader`, etc.) | Lightning framework hooks — called dynamically |
+| `ALL_TASKS` and task constants in `vlm_vla_scorer.py` | Used in `tests/test_vlm_scorer.py` |
+| `# noqa: F401` directives in `vlm_vla_scorer.py` | Defensive — prevent F401 in editors with different configs |
+| Lambda parameters (`seq_length`, `self_m`, `infer_mode`, `num_logits_to_keep`) | Intentionally match patched method interface signatures |
+| Test mock parameters (`is_quantized`, `allow_all_kernels`, `return_tensors`, etc.) | Mock interface matching — parameters must exist to match patched API even if unused in body |
+| `ERA001` commented-code findings (losses.py:20, vlm_vla_scorer.py:564, tests:1257/1259) | Documentation comments, not commented-out code |
+| `annotate_all_splits` in `batch_annotator.py` | Defined as new utility method for future use |
+
+### Testing
+
+- Ruff lint: All checks passed (0 violations)
+- pytest: 65/65 tests passing (distortion + data_synthesis + lightning + batch_annotator)
+- No functional changes — only dead code import cleanup and import formatting
+
+## [2026-06-27] Batch 7: Dead Re-export Shim Removal
+
+### Dead File Removed
+
+| File | Reason |
+|------|--------|
+| `src/uav_iqa/vlm_scorer.py` (5 lines) | Backward-compatible re-export shim with **zero importers** in codebase. All consumers import directly from `uav_iqa.vlm` subpackage. Was left over from the refactor that split `vlm_vla_scorer.py` into the `vlm/` subpackage + `vla_scorer.py`. |
+
+### Docstring Updated
+
+| File | Change |
+|------|--------|
+| `src/uav_iqa/annotations.py` | `uav_iqa.vlm_scorer.VLMScorer` → `uav_iqa.vlm.scorer.VLMScorer` |
+
+### Documentation Updated
+
+| File | Change |
+|------|--------|
+| `AGENTS.md` | `vlm_scorer.py` → `vlm/` |
+| `CLAUDE.md` | `vlm_scorer.py` → `vlm/` |
+| `README.md` | `vlm_scorer.py` → `vlm/` |
+| `docs/CODEMAPS/ARCHITECTURE.md` | `vlm_scorer.py` → `vlm/scorer.py` (2 refs) |
+| `docs/CODEMAPS/FILES.md` | Replaced `vlm_scorer.py` entry with `vlm/` subpackage; updated deps |
+| `docs/CODEMAPS/MODULES.md` | Replaced `vlm_scorer.py` with `vlm/` subpackage details |
+
+### Impact
+
+- Files deleted: 1 (5 lines)
+- Documentation files updated: 6
+- Total lines of code removed: 5 (plus redundant docs references)
+- All ruff checks passing
+- All 88 tests passing
+
+### Testing
+
+- Ruff lint: All checks passed (0 violations)
+- pytest: 88/88 tests passing (distortion + text_metrics + data_synthesis + batch_annotator + vlm_config)
+- No functional changes — only dead file removal and doc updates
