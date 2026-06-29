@@ -1,0 +1,1484 @@
+"""Real VLM-based quality scoring for UAV-IQA.
+
+Scoring works via structured description comparison (per proposal design):
+VLM generates task-conditioned scene descriptions for both clean reference
+and distorted images, compares them via BLEU/ROUGE-L/CIDEr (1:1:0.1) to
+compute a cognitive quality score.
+"""
+
+import importlib
+import logging
+import os
+from pathlib import Path
+from typing import Dict, List, Optional, Union
+
+from tqdm import tqdm
+
+from uav_iqa.text_metrics import (
+    compute_bleu,
+    compute_cider,
+    compute_cognitive_score,
+    compute_rouge_l,
+)
+from uav_iqa.vlm.config import MODEL_REGISTRY, VLMConfig
+from uav_iqa.vlm.vqa_index import VQAIndex
+
+try:
+    from transformers import AutoConfig as _AutoConfig  # noqa: F401
+    from transformers import PreTrainedModel as _TransformerPTM  # noqa: F401
+    from transformers import CLIPVisionModel as _CLIPVisionModel  # noqa: F401
+except ImportError:
+    _AutoConfig = None
+    _TransformerPTM = None
+    _CLIPVisionModel = None
+
+_log = logging.getLogger(__name__)
+_MODEL_PATCHES_APPLIED = False
+
+
+class VLMScorer:
+    """Real VLM-based quality scorer using vLLM or transformers.
+
+    Loads a vision-language model and scores images by prompting the model
+    to assess visual quality for a given aerial embodied task.
+
+    Requires vLLM or transformers with VL support (install: uv sync --group dev --extra vlm).
+    """
+
+    def __init__(
+        self,
+        model_name: str = "Qwen/Qwen2.5-VL-7B-Instruct",
+        backend: str = "auto",  # "auto", "vllm", "transformers", "none"
+        device: str = "cuda",
+        seed: int = 42,
+        cache_dir: Optional[str] = None,
+        local_files_only: bool = True,
+        vqa_dir: str = "data/processed",
+    ):
+        self.backend = backend
+        self.device = device
+        self.seed = seed
+        self.cache_dir = cache_dir
+        self.local_files_only = local_files_only
+        self._model = None
+        self.vqa_index = VQAIndex(vqa_dir)
+
+        self.vlm_config = self._resolve_model_name(model_name)
+        self.model_name = self.vlm_config.hf_model_id
+
+        _log.info(
+            "VLMScorer initialized: model=%s backend=%s device=%s",
+            self.model_name,
+            backend,
+            device,
+        )
+
+    @staticmethod
+    def _resolve_model_name(name: str) -> VLMConfig:
+        """Resolve a model name to a VLMConfig.
+
+        Looks up the name in MODEL_REGISTRY first (by short name),
+        then by hf_model_id (for e.g. 'internlm/internlm-xcomposer2-vl-7b').
+        Falls back to checking if it's already a valid HF model ID.
+        If the name is not in the registry and doesn't look like a
+        HF path (org/model), raises ValueError.
+        """
+        if name in MODEL_REGISTRY:
+            return MODEL_REGISTRY[name]
+
+        # Also try matching by hf_model_id
+        for cfg in MODEL_REGISTRY.values():
+            if cfg.hf_model_id == name:
+                return cfg
+
+        # Check if it looks like a HuggingFace model ID (contains "/")
+        if "/" in name:
+            _log.info("Model '%s' not in registry, using default config", name)
+            return VLMConfig(
+                short_name=name.split("/")[-1],
+                hf_model_id=name,
+                family="qwen",
+                chat_template="{prompt}",
+                model_class_name="AutoModelForCausalLM",
+                processor_class_name="AutoProcessor",
+            )
+
+        raise ValueError(
+            f"Unknown model '{name}'. "
+            f"Must be a model from MODEL_REGISTRY "
+            f"({', '.join(sorted(MODEL_REGISTRY.keys()))}) "
+            f"or a HuggingFace model ID (e.g., 'org/model-name')."
+        )
+
+    def _resolve_backend(self) -> str:
+        """Resolve actual backend capability.
+
+        Checks for available VLM backends in priority order:
+        1. vLLM (fastest, recommended for production)
+        2. transformers (fallback, more memory)
+
+        Raises RuntimeError if neither backend is available.
+        When self.backend is 'auto', auto-detects the best available.
+        When set to 'none', always falls back.
+        """
+        if self.backend == "none":
+            return "none"
+
+        # vLLM ships model files for: qwen2_vl, internvl, ovis, phi4mm.
+        # NOT supported: internlm_xc (vision model), mplug, phi3-v.
+        # We conservatively route phi to transformers (phi3-v not
+        # supported) and ovis to vLLM (has dedicated model file).
+        vllm_viable = self.vlm_config.family in frozenset({"qwen", "internvl", "ovis"})
+
+        if self.backend == "vllm":
+            if not vllm_viable:
+                _log.info(
+                    "vLLM does not support %s family, using transformers instead",
+                    self.vlm_config.family,
+                )
+                return self._resolve_transformers_backend()
+            try:
+                import vllm  # noqa: F401
+
+                return "vllm"
+            except ImportError:
+                raise RuntimeError(
+                    "vLLM backend explicitly requested but not installed. "
+                    "Install with: pip install vllm"
+                )
+
+        if self.backend == "transformers":
+            return self._resolve_transformers_backend()
+
+        # auto: try vllm first, then transformers, then raise
+        if vllm_viable:
+            try:
+                import vllm  # noqa: F401
+
+                return "vllm"
+            except ImportError:
+                pass
+
+        return self._resolve_transformers_backend()
+
+    def _resolve_transformers_backend(self) -> str:
+        """Resolve the transformers backend."""
+        try:
+            import transformers  # noqa: F401
+
+            return "transformers"
+        except ImportError:
+            if self.backend == "transformers":
+                raise RuntimeError(
+                    "Transformers backend explicitly requested but not installed. "
+                    "Install with: pip install transformers accelerate"
+                )
+
+        # auto mode: no backend available
+        raise RuntimeError(
+            f"No VLM backend available for {self.model_name}. "
+            "Install vLLM (pip install vllm) or "
+            "transformers (pip install transformers accelerate)."
+        )
+
+    @staticmethod
+    def _apply_global_patches(tf_mod):
+        """Apply global monkey-patches for transformers 4.57.6 compatibility.
+
+        Patches are guarded by ``_MODEL_PATCHES_APPLIED`` and applied at
+        most once per process. Includes DynamicCache shims, Siglip hidden
+        states, PreTrainedModel._supports_flash_attn_2, builtins typo fix,
+        and LLM backbone generation stubs.
+        """
+        from transformers.cache_utils import DynamicCache as _DC
+
+        if not hasattr(_DC, "seen_tokens"):
+            _DC.seen_tokens = property(lambda self: self.get_seq_length())
+        if not hasattr(_DC, "get_usable_length"):
+            _DC.get_usable_length = lambda self, seq_length, layer_idx=None: (
+                self.get_seq_length()
+                if layer_idx is None
+                else self.get_seq_length(layer_idx)
+            )
+        _DC.max_cache_len = None
+        if not hasattr(_DC, "get_max_length"):
+            _DC.get_max_length = lambda self: self.max_cache_len
+
+        try:
+            from transformers.models.siglip.modeling_siglip import (
+                SiglipEncoder as _SE,
+                SiglipVisionTransformer as _SVT,
+            )
+            from transformers.modeling_outputs import (
+                BaseModelOutput,
+                BaseModelOutputWithPooling,
+            )
+
+            def _patched_se_forward(
+                self,
+                inputs_embeds,
+                attention_mask=None,
+                output_hidden_states=False,
+                **kwargs,
+            ):
+                encoder_states = () if output_hidden_states else None
+                hidden_states = inputs_embeds
+                for layer in self.layers:
+                    if output_hidden_states:
+                        encoder_states = encoder_states + (hidden_states,)
+                    hidden_states = layer(hidden_states, attention_mask, **kwargs)
+                if output_hidden_states:
+                    encoder_states = encoder_states + (hidden_states,)
+                return BaseModelOutput(
+                    last_hidden_state=hidden_states,
+                    hidden_states=encoder_states,
+                )
+
+            _SE.forward = _patched_se_forward
+
+            def _patched_svt_forward(
+                self, pixel_values, interpolate_pos_encoding=False, **kwargs
+            ):
+                hidden_states = self.embeddings(
+                    pixel_values,
+                    interpolate_pos_encoding=interpolate_pos_encoding,
+                )
+                encoder_outputs = self.encoder(inputs_embeds=hidden_states, **kwargs)
+                last_hidden_state = encoder_outputs.last_hidden_state
+                last_hidden_state = self.post_layernorm(last_hidden_state)
+                pooler_output = self.head(last_hidden_state) if self.use_head else None
+                return BaseModelOutputWithPooling(
+                    last_hidden_state=last_hidden_state,
+                    pooler_output=pooler_output,
+                    hidden_states=encoder_outputs.hidden_states,
+                )
+
+            _SVT.forward = _patched_svt_forward
+        except (ImportError, ModuleNotFoundError):
+            pass
+
+        _PTM = getattr(tf_mod, "PreTrainedModel")
+        _PTM._supports_flash_attn_2 = classmethod(lambda cls: False)
+
+        import builtins as _bi
+
+        if not hasattr(_bi, "NotImplementError"):
+            _bi.NotImplementError = NotImplementedError
+
+        for _llm_name in ("Phi3ForCausalLM", "InternLM2ForCausalLM"):
+            if hasattr(tf_mod, _llm_name) and not hasattr(
+                getattr(tf_mod, _llm_name), "generate"
+            ):
+                _llm_cls = getattr(tf_mod, _llm_name)
+                _llm_cls.generate = getattr(tf_mod, "GenerationMixin").generate
+
+    def _load_model(self):
+        """Load the VLM model (lazy initialization)."""
+        backend = self._resolve_backend()
+
+        if backend == "vllm":
+            from vllm import LLM, SamplingParams
+
+            _log.info(
+                "Loading model %s via vLLM on %s...", self.model_name, self.device
+            )
+            llm_kwargs: dict = dict(
+                model=self.model_name,
+                trust_remote_code=self.vlm_config.trust_remote_code,
+                max_num_seqs=8,
+            )
+            if self.cache_dir:
+                llm_kwargs["download_dir"] = self.cache_dir
+            self._model = LLM(**llm_kwargs)
+            self._sampling_params = SamplingParams(
+                temperature=0.0,
+                max_tokens=10,
+            )
+        elif backend == "transformers":
+            import torch
+
+            tf_mod = importlib.import_module("transformers")
+            model_cls = getattr(tf_mod, self.vlm_config.model_class_name)
+            proc_cls = getattr(tf_mod, self.vlm_config.processor_class_name)
+
+            _log.info(
+                "Loading model %s via transformers on %s (class=%s)...",
+                self.model_name,
+                self.device,
+                self.vlm_config.model_class_name,
+            )
+            load_kwargs: dict = dict(
+                trust_remote_code=self.vlm_config.trust_remote_code,
+                local_files_only=self.local_files_only,
+            )
+            if self.cache_dir:
+                load_kwargs["cache_dir"] = self.cache_dir
+            # Suppress re-initialization errors for mismatched/missing
+            # CLIP vision-model keys (post_layernorm added by newer
+            # transformers versions but not present in older checkpoints).
+            load_kwargs["ignore_mismatched_sizes"] = True
+            # FlashAttention2 is not installed on this system.
+            # Force eager attention globally for all models.
+            load_kwargs["attn_implementation"] = "eager"
+
+            # Global monkey-patches for transformer 4.57.6 compatibility.
+            # Guarded against double-application since they mutate global state.
+            global _MODEL_PATCHES_APPLIED
+            if not _MODEL_PATCHES_APPLIED:
+                self._apply_global_patches(tf_mod)
+                _MODEL_PATCHES_APPLIED = True
+
+            # Per-family patches (safe to apply on each load — guarded
+            # by model identity checks inside).
+
+            if self.vlm_config.family == "internlm_xc":
+                # InternLM-Xcomposer2.5 downloads SimHei.ttf from
+                # huggingface.co during __init__, which times out in
+                # offline mode.  Patch urllib.request.urlopen to serve
+                # the font from the local model cache instead.
+                import glob as _glob
+                import urllib.request as _urllib_request
+                from pathlib import Path as _Path
+
+                _orig_urlopen = _urllib_request.urlopen
+
+                def _resolve_simhei_local() -> _Path:
+                    _cache_root = os.environ.get(
+                        "HF_HOME",
+                        os.path.expanduser("~/.cache/huggingface"),
+                    )
+                    _pattern = (
+                        f"{_cache_root}/hub/models--internlm--internlm-xcomposer2d5-7b/"
+                        "snapshots/*/SimHei.ttf"
+                    )
+                    _matches = _glob.glob(_pattern)
+                    if _matches:
+                        return _Path(_matches[0])
+                    raise FileNotFoundError("SimHei.ttf not found in local cache")
+
+                def _patched_urlopen(url, *args, **kwargs):
+                    _url_str = url if isinstance(url, str) else str(url)
+                    if "SimHei.ttf" in _url_str and "internlm-xcomposer2d5" in _url_str:
+                        return open(str(_resolve_simhei_local()), "rb")
+                    return _orig_urlopen(url, *args, **kwargs)
+
+                _urllib_request.urlopen = _patched_urlopen
+
+                # InternLM-Xcomposer2/2.5: PretrainedConfig does not expose
+                # max_length as a Python attribute even though config.json
+                # defines it.  The model __init__ accesses config.max_length,
+                # so we patch it in before loading.
+                AutoConfig = getattr(tf_mod, "AutoConfig")
+                config = AutoConfig.from_pretrained(self.model_name, **load_kwargs)
+                if not hasattr(config, "max_length"):
+                    config.max_length = 4096  # default in xcomposer config.json
+
+                # transformers 5.x flattened CLIPVisionModel (removed the
+                # .vision_model intermediate wrapper, put components
+                # directly on CLIPVisionModel).  internlm-xcomposer2's
+                # build_mlp.py accesses .vision_model.embeddings; add a
+                # compat property so that code still works.
+                # We detect this by checking CLIPVisionModel.__init__
+                # source: in 5.x the __init__ does NOT create
+                # self.vision_model = CLIPVisionTransformer(config).
+                import inspect as _inspect
+
+                if _CLIPVisionModel is not None:
+                    _init_src = _inspect.getsource(_CLIPVisionModel.__init__)
+                    _needs_vision_model_shim = "self.vision_model" not in _init_src
+                    if _needs_vision_model_shim:
+                        _CLIPVisionModel.vision_model = property(lambda self: self)
+
+                # transformers >=5.x CLIPVisionEmbeddings.forward enforces a
+                # strict image size check (336×336), but internlm-xcomposer
+                # resizes inputs to 490×490 with custom position-embedding
+                # interpolation.  Force interpolate_pos_encoding=True.
+                try:
+                    from transformers.models.clip.modeling_clip import (
+                        CLIPVisionEmbeddings,
+                    )
+
+                    if (
+                        "interpolate_pos_encoding"
+                        in CLIPVisionEmbeddings.forward.__code__.co_varnames
+                    ):
+                        _orig_clip_embed_fwd = CLIPVisionEmbeddings.forward
+
+                        def _patched_clip_embed_fwd(
+                            self,
+                            pixel_values,
+                            interpolate_pos_encoding=False,
+                        ):
+                            return _orig_clip_embed_fwd(
+                                self,
+                                pixel_values,
+                                interpolate_pos_encoding=True,
+                            )
+
+                        CLIPVisionEmbeddings.forward = _patched_clip_embed_fwd
+                except (ImportError, ModuleNotFoundError, AttributeError):
+                    pass  # transformers is mocked in tests
+
+                # internlm-xcomposer2/2.5 loads CLIPVisionModel inside
+                # build_vision_tower() *without* a dtype, so CLIP stays
+                # float32 while the rest of the model is float16.  Patch
+                # CLIPVisionModel.from_pretrained to force float16.
+                # Xcomposer2.5 uses internlm/internlm-xcomposer2d5-clip
+                # which is not in the local cache; redirect to the cached
+                # openai/clip-vit-large-patch14-336 instead (same arch).
+                _orig_clip_from_pretrained = _CLIPVisionModel.from_pretrained
+
+                @classmethod
+                def _patched_clip_from_pretrained(cls, *args, **kwargs):
+                    kwargs.setdefault("torch_dtype", torch.float16)
+                    kwargs.setdefault("ignore_mismatched_sizes", True)
+                    return _orig_clip_from_pretrained.__func__(cls, *args, **kwargs)
+
+                _CLIPVisionModel.from_pretrained = _patched_clip_from_pretrained
+
+                # transformers 5.x wraps model __init__ in torch.device("meta")
+                # via PreTrainedModel.get_init_context(), which breaks
+                # internlm-xcomposer's nested CLIPVisionModel.from_pretrained()
+                # call inside build_vision_tower().  Patch out the meta device
+                # so that the nested from_pretrained succeeds.
+                _orig_get_init_ctx = _TransformerPTM.get_init_context
+
+                @classmethod
+                def _patched_get_init_context(cls, *args, **kwargs):
+                    ctxs = _orig_get_init_ctx.__func__(cls, *args, **kwargs)
+                    return [
+                        c
+                        for c in ctxs
+                        if not (isinstance(c, torch.device) and str(c) == "meta")
+                    ]
+
+                _TransformerPTM.get_init_context = _patched_get_init_context
+                try:
+                    self._model = model_cls.from_pretrained(
+                        self.model_name,
+                        config=config,
+                        torch_dtype=torch.float16,
+                        **load_kwargs,
+                    ).to(self.device)
+                    self._model.eval()
+                finally:
+                    _urllib_request.urlopen = _orig_urlopen
+                    _TransformerPTM.get_init_context = _orig_get_init_ctx
+                    _CLIPVisionModel.from_pretrained = _orig_clip_from_pretrained
+                # Keep CLIP structure patches alive for scoring lifetime;
+                # the model internals need .vision_model shim and
+                # interpolate_pos_encoding=True for 490×490 inputs.
+
+                # CLIPVisionTower.forward casts output back to input
+                # image dtype (float32), but the rest of the model
+                # (vision_proj, LM) is float16 → dtype mismatch.
+                # Patch forward to cast output to vision_tower's dtype.
+                if "2d5" not in self.model_name:
+                    _orig_vit_fwd = self._model.vit.forward
+
+                    def _patched_vit_fwd(self_vit, images, *args, **kwargs):
+                        if not self_vit.is_loaded:
+                            self_vit.load_model()
+                        if type(images) is list:
+                            image_features = []
+                            for image in images:
+                                image_forward_out = self_vit.vision_tower(
+                                    image.to(
+                                        device=self_vit.device, dtype=self_vit.dtype
+                                    ).unsqueeze(0),
+                                    output_hidden_states=True,
+                                )
+                                image_feature = self_vit.feature_select(
+                                    image_forward_out
+                                )
+                                image_features.append(image_feature)
+                        else:
+                            image_forward_outs = self_vit.vision_tower(
+                                images.to(device=self_vit.device, dtype=self_vit.dtype),
+                                output_hidden_states=True,
+                            )
+                            image_features = self_vit.feature_select(image_forward_outs)
+                        return image_features
+
+                    self._model.vit.forward = _patched_vit_fwd.__get__(self._model.vit)
+                # Xcomposer2.5 dtype fix is applied directly in
+                # the hub cache source (build_mlp.py: .to(self.dtype)
+                # instead of .to(input_imgs.dtype)).
+
+                # transformers 4.57+ passes Cache objects (e.g. DynamicCache)
+                # for past_key_values via generate(), but internlm-xcomposer2's
+                # prepare_inputs_for_generation expects legacy tuple format.
+                # Convert Cache→tuple on entry.
+                _orig_prepare = self._model.prepare_inputs_for_generation
+
+                def _patched_prepare(
+                    self_m,
+                    input_ids,
+                    past_key_values=None,
+                    attention_mask=None,
+                    inputs_embeds=None,
+                    im_mask=None,
+                    infer_mode="base",
+                    **kwargs,
+                ):
+                    if past_key_values is not None and hasattr(
+                        past_key_values, "to_legacy_cache"
+                    ):
+                        past_key_values = past_key_values.to_legacy_cache()
+                        # DynamicCache(config=...) pre-allocates None entries
+                        # for all layers; treat that as "no cache yet".
+                        if (
+                            past_key_values
+                            and past_key_values[0] is not None
+                            and past_key_values[0][0] is None
+                        ):
+                            past_key_values = None
+                    return _orig_prepare(
+                        input_ids,
+                        past_key_values=past_key_values,
+                        attention_mask=attention_mask,
+                        inputs_embeds=inputs_embeds,
+                        im_mask=im_mask,
+                        **kwargs,
+                    )
+
+                self._model.prepare_inputs_for_generation = _patched_prepare.__get__(
+                    self._model
+                )
+
+                # Xcomposer2.5's chat() passes `infer_mode` to generate(),
+                # which prepare_inputs_for_generation consumes but forward
+                # does not.  transformers 4.57.6 validates all model_kwargs,
+                # flagging `infer_mode`.  Make the model tolerate it.
+                if "2d5" in self.model_name:
+                    self._model._validate_model_kwargs_bak = (
+                        self._model._validate_model_kwargs
+                    )
+                    self._model._validate_model_kwargs = lambda *a, **kw: None
+
+                # Load tokenizer separately and assign to model.tokenizer.
+                # The model.chat() API requires model.tokenizer to be set.
+                self._processor = proc_cls.from_pretrained(
+                    self.model_name, **load_kwargs
+                )
+                self._model.tokenizer = self._processor
+            else:
+                # Ovis2 uses aimv2 vision encoder whose config type
+                # collides with transformers built-in AIMv2Config.
+                # Patch AutoConfig.register to accept re-registration
+                # BEFORE loading the config (which triggers hub code
+                # import that tries to register 'aimv2').
+                if self.vlm_config.family == "ovis":
+                    AutoConfig = getattr(tf_mod, "AutoConfig")
+                    _orig_register = AutoConfig.register
+
+                    def _patched_register(key, *a, **kw):
+                        kw.setdefault("exist_ok", True)
+                        return _orig_register(key, *a, **kw)
+
+                    AutoConfig.register = _patched_register
+
+                # Phi and Ovis require eager attention; MPlugOwl3 rejects
+                # eager and requires sdpa or flash_attention_2.
+                if self.vlm_config.family in ("phi", "ovis", "mplug"):
+                    _forced_attn = (
+                        "sdpa" if self.vlm_config.family == "mplug" else "eager"
+                    )
+                    from transformers import AutoConfig as _AC
+
+                    _cfg = _AC.from_pretrained(
+                        self.model_name,
+                        trust_remote_code=self.vlm_config.trust_remote_code,
+                        local_files_only=True,
+                    )
+                    _cfg._attn_implementation = _forced_attn
+                    # Ovis reads self.config.llm_attn_implementation to
+                    # pass attn_implementation= to the internal LLM's
+                    # from_config() call.
+                    for _key in ("llm_attn_implementation",):
+                        if hasattr(_cfg, _key):
+                            setattr(_cfg, _key, _forced_attn)
+                    # Patch nested configs too (belt-and-suspenders).
+                    # llm_config can be a config object or a dict (MPlugOwl3).
+                    for _attr in ("llm_config", "text_config", "vision_config"):
+                        _nc = getattr(_cfg, _attr, None)
+                        if _nc is not None:
+                            if isinstance(_nc, dict):
+                                # PretrainedConfig.__init__ pops
+                                # 'attn_implementation' (no underscore)
+                                _nc["attn_implementation"] = _forced_attn
+                            elif hasattr(_nc, "_attn_implementation"):
+                                _nc._attn_implementation = _forced_attn
+                    load_kwargs["config"] = _cfg
+
+                if self.vlm_config.family == "ovis":
+                    try:
+                        self._processor = proc_cls.from_pretrained(
+                            self.model_name, **load_kwargs
+                        )
+                        # Ovis2: AutoProcessor returns bare tokenizer
+                        # (no processor_config.json, AIMv2 backbone not
+                        # mapped to any registered processor).  Load
+                        # CLIPImageProcessor from preprocessor_config
+                        # as a separate image processor.
+                        if not hasattr(self._processor, "image_processor"):
+                            from transformers import CLIPImageProcessor as _CIP
+
+                            self._image_processor = _CIP.from_pretrained(
+                                self.model_name,
+                                local_files_only=True,
+                            )
+                        # Ovis2 visual_tokenizer (AIMv2) is loaded via
+                        # from_config → stays bf16 checkpoint dtype, but
+                        # vte (nn.Linear) gets torch_dtype=float16.
+                        # Force bf16 for Ovis2 to keep everything matching.
+                        _model_dtype = (
+                            torch.bfloat16
+                            if self.vlm_config.short_name == "Ovis2"
+                            else torch.float16
+                        )
+                        self._model = model_cls.from_pretrained(
+                            self.model_name,
+                            torch_dtype=_model_dtype,
+                            **load_kwargs,
+                        ).to(self.device)
+                        self._model.eval()
+                    finally:
+                        AutoConfig.register = _orig_register
+                else:
+                    # MPlugOwl3: HyperQwen2Attention.__init__ raises
+                    # NotImplementedError when _attn_implementation="eager".
+                    # Pre-import modeling_hyper_qwen2.py NOW (shares package
+                    # with already-loaded configuration_hyper_qwen2.py) and
+                    # redirect eager→sdpa BEFORE model loads.
+                    if self.vlm_config.family == "mplug":
+                        import sys as _sys
+                        import importlib as _il
+                        import os as _os
+
+                        for _mn, _mv in list(_sys.modules.items()):
+                            _mf = getattr(_mv, "__file__", None) or ""
+                            if "configuration_hyper_qwen2" in _mf:
+                                _cfg_pkg = _mv.__package__
+                                _cfg_dir = _os.path.dirname(_mf)
+                                _mm_path = _os.path.join(
+                                    _cfg_dir, "modeling_hyper_qwen2.py"
+                                )
+                                if _os.path.exists(_mm_path):
+                                    _mm_name = f"{_cfg_pkg}.modeling_hyper_qwen2"
+                                    _spec = _il.util.spec_from_file_location(
+                                        _mm_name,
+                                        _mm_path,
+                                        submodule_search_locations=[_cfg_dir],
+                                    )
+                                    _mm = _il.util.module_from_spec(_spec)
+                                    _sys.modules[_mm_name] = _mm
+                                    _spec.loader.exec_module(_mm)
+                                    if hasattr(_mm, "QWEN2_ATTENTION_CLASSES"):
+                                        _cls_map = _mm.QWEN2_ATTENTION_CLASSES
+                                        if "eager" in _cls_map and "sdpa" in _cls_map:
+                                            _cls_map["eager"] = _cls_map["sdpa"]
+                                            _log.info("MPlugOwl3: QWEN2 eager→sdpa")
+                                break
+                    self._processor = proc_cls.from_pretrained(
+                        self.model_name,
+                        **load_kwargs,
+                    )
+                    self._model = model_cls.from_pretrained(
+                        self.model_name,
+                        torch_dtype=torch.float16,
+                        **load_kwargs,
+                    ).to(self.device)
+                    self._model.eval()
+
+            # InternVLChatModel.generate() delegates to
+            # self.language_model.generate(), but the remote-code
+            # LLM class may lack GenerationMixin (e.g. stale
+            # Phi3ForCausalLM / InternLM2ForCausalLM from hub).
+            # Add GenerationMixin to the class bases so generate()
+            # and all its helper methods are available.
+            if hasattr(self._model, "language_model") and not hasattr(
+                self._model.language_model, "generate"
+            ):
+                from transformers import GenerationConfig, GenerationMixin
+
+                _lm = self._model.language_model
+                _lm_cls = type(_lm)
+                _lm_cls.__bases__ = (GenerationMixin,) + _lm_cls.__bases__
+                if _lm.generation_config is None:
+                    _lm.generation_config = GenerationConfig(
+                        **self._model.config.to_dict()
+                    )
+
+                # transformers 4.57+ passes DynamicCache objects for
+                # past_key_values, but stale remote-code attention code
+                # calls methods (get_usable_length, etc.) that may not
+                # exist on DynamicCache, and its compute is often
+                # incompatible.  Force legacy tuple cache format.
+                _lm_cls._supports_default_dynamic_cache = lambda self: False
+
+                _log.info(
+                    "Patched %s with GenerationMixin base + legacy cache",
+                    _lm_cls.__name__,
+                )
+
+            _log.info("Model loaded successfully: %s", self.model_name)
+
+    @staticmethod
+    def _get_description_prompts(task: str) -> List[str]:
+        """Return 3 task-conditioned description prompts (fallback when no VQA match).
+
+        These prompts ask the VLM to describe the scene rather than rate it.
+        Each prompts the model to focus on a different aspect:
+          1. Scene description (objects, layout, task context)
+          2. Fine detail assessment (textures, small-scale features)
+          3. Visibility/degradation impact
+        """
+        base_prompts = {
+            "tracking": [
+                (
+                    "Describe the key objects (vehicles, pedestrians, obstacles) and "
+                    "spatial layout in this aerial view. For a visual object tracking "
+                    "mission, identify moving or trackable targets and any occluding elements. "
+                    "Output 3-5 sentences."
+                ),
+                (
+                    "Identify fine details, textures, and small-scale features visible "
+                    "in this aerial image relevant to object tracking. Note edge sharpness, "
+                    "motion cues, and distinguishability of individual targets. "
+                    "Output 2-3 sentences."
+                ),
+                (
+                    "Assess the visibility conditions in this aerial image for a tracking "
+                    "mission: describe any blur, noise, contrast issues, or visual artifacts "
+                    "that could affect target detection and tracking accuracy. "
+                    "Output 2-3 sentences."
+                ),
+            ],
+            "inspection": [
+                (
+                    "Describe the key infrastructure elements (bridges, pipelines, buildings) "
+                    "and spatial layout in this aerial view. For an inspection mission, "
+                    "identify structural components that would require detailed examination. "
+                    "Output 3-5 sentences."
+                ),
+                (
+                    "Identify fine surface details, cracks, corrosion patterns, and texture "
+                    "anomalies visible in this aerial image relevant to infrastructure inspection. "
+                    "Note resolution quality for detecting sub-centimeter defects. "
+                    "Output 2-3 sentences."
+                ),
+                (
+                    "Assess the visibility conditions in this aerial image for an inspection "
+                    "mission: describe any blur, noise, lighting issues, or visual artifacts "
+                    "that could affect defect detection and structural assessment. "
+                    "Output 2-3 sentences."
+                ),
+            ],
+            "delivery": [
+                (
+                    "Describe the key terrain features (landing zones, obstacles, paths) and "
+                    "spatial layout in this aerial view. For a package delivery mission, "
+                    "identify safe approach corridors and potential hazard areas. "
+                    "Output 3-5 sentences."
+                ),
+                (
+                    "Identify fine details, surface textures, and small obstacles visible "
+                    "in this aerial image relevant to precision landing. Note depth cues "
+                    "and spatial accuracy of mapped features. "
+                    "Output 2-3 sentences."
+                ),
+                (
+                    "Assess the visibility conditions in this aerial image for a delivery "
+                    "mission: describe any blur, contrast issues, depth perception artifacts, "
+                    "or visual artifacts that could affect landing zone identification. "
+                    "Output 2-3 sentences."
+                ),
+            ],
+            "sar": [
+                (
+                    "Describe the key terrain features (vegetation, water bodies, structures) "
+                    "and spatial layout in this aerial view. For a search-and-rescue mission, "
+                    "identify areas where persons or distress signals might be located. "
+                    "Output 3-5 sentences."
+                ),
+                (
+                    "Identify fine details, color variations, and subtle visual cues visible "
+                    "in this aerial image relevant to search-and-rescue. Note resolution "
+                    "quality for detecting persons against varied backgrounds. "
+                    "Output 2-3 sentences."
+                ),
+                (
+                    "Assess the visibility conditions in this aerial image for a SAR mission: "
+                    "describe any noise, color fidelity issues, contrast problems, or visual "
+                    "artifacts that could affect target detection in challenging terrain. "
+                    "Output 2-3 sentences."
+                ),
+            ],
+        }
+        if task not in base_prompts:
+            _log.warning("Unknown task '%s', no prompts available", task)
+            return None
+        return base_prompts[task]
+
+    def _build_description_prompt(self, task: str, prompt_idx: int) -> Optional[str]:
+        """Build a description-generation prompt formatted with chat template.
+
+        Returns None if no prompts are defined for the given task.
+        """
+        prompts = self._get_description_prompts(task)
+        if not prompts:
+            return None
+        desc_text = prompts[prompt_idx]
+        chat_template = self.vlm_config.chat_template
+        return chat_template.format(prompt=desc_text)
+
+    def _generate_description(
+        self, image_path: str, task: str, prompt: str, max_tokens: int = 200
+    ) -> str:
+        """Call the VLM to generate a scene description for an image.
+
+        Args:
+            image_path: Path to the image file.
+            task: Task type (tracking, inspection, delivery, sar).
+            prompt: The raw description prompt text (not chat template formatted).
+            max_tokens: Maximum new tokens for description generation.
+
+        Returns:
+            Raw text response from the VLM.
+        """
+        backend = self._resolve_backend()
+        if backend == "none":
+            raise RuntimeError("No VLM backend available for description generation")
+
+        if self._model is None:
+            self._load_model()
+            if self._model is None:
+                raise RuntimeError("Failed to load VLM model")
+
+        if backend == "vllm":
+            from vllm import SamplingParams  # noqa: F401
+
+            sp = SamplingParams(temperature=0.0, max_tokens=max_tokens)
+            chat_template = self.vlm_config.chat_template
+            formatted_prompt = chat_template.format(prompt=prompt)
+            outputs = self._model.generate(
+                [
+                    {
+                        "prompt": formatted_prompt,
+                        "multi_modal_data": {"image": image_path},
+                    }
+                ],
+                sp,
+            )
+            return outputs[0].outputs[0].text.strip()
+
+        elif backend == "transformers":
+            import torch
+
+            if self.vlm_config.family == "internlm_xc":
+                query = f"<ImageHere>\n{prompt}"
+                if self.vlm_config.short_name == "InternLM-Xcomposer2.5":
+                    chat_image = [image_path]
+                else:
+                    chat_image = image_path
+                with torch.no_grad():
+                    response_text, _history = self._model.chat(
+                        self._processor,
+                        query=query,
+                        image=chat_image,
+                        max_new_tokens=max_tokens,
+                        do_sample=False,
+                    )
+                return response_text
+            elif self.vlm_config.family == "internvl":
+                from PIL import Image
+                from torchvision import transforms
+
+                force_size = getattr(self._model.config, "force_image_size", 448)
+                transform = transforms.Compose(
+                    [
+                        transforms.Resize((force_size, force_size)),
+                        transforms.ToTensor(),
+                        transforms.Normalize(
+                            mean=[0.485, 0.456, 0.406],
+                            std=[0.229, 0.224, 0.225],
+                        ),
+                    ]
+                )
+                image = Image.open(image_path).convert("RGB")
+                pixel_values = (
+                    transform(image)
+                    .unsqueeze(0)
+                    .to(device=self.device, dtype=torch.float16)
+                )
+                gen_config = {
+                    "max_new_tokens": max_tokens,
+                    "do_sample": False,
+                }
+                with torch.no_grad():
+                    response_text = self._model.chat(
+                        self._processor,
+                        pixel_values=pixel_values,
+                        question=prompt,
+                        generation_config=gen_config,
+                        num_patches_list=[1],
+                    )
+                return response_text
+            elif self.vlm_config.family == "phi":
+                prompt_with_image = (
+                    f"<|user|>\n<|image_1|>\n{prompt}<|end|>\n<|assistant|>\n"
+                )
+                from PIL import Image
+
+                image = Image.open(image_path).convert("RGB")
+                inputs = self._processor(
+                    text=prompt_with_image,
+                    images=image,
+                    return_tensors="pt",
+                ).to(self.device)
+                if self.vlm_config.short_name == "Phi4-Multimodal":
+                    _orig_pifg = self._model.prepare_inputs_for_generation
+
+                    def _patched_pifg(
+                        input_ids,
+                        past_key_values=None,
+                        attention_mask=None,
+                        inputs_embeds=None,
+                        cache_position=None,
+                        num_logits_to_keep=None,
+                        **kwargs,
+                    ):
+                        return _orig_pifg(
+                            input_ids=input_ids,
+                            past_key_values=past_key_values,
+                            attention_mask=attention_mask,
+                            inputs_embeds=inputs_embeds,
+                            cache_position=cache_position,
+                            num_logits_to_keep=1,
+                            **kwargs,
+                        )
+
+                    self._model.prepare_inputs_for_generation = _patched_pifg
+                with torch.no_grad():
+                    outputs = self._model.generate(**inputs, max_new_tokens=max_tokens)
+                try:
+                    return self._processor.decode(
+                        outputs[0], skip_special_tokens=True
+                    ).strip()
+                except OverflowError:
+                    safe_ids = torch.clamp(
+                        outputs[0], 0, self._model.config.vocab_size - 1
+                    )
+                    return self._processor.decode(
+                        safe_ids, skip_special_tokens=True
+                    ).strip()
+            elif self.vlm_config.family == "qwen":
+                from PIL import Image
+
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image", "image": image_path},
+                            {"type": "text", "text": prompt},
+                        ],
+                    }
+                ]
+                text = self._processor.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
+                image = Image.open(image_path).convert("RGB")
+                inputs = self._processor(
+                    text=[text],
+                    images=[image],
+                    return_tensors="pt",
+                ).to(self.device)
+                with torch.no_grad():
+                    outputs = self._model.generate(
+                        **inputs,
+                        max_new_tokens=max_tokens,
+                        do_sample=False,
+                    )
+                return self._processor.decode(
+                    outputs[0], skip_special_tokens=True
+                ).strip()
+            elif self.vlm_config.family == "mplug":
+                if not hasattr(self, "_mplug_processor"):
+                    self._mplug_processor = self._model.init_processor(self._processor)
+                from PIL import Image as _PILImage
+
+                messages = [{"role": "user", "content": f"<|image|>\n{prompt}"}]
+                img = _PILImage.open(image_path).convert("RGB")
+                inputs = self._mplug_processor(
+                    messages, images=[img], return_tensors="pt"
+                )
+                input_ids = inputs.pop("input_ids").to(self.device)
+                model_kwargs = {"input_ids": input_ids, "max_new_tokens": max_tokens}
+                for k, v in inputs.items():
+                    if hasattr(v, "to"):
+                        model_kwargs[k] = v.to(self.device)
+                model_kwargs["tokenizer"] = self._processor
+                with torch.no_grad():
+                    outputs = self._model.generate(**model_kwargs)
+                return self._processor.decode(
+                    outputs[0], skip_special_tokens=True
+                ).strip()
+            elif self.vlm_config.family == "ovis":
+                from PIL import Image
+
+                chat_template = self.vlm_config.chat_template
+                formatted_prompt = chat_template.format(prompt=prompt)
+                image = Image.open(image_path).convert("RGB")
+                pv_result = self._model.get_visual_tokenizer().preprocess_image(image)
+                if isinstance(pv_result, tuple):
+                    pixel_values = pv_result[0]
+                else:
+                    pixel_values = pv_result
+                pixel_values = pixel_values.to(device=self.device)
+                _vt = self._model.get_visual_tokenizer()
+                _vt_param_dtype = next(_vt.parameters()).dtype
+                pixel_values = pixel_values.to(dtype=_vt_param_dtype)
+                text_inputs = self._processor(
+                    text=formatted_prompt,
+                    return_tensors="pt",
+                )
+                input_ids = text_inputs["input_ids"].to(self.device)
+                attention_mask = text_inputs.get(
+                    "attention_mask",
+                    torch.ones_like(input_ids),
+                ).to(self.device)
+                with torch.no_grad():
+                    outputs = self._model.generate(
+                        inputs=input_ids,
+                        attention_mask=attention_mask,
+                        pixel_values=[pixel_values],
+                        max_new_tokens=max_tokens,
+                    )
+                return self._processor.decode(
+                    outputs[0], skip_special_tokens=True
+                ).strip()
+            else:
+                from PIL import Image
+
+                chat_template = self.vlm_config.chat_template
+                formatted_prompt = chat_template.format(prompt=prompt)
+                image = Image.open(image_path).convert("RGB")
+                inputs = self._processor(
+                    text=formatted_prompt,
+                    images=image,
+                    return_tensors="pt",
+                ).to(self.device)
+                with torch.no_grad():
+                    outputs = self._model.generate(**inputs, max_new_tokens=max_tokens)
+                return self._processor.decode(
+                    outputs[0], skip_special_tokens=True
+                ).strip()
+        else:
+            raise RuntimeError(f"Unknown backend: {backend}")
+
+    def _generate_vqa_answer(
+        self, image_path: str, question: str, max_tokens: int = 100
+    ) -> str:
+        """Call the VLM to answer a VQA question about an image.
+
+        Thin wrapper around _generate_description that passes the question
+        directly as the prompt and uses a shorter default max_tokens.
+        """
+        return self._generate_description(
+            image_path, "vqa", question, max_tokens=max_tokens
+        )
+
+    def score_vqa_with_gt(
+        self,
+        ref_image_path: Union[str, Path],
+        dist_image_path: Union[str, Path],
+        question: str,
+        gt_answer: str,
+        task: str = "vqa",
+        weights: tuple = (1.0, 1.0, 0.1),
+        max_tokens: int = 100,
+    ) -> dict:
+        """Score a distorted image via VQA with ground-truth anchoring.
+
+        Computes two score sets for a (ref, dist, question, GT) quadruplet:
+
+        **指标1 (GT-normalized)**: BLEU(D,GT)/BLEU(R,GT), ROUGE(D,GT)/ROUGE(R,GT),
+        CIDEr(D,GT)/CIDEr(R,GT) — ratios clamped to [0, 1].  Measures how
+        much correct-answer fidelity is preserved under distortion, anchored
+        by the VLM's baseline performance on the clean reference.
+
+        **指标2 (Embodied-IQA style)**: BLEU(D,R), ROUGE(D,R), CIDEr(D,R) —
+        direct comparison between distorted and reference VLM outputs.
+        Measures how much the output drifted, independent of ground truth.
+
+        Args:
+            ref_image_path: Path to the clean reference image.
+            dist_image_path: Path to the distorted image.
+            question: The VQA question text.
+            gt_answer: Ground-truth answer for the question.
+            task: Task label for metadata (default "vqa").
+            weights: (bleu, rouge, cider) weight triple for cognitive score.
+            max_tokens: Max tokens for VLM answer generation.
+
+        Returns:
+            Dict with keys:
+              - metadata: image paths, question snippet, VLM answers
+              - metric1 (GT-normalized scores)
+              - metric2 (Ref-vs-Dist scores)
+        """
+        eps = 1e-6
+
+        # Stage 1: VLM inference
+        answer_ref = self._generate_vqa_answer(
+            str(ref_image_path), question, max_tokens
+        )
+        answer_dist = self._generate_vqa_answer(
+            str(dist_image_path), question, max_tokens
+        )
+
+        # Stage 2: Compute raw metric values
+        # ---- vs Ground Truth ----
+        bleu_r_gt = compute_bleu(gt_answer, answer_ref)
+        bleu_d_gt = compute_bleu(gt_answer, answer_dist)
+        rouge_r_gt = compute_rouge_l(gt_answer, answer_ref)
+        rouge_d_gt = compute_rouge_l(gt_answer, answer_dist)
+        cider_r_gt = compute_cider([gt_answer], answer_ref)
+        cider_d_gt = compute_cider([gt_answer], answer_dist)
+
+        # ---- Ref vs Dist (Embodied-IQA style) ----
+        bleu_rd = compute_bleu(answer_ref, answer_dist)
+        rouge_rd = compute_rouge_l(answer_ref, answer_dist)
+        cider_rd = compute_cider([answer_ref], answer_dist)
+
+        # Stage 3: Compute GT-normalized ratios (指标1)
+        bleu_gt_norm = max(0.0, min(1.0, bleu_d_gt / max(bleu_r_gt, eps)))
+        rouge_gt_norm = max(0.0, min(1.0, rouge_d_gt / max(rouge_r_gt, eps)))
+        cider_gt_norm = max(0.0, min(1.0, cider_d_gt / max(cider_r_gt, eps)))
+        # Flag VLM baseline failure
+        baseline_failure = bleu_r_gt < eps
+
+        w_bleu, w_rouge, w_cider = weights
+        weight_sum = w_bleu + w_rouge + w_cider
+        cognitive_gt = (
+            w_bleu * bleu_gt_norm + w_rouge * rouge_gt_norm + w_cider * cider_gt_norm
+        ) / weight_sum
+
+        # Stage 4: Compute Ref-vs-Dist cognitive score (指标2)
+        cognitive_rd = (
+            w_bleu * bleu_rd + w_rouge * rouge_rd + w_cider * cider_rd
+        ) / weight_sum
+
+        return {
+            "metadata": {
+                "annotated": True,
+                "ref_path": str(ref_image_path),
+                "dist_path": str(dist_image_path),
+                "question": question[:200],
+                "ref_answer": answer_ref,
+                "dist_answer": answer_dist,
+                "gt_answer": gt_answer,
+                "baseline_failure": baseline_failure,
+                "metric_weights": {
+                    "bleu": w_bleu,
+                    "rouge_l": w_rouge,
+                    "cider": w_cider,
+                },
+                "task": task,
+            },
+            "metric1_gt_normalized": {
+                "bleu": round(bleu_gt_norm, 6),
+                "rouge_l": round(rouge_gt_norm, 6),
+                "cider": round(cider_gt_norm, 6),
+                "cognitive_score": round(cognitive_gt, 6),
+                "raw_bleu_r_gt": round(bleu_r_gt, 6),
+                "raw_bleu_d_gt": round(bleu_d_gt, 6),
+                "raw_rouge_r_gt": round(rouge_r_gt, 6),
+                "raw_rouge_d_gt": round(rouge_d_gt, 6),
+                "raw_cider_r_gt": round(cider_r_gt, 6),
+                "raw_cider_d_gt": round(cider_d_gt, 6),
+            },
+            "metric2_ref_vs_dist": {
+                "bleu": round(bleu_rd, 6),
+                "rouge_l": round(rouge_rd, 6),
+                "cider": round(cider_rd, 6),
+                "cognitive_score": round(cognitive_rd, 6),
+            },
+        }
+
+    def score_image_comparison(
+        self,
+        ref_image_path: Union[str, Path],
+        dist_image_path: Union[str, Path],
+        task: str,
+        weights: tuple = (1.0, 1.0, 0.1),
+    ) -> dict:
+        """Score a distorted image by comparing VLM descriptions.
+
+        Per the proposal design:
+        1. Generate 3 descriptions for the clean reference image
+        2. Generate 3 descriptions for the distorted image
+        3. Compute BLEU, ROUGE-L, CIDEr per prompt pair
+        4. Weighted average (1:1:0.1) -> cognitive quality score
+
+        Args:
+            ref_image_path: Path to the clean reference image.
+            dist_image_path: Path to the distorted image.
+            task: Task type (tracking, inspection, delivery, sar).
+            weights: (bleu_weight, rouge_weight, cider_weight).
+
+        Returns:
+            Dict with metadata, summary, and details keys.
+        """
+        ref_path = str(ref_image_path)
+
+        # Use VQA questions for this image; fall back to hardcoded task prompts
+        vqa_prompts = self.vqa_index.get_prompts(ref_path)
+        if vqa_prompts:
+            prompts = vqa_prompts
+            _log.info("Using %d VQA questions for %s", len(prompts), ref_path)
+        else:
+            prompts = self._get_description_prompts(task)
+            if not prompts:
+                raise ValueError(f"No prompts available for {ref_path}, task={task}")
+            _log.info(
+                "No VQA questions for %s, using %d task prompts", ref_path, len(prompts)
+            )
+
+        ref_descriptions = []
+        dist_descriptions = []
+
+        for i, desc_prompt in enumerate(prompts):
+            ref_desc = self._generate_description(
+                str(ref_image_path), task, desc_prompt
+            )
+            ref_descriptions.append(ref_desc)
+
+            dist_desc = self._generate_description(
+                str(dist_image_path), task, desc_prompt
+            )
+            dist_descriptions.append(dist_desc)
+
+        metric_results = compute_cognitive_score(
+            ref_texts=ref_descriptions,
+            dist_texts=dist_descriptions,
+            weights=weights,
+        )
+
+        return {
+            "metadata": {
+                "annotated": True,
+                "num_prompts": len(prompts),
+                "metric_weights": {
+                    "bleu": weights[0],
+                    "rouge_l": weights[1],
+                    "cider": weights[2],
+                },
+            },
+            "summary": {
+                "cognitive_score": metric_results["cognitive_score"],
+                "bleu": metric_results["bleu"],
+                "rouge_l": metric_results["rouge_l"],
+                "cider": metric_results["cider"],
+            },
+            "details": [
+                {
+                    "id": i,
+                    "task": task,
+                    "prompt": p,
+                    "reference": {"answer": ref_descriptions[i]},
+                    "prediction": {"answer": dist_descriptions[i]},
+                    "scores": metric_results["per_prompt"][i],
+                }
+                for i, p in enumerate(prompts)
+            ],
+        }
+
+    def score_batch_comparison(
+        self,
+        ref_image_paths: List[str],
+        dist_image_paths: List[str],
+        task_labels: List[str],
+        weights: tuple = (1.0, 1.0, 0.1),
+        show_progress: bool = True,
+    ) -> List[dict]:
+        """Score a batch of distorted images via description comparison.
+
+        Generates descriptions for reference images once (cached per unique
+        ref path), then for each distorted image, and computes cognitive
+        scores via BLEU/ROUGE-L/CIDEr.
+
+        Args:
+            ref_image_paths: Clean reference image paths (aligned with dist).
+            dist_image_paths: Distorted image paths.
+            task_labels: Task types.
+            weights: Metric weights for cognitive score computation.
+            show_progress: Whether to show a tqdm progress bar.
+
+        Returns:
+            List of dicts, each with metadata, summary, and details keys.
+        """
+        if not (len(ref_image_paths) == len(dist_image_paths) == len(task_labels)):
+            raise ValueError(
+                f"Length mismatch: {len(ref_image_paths)} refs, "
+                f"{len(dist_image_paths)} dists, {len(task_labels)} tasks"
+            )
+
+        # Generate and cache reference descriptions
+        ref_desc_cache: Dict[str, List[str]] = {}
+        unique_refs = sorted(set(ref_image_paths))
+
+        for ref_path in tqdm(
+            unique_refs,
+            desc="Generating ref descriptions",
+            unit="ref",
+            disable=not show_progress,
+        ):
+            prompts = self.vqa_index.get_prompts(ref_path)
+            if prompts:
+                descriptions = [
+                    self._generate_description(ref_path, "vqa", p) for p in prompts
+                ]
+                ref_desc_cache[ref_path] = descriptions
+
+        # Score each distorted image
+        results: List[dict] = []
+        for ref, dist, task in tqdm(
+            zip(ref_image_paths, dist_image_paths, task_labels),
+            total=len(dist_image_paths),
+            desc="Scoring distorted images",
+            unit="img",
+            disable=not show_progress,
+        ):
+            cache_key = ref
+            if cache_key not in ref_desc_cache:
+                _log.warning("Ref description not found for %s, generating now", ref)
+                prompts = self.vqa_index.get_prompts(ref)
+                if not prompts:
+                    prompts = self._get_description_prompts(task)
+                if not prompts:
+                    raise ValueError(f"No prompts available for ref={ref}, task={task}")
+                ref_desc_cache[cache_key] = [
+                    self._generate_description(ref, "vqa", p) for p in prompts
+                ]
+
+            ref_descriptions = ref_desc_cache[cache_key]
+
+            prompts = self.vqa_index.get_prompts(ref)
+            if not prompts:
+                prompts = self._get_description_prompts(task)
+            if not prompts:
+                raise ValueError(f"No prompts available for ref={ref}, task={task}")
+            dist_descriptions = [
+                self._generate_description(dist, task, p) for p in prompts
+            ]
+
+            metric_results = compute_cognitive_score(
+                ref_texts=ref_descriptions,
+                dist_texts=dist_descriptions,
+                weights=weights,
+            )
+
+            results.append(
+                {
+                    "metadata": {
+                        "annotated": True,
+                        "num_prompts": len(prompts),
+                        "metric_weights": {
+                            "bleu": weights[0],
+                            "rouge_l": weights[1],
+                            "cider": weights[2],
+                        },
+                    },
+                    "summary": {
+                        "cognitive_score": round(metric_results["cognitive_score"], 6),
+                        "bleu": round(metric_results["bleu"], 6),
+                        "rouge_l": round(metric_results["rouge_l"], 6),
+                        "cider": round(metric_results["cider"], 6),
+                    },
+                    "details": [
+                        {
+                            "id": i,
+                            "task": task,
+                            "prompt": p,
+                            "reference": {"answer": ref_descriptions[i]},
+                            "prediction": {"answer": dist_descriptions[i]},
+                            "scores": metric_results["per_prompt"][i],
+                        }
+                        for i, p in enumerate(prompts)
+                    ],
+                }
+            )
+
+        return results
+
+    def score_multi_image(
+        self,
+        ref_image_paths: List[str],
+        dist_image_paths: List[str],
+        question: str,
+        subtask_type: str = "",
+    ) -> float:
+        """Score a multi-UAV scene+frame group via description comparison.
+
+        Generates VLM descriptions for each UAV image individually (using the
+        same VQA question as prompt), concatenates them with UAV index labels,
+        then computes text similarity between the concatenated reference and
+        distorted descriptions.  Returns the cognitive quality score.
+
+        Args:
+            ref_image_paths: Clean reference image paths (one per UAV).
+            dist_image_paths: Distorted image paths (one per UAV, same order).
+            question: VQA question text used as the VLM prompt.
+            subtask_type: Subtask type identifier (e.g. ``"1.1"``), unused for
+                scoring but reserved for future task-conditioned weighting.
+
+        Returns:
+            Float cognitive quality score in approximately [0, 1].
+        """
+        if not ref_image_paths or not dist_image_paths:
+            return 0.0
+        if len(ref_image_paths) != len(dist_image_paths):
+            _log.warning(
+                "Mismatched UAV counts: %d ref vs %d dist, using min",
+                len(ref_image_paths),
+                len(dist_image_paths),
+            )
+            n = min(len(ref_image_paths), len(dist_image_paths))
+            ref_image_paths = ref_image_paths[:n]
+            dist_image_paths = dist_image_paths[:n]
+
+        prompt = question.strip()
+        if not prompt:
+            return 0.0
+
+        ref_parts: List[str] = []
+        for i, path in enumerate(ref_image_paths):
+            try:
+                desc = self._generate_description(path, "vqa", prompt)
+                ref_parts.append(f"[UAV{i}] {desc}")
+            except Exception:
+                _log.warning(
+                    "Failed to generate reference description for %s", path, exc_info=True
+                )
+                return 0.0
+
+        dist_parts: List[str] = []
+        for i, path in enumerate(dist_image_paths):
+            try:
+                desc = self._generate_description(path, "vqa", prompt)
+                dist_parts.append(f"[UAV{i}] {desc}")
+            except Exception:
+                _log.warning(
+                    "Failed to generate distorted description for %s", path, exc_info=True
+                )
+                return 0.0
+
+        ref_description = "\n".join(ref_parts)
+        dist_description = "\n".join(dist_parts)
+
+        result = compute_cognitive_score(
+            ref_texts=[ref_description],
+            dist_texts=[dist_description],
+        )
+        return result["cognitive_score"]
