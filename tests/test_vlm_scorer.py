@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from uav_iqa.annotations import SUBTASK_NAMES
 from uav_iqa.vla_scorer import (
     ALL_TASKS,
     BaseScorer,
@@ -54,9 +55,7 @@ class _MockProcessor:
         self._last_messages = []
         self.tokenizer = self
 
-    def __call__(
-        self, text=None, images=None, messages=None, return_tensors=None, **kwargs
-    ):
+    def __call__(self, text=None, images=None, messages=None, return_tensors=None, **kwargs):
         if messages is None and isinstance(text, list) and len(text) > 0:
             first = text[0]
             if isinstance(first, dict) and "role" in first:
@@ -166,9 +165,7 @@ class _MockModel:
         return _MockProcessor(self._response)
 
     def parameters(self):
-        return iter(
-            [__import__("torch").tensor([1.0], dtype=__import__("torch").float16)]
-        )
+        return iter([__import__("torch").tensor([1.0], dtype=__import__("torch").float16)])
 
 
 class _MockVLLMText:
@@ -244,7 +241,7 @@ class TestVLMScorerUnit:
         """Verify all required interface methods exist."""
         scorer = VLMScorer()
         for method in [
-            "_generate_description",
+            "_generate_answer",
             "score_image_comparison",
             "score_batch_comparison",
             "_build_description_prompt",
@@ -277,9 +274,9 @@ class TestVLMScorerPrompt:
         for task in ALL_TASKS:
             formatted = scorer._build_description_prompt(task, 0)
             assert len(formatted) > 0, f"{task}: empty formatted prompt"
-            assert (
-                "aerial" in formatted.lower()
-            ), f"{task}: missing 'aerial' in prompt: {formatted[:80]}..."
+            assert "aerial" in formatted.lower(), (
+                f"{task}: missing 'aerial' in prompt: {formatted[:80]}..."
+            )
 
     def test_all_tasks_have_3_prompts(self):
         """Every task type returns 3 non-empty description prompts."""
@@ -288,9 +285,7 @@ class TestVLMScorerPrompt:
             prompts = scorer._get_description_prompts(task)
             assert len(prompts) == 3
             for i, p in enumerate(prompts):
-                assert p and isinstance(
-                    p, str
-                ), f"{task} prompt {i} is empty or wrong type"
+                assert p and isinstance(p, str), f"{task} prompt {i} is empty or wrong type"
 
 
 # ===========================================================================
@@ -373,11 +368,15 @@ class TestVLMScorerFallback:
 
 
 class TestTaskConstants:
-    def test_all_tasks_has_four_tasks(self):
-        assert len(ALL_TASKS) == 4
+    def test_all_tasks_has_14_subtasks(self):
+        assert len(ALL_TASKS) == 14
 
-    def test_all_tasks_matches_expected(self):
-        assert set(ALL_TASKS) == {"tracking", "inspection", "delivery", "sar"}
+    def test_all_tasks_matches_subtask_names(self):
+        assert set(ALL_TASKS) == set(SUBTASK_NAMES.values())
+        assert "scene_description" in ALL_TASKS
+        assert "object_recognition" in ALL_TASKS
+        assert "quality_assessment" in ALL_TASKS
+        assert "when_to_collaborate" in ALL_TASKS
 
 
 # ===========================================================================
@@ -447,11 +446,12 @@ class TestVLMScorerCoverage:
         scorer._load_model()
         assert scorer._model is None
 
-    def test_build_description_prompt_unknown_task_returns_none(self):
-        """_build_description_prompt with unknown task returns None (no fallback)."""
+    def test_build_description_prompt_any_task_works(self):
+        """_build_description_prompt returns prompt for any task (task-agnostic)."""
         scorer = VLMScorer()
         formatted = scorer._build_description_prompt("unknown_task", 0)
-        assert formatted is None
+        assert formatted is not None
+        assert "aerial" in formatted.lower()
 
 
 # ===========================================================================
@@ -467,7 +467,7 @@ class TestChatTemplateFormatting:
         scorer = VLMScorer(model_name="Qwen2-VL")
         formatted = scorer._build_description_prompt("tracking", 0)
         assert "aerial" in formatted.lower()
-        assert "tracking" in formatted.lower()
+        assert "Describe the key objects" in formatted
         assert "<|im_start|>" not in formatted
         assert "<|user|>" not in formatted
 
@@ -483,22 +483,22 @@ class TestChatTemplateFormatting:
 
     def test_internlm_xc_family_build_description_prompt(self):
         """InternLM-Xcomposer family wraps prompt in <|User|>: and <|Bot|>:."""
-        scorer = VLMScorer(model_name="InternLM-Xcomposer2")
+        scorer = VLMScorer(model_name="InternLM-Xcomposer2.5")
         formatted = scorer._build_description_prompt("sar", 0)
         assert formatted.startswith("<|User|>:")
         assert formatted.endswith("<|Bot|>:")
-        assert "rescue" in formatted.lower()
+        assert "aerial" in formatted.lower()
 
     def test_ovis_family_build_description_prompt(self):
         """Ovis family returns raw description prompt."""
         scorer = VLMScorer(model_name="Ovis2")
         formatted = scorer._build_description_prompt("delivery", 0)
-        assert "delivery" in formatted.lower()
+        assert "aerial" in formatted.lower()
         assert "<|im_start|>" not in formatted
 
     def test_phi_family_build_description_prompt(self):
         """Phi family wraps prompt in <|user|>...<|end|>...<|assistant|>."""
-        scorer = VLMScorer(model_name="Phi3-Vision")
+        scorer = VLMScorer(model_name="Phi3.5-Vision")
         formatted = scorer._build_description_prompt("tracking", 0)
         assert "<|user|>" in formatted
         assert "<|assistant|>" in formatted
@@ -509,25 +509,19 @@ class TestChatTemplateFormatting:
         """MPlug family template is {prompt} — returns raw description text."""
         scorer = VLMScorer(model_name="MPlugOwl3")
         formatted = scorer._build_description_prompt("inspection", 0)
-        assert "inspection" in formatted.lower()
+        assert "aerial" in formatted.lower()
         assert "<|im_start|>" not in formatted
 
-    def test_all_15_models_produce_non_empty_description_prompt(self):
+    def test_all_13_models_produce_non_empty_description_prompt(self):
         """Every model in the registry produces a non-empty description prompt."""
-        task_keywords = {
-            "tracking": "aerial",
-            "inspection": "infrastructure",
-            "delivery": "delivery",
-            "sar": "rescue",
-        }
         for short_name in MODEL_REGISTRY:
             scorer = VLMScorer(model_name=short_name)
-            for task, keyword in task_keywords.items():
+            for task in ALL_TASKS:
                 formatted = scorer._build_description_prompt(task, 0)
                 assert len(formatted) > 0, f"{short_name}/{task}: empty prompt"
-                assert (
-                    keyword in formatted.lower()
-                ), f"{short_name}/{task}: '{keyword}' not in prompt: {formatted[:80]}..."
+                assert "aerial" in formatted.lower(), (
+                    f"{short_name}/{task}: 'aerial' not in prompt: {formatted[:80]}..."
+                )
 
     def test_internvl3_format_matches_internvl_pattern(self):
         """InternVL3 uses same format as InternVL2."""
@@ -539,8 +533,8 @@ class TestChatTemplateFormatting:
         assert "<|im_start|>system" in p3
 
     def test_phi4_format_matches_phi_pattern(self):
-        """Phi4-Multimodal uses same format as Phi3-Vision."""
-        scorer3 = VLMScorer(model_name="Phi3-Vision")
+        """Phi4-Multimodal uses same format as Phi3.5-Vision."""
+        scorer3 = VLMScorer(model_name="Phi3.5-Vision")
         scorer4 = VLMScorer(model_name="Phi4-Multimodal")
         p3 = scorer3._build_description_prompt("tracking", 0)
         p4 = scorer4._build_description_prompt("tracking", 0)
@@ -631,18 +625,14 @@ class TestVLMScorerModelLoading:
 
         _essential = {
             "PreTrainedModel": {},
-            "GenerationMixin": {
-                "generate": lambda self, **kw: [__import__("torch").tensor([1])]
-            },
+            "GenerationMixin": {"generate": lambda self, **kw: [__import__("torch").tensor([1])]},
             "AutoConfig": {"register": classmethod(lambda cls, key, *a, **kw: None)},
             "GenerationConfig": {},
             "CLIPImageProcessor": {},
         }
         for cls_name, extra_attrs in _essential.items():
             mock_cls = type(cls_name, (), extra_attrs)
-            mock_cls.from_pretrained = classmethod(
-                lambda cls, *a, **kw: type("Mock", (), {})()
-            )
+            mock_cls.from_pretrained = classmethod(lambda cls, *a, **kw: type("Mock", (), {})())
             setattr(mock_tf, cls_name, mock_cls)
 
         _cache_utils = type(sys)("cache_utils")
@@ -653,10 +643,8 @@ class TestVLMScorerModelLoading:
 
         for cls_name in class_names:
             mock_cls = type(cls_name, (), {})
-            mock_cls.from_pretrained = (
-                TestVLMScorerModelLoading._fake_from_pretrained_factory(
-                    cls_name, call_tracker
-                )
+            mock_cls.from_pretrained = TestVLMScorerModelLoading._fake_from_pretrained_factory(
+                cls_name, call_tracker
             )
             mock_cls.get_init_context = classmethod(
                 lambda cls, dtype, is_quantized, _is_ds_init_called, allow_all_kernels=None: [
@@ -674,9 +662,7 @@ class TestVLMScorerModelLoading:
         mock_tf = self._make_mock_module(["AutoModel", "AutoTokenizer"], called)
 
         with patch.dict("sys.modules", {"transformers": mock_tf, "torch": torch}):
-            scorer = VLMScorer(
-                model_name="InternVL2", backend="transformers", device="cpu"
-            )
+            scorer = VLMScorer(model_name="InternVL2", backend="transformers", device="cpu")
             scorer._load_model()
             assert "AutoModel" in called
             assert "AutoTokenizer" in called
@@ -686,14 +672,10 @@ class TestVLMScorerModelLoading:
         import torch
 
         called = []
-        mock_tf = self._make_mock_module(
-            ["AutoModelForCausalLM", "AutoProcessor"], called
-        )
+        mock_tf = self._make_mock_module(["AutoModelForCausalLM", "AutoProcessor"], called)
 
         with patch.dict("sys.modules", {"transformers": mock_tf, "torch": torch}):
-            scorer = VLMScorer(
-                model_name="Phi3-Vision", backend="transformers", device="cpu"
-            )
+            scorer = VLMScorer(model_name="Phi3.5-Vision", backend="transformers", device="cpu")
             scorer._load_model()
             assert "AutoModelForCausalLM" in called
             assert "AutoProcessor" in called
@@ -726,9 +708,7 @@ class TestVLMScorerModelLoading:
         mock_tf.AutoModel.from_pretrained = staticmethod(record_trust)
 
         mock_tf.AutoTokenizer = type("AutoTokenizer", (), {})
-        mock_tf.AutoTokenizer.from_pretrained = staticmethod(
-            lambda *a, **kw: MockModel()
-        )
+        mock_tf.AutoTokenizer.from_pretrained = staticmethod(lambda *a, **kw: MockModel())
 
         _cache_utils = type(sys)("cache_utils")
         _DC = type("DynamicCache", (), {})
@@ -737,9 +717,7 @@ class TestVLMScorerModelLoading:
         mock_tf.cache_utils = _cache_utils
 
         with patch.dict("sys.modules", {"transformers": mock_tf, "torch": torch}):
-            scorer = VLMScorer(
-                model_name="InternVL2", backend="transformers", device="cpu"
-            )
+            scorer = VLMScorer(model_name="InternVL2", backend="transformers", device="cpu")
             scorer._load_model()
             assert trust_values == [False]
 
@@ -748,14 +726,10 @@ class TestVLMScorerModelLoading:
         import torch
 
         called = []
-        mock_tf = self._make_mock_module(
-            ["AutoModelForVision2Seq", "AutoProcessor"], called
-        )
+        mock_tf = self._make_mock_module(["AutoModelForVision2Seq", "AutoProcessor"], called)
 
         with patch.dict("sys.modules", {"transformers": mock_tf, "torch": torch}):
-            scorer = VLMScorer(
-                model_name="Qwen2-VL", backend="transformers", device="cpu"
-            )
+            scorer = VLMScorer(model_name="Qwen2-VL", backend="transformers", device="cpu")
             scorer._load_model()
             assert "AutoModelForVision2Seq" in called
             assert "AutoProcessor" in called
@@ -765,14 +739,10 @@ class TestVLMScorerModelLoading:
         import torch
 
         called = []
-        mock_tf = self._make_mock_module(
-            ["AutoModelForCausalLM", "AutoTokenizer"], called
-        )
+        mock_tf = self._make_mock_module(["AutoModelForCausalLM", "AutoTokenizer"], called)
 
         with patch.dict("sys.modules", {"transformers": mock_tf, "torch": torch}):
-            scorer = VLMScorer(
-                model_name="MPlugOwl3", backend="transformers", device="cpu"
-            )
+            scorer = VLMScorer(model_name="MPlugOwl3", backend="transformers", device="cpu")
             scorer._load_model()
             assert "AutoModelForCausalLM" in called
             assert "AutoTokenizer" in called
@@ -789,7 +759,7 @@ class TestVLMScorerModelLoading:
 
         with patch.dict("sys.modules", {"transformers": mock_tf, "torch": torch}):
             scorer = VLMScorer(
-                model_name="InternLM-Xcomposer2", backend="transformers", device="cpu"
+                model_name="InternLM-Xcomposer2.5", backend="transformers", device="cpu"
             )
             scorer._load_model()
             assert "AutoModelForCausalLM" in called
@@ -800,9 +770,7 @@ class TestVLMScorerModelLoading:
         import torch
 
         called = []
-        mock_tf = self._make_mock_module(
-            ["AutoModelForCausalLM", "AutoProcessor"], called
-        )
+        mock_tf = self._make_mock_module(["AutoModelForCausalLM", "AutoProcessor"], called)
 
         with patch.dict("sys.modules", {"transformers": mock_tf, "torch": torch}):
             scorer = VLMScorer(model_name="Ovis2", backend="transformers", device="cpu")
@@ -817,10 +785,10 @@ class TestVLMScorerModelLoading:
 
 
 class TestVLMScorerPipelineIntegration:
-    """Integration tests: comparison scoring with mocked _generate_description."""
+    """Integration tests: comparison scoring with mocked _generate_answer."""
 
     def test_score_image_comparison_mocked(self):
-        """Mock _generate_description — verify cognitive score computed from descriptions."""
+        """Mock _generate_answer — verify cognitive score computed from descriptions."""
         DESCRIPTION = "Aerial view showing urban landscape with buildings and roads"
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -830,9 +798,7 @@ class TestVLMScorerPipelineIntegration:
             _make_dummy_image(dist)
 
             scorer = VLMScorer(model_name="Qwen2-VL", device="cpu")
-            with patch.object(
-                scorer, "_generate_description", return_value=DESCRIPTION
-            ):
+            with patch.object(scorer, "_generate_answer", return_value=DESCRIPTION):
                 result = scorer.score_image_comparison(str(ref), str(dist), "tracking")
 
             assert result["metadata"]["annotated"] is True
@@ -856,7 +822,7 @@ class TestVLMScorerPipelineIntegration:
             assert len(result["details"]) == 3
 
     def test_score_batch_comparison_mocked(self):
-        """Batch comparison with mocked _generate_description works correctly."""
+        """Batch comparison with mocked _generate_answer works correctly."""
         DESCRIPTION = "Aerial view showing urban landscape with buildings and roads"
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -868,9 +834,7 @@ class TestVLMScorerPipelineIntegration:
             _make_dummy_image(d2)
 
             scorer = VLMScorer(model_name="InternVL2", device="cpu")
-            with patch.object(
-                scorer, "_generate_description", return_value=DESCRIPTION
-            ):
+            with patch.object(scorer, "_generate_answer", return_value=DESCRIPTION):
                 results = scorer.score_batch_comparison(
                     [str(r1), str(r1)],
                     [str(d1), str(d2)],
@@ -889,7 +853,7 @@ class TestVLMScorerPipelineIntegration:
                     assert "reference" in detail
                     assert "prediction" in detail
 
-    def test_all_15_models_score_comparison_mocked(self):
+    def test_all_13_models_score_comparison_mocked(self):
         """Every registered model works with mocked score_image_comparison."""
         DESCRIPTION = "Aerial view showing urban landscape with buildings and roads"
 
@@ -901,19 +865,13 @@ class TestVLMScorerPipelineIntegration:
 
             for short_name in sorted(MODEL_REGISTRY):
                 scorer = VLMScorer(model_name=short_name, device="cpu")
-                with patch.object(
-                    scorer, "_generate_description", return_value=DESCRIPTION
-                ):
-                    result = scorer.score_image_comparison(
-                        str(img1), str(img2), "tracking"
-                    )
+                with patch.object(scorer, "_generate_answer", return_value=DESCRIPTION):
+                    result = scorer.score_image_comparison(str(img1), str(img2), "tracking")
 
-                assert (
-                    result["metadata"]["annotated"] is True
-                ), f"{short_name}: annot mismatch"
-                assert (
-                    result["summary"]["cognitive_score"] > 0.9
-                ), f"{short_name}: low cognitive score {result['summary']['cognitive_score']}"
+                assert result["metadata"]["annotated"] is True, f"{short_name}: annot mismatch"
+                assert result["summary"]["cognitive_score"] > 0.9, (
+                    f"{short_name}: low cognitive score {result['summary']['cognitive_score']}"
+                )
 
     def test_different_families_score_comparison_mocked(self):
         """Every model family works with mocked score_image_comparison."""
@@ -922,9 +880,9 @@ class TestVLMScorerPipelineIntegration:
         families = [
             "Qwen2-VL",
             "InternVL2",
-            "InternLM-Xcomposer2",
+            "InternLM-Xcomposer2.5",
             "Ovis2",
-            "Phi3-Vision",
+            "Phi3.5-Vision",
             "MPlugOwl3",
         ]
 
@@ -936,16 +894,32 @@ class TestVLMScorerPipelineIntegration:
 
             for short_name in families:
                 scorer = VLMScorer(model_name=short_name, device="cpu")
-                with patch.object(
-                    scorer, "_generate_description", return_value=DESCRIPTION
-                ):
-                    result = scorer.score_image_comparison(
-                        str(img1), str(img2), "tracking"
-                    )
+                with patch.object(scorer, "_generate_answer", return_value=DESCRIPTION):
+                    result = scorer.score_image_comparison(str(img1), str(img2), "tracking")
 
-                assert (
-                    result["metadata"]["annotated"] is True
-                ), f"{short_name}: annot mismatch"
-                assert (
-                    result["summary"]["cognitive_score"] > 0.9
-                ), f"{short_name}: low cognitive score"
+                assert result["metadata"]["annotated"] is True, f"{short_name}: annot mismatch"
+                assert result["summary"]["cognitive_score"] > 0.9, (
+                    f"{short_name}: low cognitive score"
+                )
+
+
+class TestGenerateAnswerMulti:
+    """Unit tests for VLMScorer._generate_answer_multi file validation."""
+
+    def test_raises_on_missing_file(self, tmp_path):
+        """_generate_answer_multi should raise FileNotFoundError for nonexistent files."""
+        scorer = VLMScorer()
+        img1 = tmp_path / "real.png"
+        _make_dummy_image(img1, 32)
+        img_missing = tmp_path / "nonexistent.png"
+
+        with pytest.raises(FileNotFoundError, match="Image not found"):
+            scorer._generate_answer_multi(
+                [str(img1), str(img_missing)], "vqa", "Describe the scene."
+            )
+
+    def test_raises_on_empty_paths(self):
+        """_generate_answer_multi should raise RuntimeError for empty image_paths."""
+        scorer = VLMScorer()
+        with pytest.raises(RuntimeError, match="No image paths"):
+            scorer._generate_answer_multi([], "vqa", "Describe the scene.")

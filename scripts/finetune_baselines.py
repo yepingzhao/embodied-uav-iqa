@@ -118,9 +118,7 @@ class BaselineLightningModule(L.LightningModule):
         self._val_distortions.clear()
 
     def configure_optimizers(self):
-        opt = torch.optim.AdamW(
-            self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay
-        )
+        opt = torch.optim.AdamW(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         if self.warmup_epochs > 0:
             warmup = torch.optim.lr_scheduler.LinearLR(
                 opt, start_factor=1e-3, total_iters=self.warmup_epochs
@@ -132,9 +130,7 @@ class BaselineLightningModule(L.LightningModule):
                 opt, [warmup, cosine], milestones=[self.warmup_epochs]
             )
         else:
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                opt, T_max=self.total_epochs
-            )
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=self.total_epochs)
         return {
             "optimizer": opt,
             "lr_scheduler": {
@@ -166,23 +162,29 @@ class BaselineDataModule(L.LightningDataModule):
     def _load_split(self, split):
         return load_flat_samples(self.data_dir, split)
 
-    def _make_dataset(self, samples):
+    def _make_dataset(self, split: str):
         return UAVIQADataset(
             data_root=str(self.data_dir),
+            split=split,
             image_size=self.image_size,
         )
 
-    def setup(self, stage=None):
+    def setup(self, _stage=None):
         train_samples = self._load_split("train")
-        val_samples = self._load_split("val")
+        val_split = "val" if (self.data_dir / "val").is_dir() else "test"
+        val_samples = self._load_split(val_split)
         test_samples = self._load_split("test")
 
-        if self.max_train_samples > 0:
-            train_samples = train_samples[: self.max_train_samples]
+        self.train_ds = self._make_dataset("train")
+        if self.max_train_samples > 0 and len(self.train_ds.samples) > self.max_train_samples:
+            self.train_ds.samples = self.train_ds.samples[: self.max_train_samples]
+            _log.info(
+                "Limited training samples to max_train_samples=%d",
+                self.max_train_samples,
+            )
 
-        self.train_ds = self._make_dataset(train_samples)
-        self.val_ds = self._make_dataset(val_samples)
-        self.test_ds = self._make_dataset(test_samples)
+        self.val_ds = self._make_dataset(val_split)
+        self.test_ds = self._make_dataset("test")
 
         _log.info(
             "Train: %d, Val: %d, Test: %d",
@@ -249,9 +251,7 @@ def evaluate_checkpoint(
     with torch.no_grad():
         for i, s in enumerate(test_samples):
             img_t = (
-                load_image_tensor(Path(data_dir) / s["path"], image_size)
-                .unsqueeze(0)
-                .to(device)
+                load_image_tensor(Path(data_dir) / s["path"], image_size).unsqueeze(0).to(device)
             )
             pred = model(img_t).item()
 
@@ -260,7 +260,7 @@ def evaluate_checkpoint(
                 score = np.mean(score)
             predictions.append(float(pred))
             targets.append(float(score))
-            task_ids.append(s.get("task", "tracking"))
+            task_ids.append(s.get("task", "scene_description"))
             distortion_labels.append(s.get("distortion", "unknown"))
 
             if (i + 1) % 1000 == 0:
@@ -325,9 +325,9 @@ def main():
     )
     args = parser.parse_args()
 
-    try:
-        import pyiqa  # noqa: F401
-    except ImportError:
+    import importlib.util
+
+    if importlib.util.find_spec("pyiqa") is None:
         _log.error("pyiqa is required for fine-tuning. Install: uv sync --group dev")
         return 1
 
@@ -393,6 +393,7 @@ def main():
             image_size=args.image_size,
             device="cuda" if torch.cuda.is_available() else "cpu",
         )
+    return None
 
 
 if __name__ == "__main__":

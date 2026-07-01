@@ -1,6 +1,6 @@
 # Architecture Codemap
 
-**Last Updated:** 2026-06-27
+**Last Updated:** 2026-07-01
 
 ## High-Level System Overview
 
@@ -12,17 +12,18 @@
 │                                                                      │
 │  Input Source ───► DatasetFormat ──► DataSynthesisPipeline           │
 │  (AirCopBench /    (registry key:     │                              │
-│   GenericDir)       "aircopbench",    ├── extract_references         │
-│                     "generic")        ├── inject_distortions         │
-│                                        │    (33 × 5 per ref)         │
-│                                        ├── generate_manifests        │
-│                                        │    (train/val/test splits)  │
-│                                        └── annotate_scores           │
+│   GenericDir)       "aircopbench",    ├── extract (copy VQA JSONs)   │
+│                     "generic")        ├── inject (apply distortion   │
+│                                        │    to all UAVs in group)    │
+│                                        ├── annotate (VLM multi-image │
+│                                        │    scoring)                 │
+│                                        └── aggregate (compute        │
+│                                             cognitive_score)         │
 │                                             │                        │
 │                                             ▼                        │
-│                                     manifest.json                    │
-│                                     (path, task, distortion,         │
-│                                      intensity, scores)              │
+│                                     *_VQA_*.json                     │
+│                                     (grouped: uav_paths, distortions, │
+│                                      vqa_entries, cognitive_score)   │
 └─────────────────────────────────────┼────────────────────────────────┘
                                        │
                                        ▼
@@ -34,9 +35,6 @@
 │   augmentation)     │  Loss: MSE + ListMLE +       │                 │
 │                     │  CrossTaskRegularization     │                 │
 │                     └──────────────────────────────┘                 │
-│                                 │                                    │
-│                   CurriculumStageCallback                            │
-│                   (VLM → VLA → Execution)                           │
 │                                 │                                    │
 │                             Output                                   │
 │                       (best_*.ckpt, last.ckpt, metrics.csv)         │
@@ -52,11 +50,11 @@
 │                              ├── annotate_manifest   │   (15 models,  │
 │                              │   (checkpoint/resume) │    6 families) │
 │                              ├── save/load_checkpoint├── score_image  │
-│                              └── write_manifest      └── score_batch  │
+│                              └── write_groups       └── score_batch  │
 │                                        │                  via vLLM   │
 │                                        ▼                  or         │
 │                                vlm_annotated/              transformers│
-│                                {model}/manifest.json                  │
+│                                {model}/*_VQA_*.json          │
 │                                                                      │
 │  scripts/download_models.py ── snapshot_download all 15 models       │
 │  (HF Hub download + optional validate)                               │
@@ -114,8 +112,9 @@ Reference Image (3×H×W, uint8)
 └──────────────────────────────────────────────────┘
     │
     ▼
-Manifest entry: {path, task, distortion, intensity_level,
-                 ref_id, vlm_score, vla_score, execution_score, annotated}
+Grouped entry: [{dataset, sequence_frame, uav_paths, num_uavs,
+                  distortions: {dist_key: {type, category, intensity, ...}},
+                  vqa_entries: [{subtask_type, cognitive_score, ...}]}]
 ```
 
 ## Model Inference Flow
@@ -200,15 +199,69 @@ Output: (B,) quality scores ∈ [0, 1]
 │  Optimizer: AdamW (lr=3e-4, wd=1e-4)       │
 │  Scheduler: warmup (5) → cosine (45)       │
 │                                              │
-│  3-Stage Curriculum:                          │
-│    Epochs 1-20:   vlm_score                  │
-│    Epochs 21-40:  vla_score                  │
-│    Epochs 41-50:  execution_score            │
+│  Supervision: single cognitive_score             │
+│  (unified quality score from VLM aggregation)     │
 │                                              │
 │  Logging: self.log() → WandbLogger         │
 │           (cloud: wandb.ai)                  │
 │           + CSVLogger (local: metrics.csv)   │
 └─────────────────────────────────────────────┘
+```
+
+## Multi-GPU Offline Inference Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                  InferenceEngine (lifecycle manager)                │
+│                                                                    │
+│  Main Process:                    Worker Processes (1 per GPU):    │
+│  ┌──────────────────────────┐     ┌───────────────────────────┐   │
+│  │  Scheduler               │     │  worker_main               │   │
+│  │  ├── scan input files    │     │  ┌─────────────────────┐  │   │
+│  │  ├── generate tasks      │     │  │ task_queue.get()    │  │   │
+│  │  └── TaskRepository      │     │  │        ↓            │  │   │
+│  │       └── CheckpointStore│     │  │ JsonStorage         │  │   │
+│  │            (SQLite)      │     │  │  .load_chunk()      │  │   │
+│  └───────────┬──────────────┘     │  │        ↓            │  │   │
+│              │ tasks              │  │ Executor.infer()    │  │   │
+│              ▼                    │  │        ↓            │  │   │
+│  ┌──────────────────────┐         │  │ result_queue.put()  │  │   │
+│  │  TaskQueue (MpQueue)  │◄───────┤  └─────────────────────┘  │   │
+│  │  [multiprocessing]    │         └───────────────────────────┘   │
+│  └──────────────────────┘                                         │
+│              │                                                     │
+│              ▼                                                     │
+│  ┌──────────────────────┐         ┌───────────────────────────┐   │
+│  │  Collector           │◄────────┤  ResultQueue (MpQueue)    │   │
+│  │  ├── track chunks    │         └───────────────────────────┘   │
+│  │  ├── detect complete │                                         │
+│  │  └── notify Writer   │                                         │
+│  └───────────┬──────────┘                                         │
+│              ▼                                                     │
+│  ┌──────────────────────┐                                         │
+│  │  Writer              │                                         │
+│  │  ├── merge chunks    │                                         │
+│  │  ├── restore order   │                                         │
+│  │  └── atomic write    │                                         │
+│  └──────────────────────┘                                         │
+│              │                                                     │
+│              ▼                                                     │
+│  ┌──────────────────────┐                                         │
+│  │  Validator           │  file/record count, order, identity     │
+│  └──────────────────────┘                                         │
+│              │                                                     │
+│              ▼                                                     │
+│  ┌──────────────────────┐                                         │
+│  │  Metrics             │  samples/sec, latency, ETA              │
+│  └──────────────────────┘                                         │
+└────────────────────────────────────────────────────────────────────┘
+
+Key properties:
+- Input: N JSON files → Task chunking → dynamic GPU scheduling
+- Output: N JSON files (same names, same record count & order)
+- Resume: SQLite checkpoint at task granularity
+- Backend-agnostic Executor: DummyExecutor / VLMExecutor / future
+- Storage-agnostic: JsonStorage / future JsonlStorage / Parquet
 ```
 
 ## Component Relationships
@@ -220,12 +273,12 @@ scripts/data_synthesis.py
                   ├── uses → DatasetFormat (registry: AirCopBenchFormat, GenericImageDirFormat)
                   ├── uses → UAVDistortionPipeline (distortion.py)
                   ├── uses → annotations.py (build_ref_score_lookup, assign_task_label, etc.)
-                  └── uses → utils.py (find_images, split_samples, write_manifest)
+                   └── uses → utils.py (find_images, split_samples)
 
 scripts/finetune_baselines.py
   ├── uses → UAVIQADataset (dataset.py) — reuses existing data loading
   ├── uses → metrics.py (evaluate_iqa, per_task_metrics, per_distortion_category_metrics)
-  ├── uses → utils.py (load_image_tensor, load_manifest, setup_logging)
+  ├── uses → utils.py (load_image_tensor, load_flat_samples, setup_logging)
   ├── owns → BaselineLightningModule (standalone wrapper around pyiqa model)
   │            └── owns → pyiqa model (brisque/niqe/clipiqa/maniqa/topiq_nr)
   └── owns → BaselineDataModule (standalone, no LightningCLI)
@@ -246,8 +299,30 @@ scripts/download_models.py
   └── uses → MODEL_REGISTRY (via importlib lazy-import from vlm/config.py)
   └── uses → huggingface_hub.snapshot_download
 
+scripts/vlm_cognitive_score_vqa.py
+  ├── uses → VLMScorer (vlm/scorer.py)
+  ├── uses → text_metrics.py (compute_bleu, compute_rouge_l, compute_cider)
+  ├── reads → manifest JSON (ref_img, dist_img, question, gt_answer)
+  └── writes → two JSON output files (指标1 GT-normalized + 指标2 direct-comparison)
+
 scripts/fix_configs.py
   └── utility — batch-converts experiment YAML configs from nested to flat format
+
+scripts/inference.py
+  └── calls → InferenceEngine (inference/engine.py)
+                  │
+                  ├── creates → Scheduler (inference/scheduler.py)
+                  │                └── uses → TaskRepository (inference/repository.py)
+                  │                       └── uses → CheckpointStore (inference/checkpoint.py)
+                  ├── creates → TaskQueue + ResultQueue (inference/queue.py)
+                  ├── creates → JsonStorage (inference/storage.py)
+                  ├── creates → Writer (inference/writer.py)
+                  ├── creates → Collector (inference/collector.py)
+                  ├── creates → Validator (inference/validator.py)
+                  ├── creates → Metrics (inference/metrics.py)
+                  └── spawns → Worker processes (inference/worker.py)
+                                  └── owns → Executor (inference/executor.py:
+                                                DummyExecutor / VLMExecutor)
 
 LightningCLI (scripts/train.py)
   ├── --config → configs/experiments/<name>.yaml
@@ -263,11 +338,10 @@ LightningCLI (scripts/train.py)
   │              ├── uses → ListMLELoss
   │              ├── uses → CrossTaskRegularization
   │              └── uses → metrics.py (evaluate_iqa, per_task_metrics, per_distortion_metrics)
-  ├── calls → UAVIQDataModule
+  ├── calls → UAVIQADataModule
   │              └── owns → UAVIQADataset
-  │                     └── uses → utils.py (load_image_tensor, load_manifest)
-  ├── adds → SetupRunCallback (manifest SHA256, param count, DDP-safe)
-  ├── adds → CurriculumStageCallback (VLM→VLA→Execution, DDP-safe)
+  │                     └── uses → utils.py (load_image_tensor)
+  ├── adds → SetupRunCallback (dataset SHA256, param count, DDP-safe)
   ├── adds → MetricsHistoryCallback (epoch metrics → history.json)
   ├── adds → ResultsSavingCallback (test results → results.json with git hash)
   ├── adds → ModelCheckpoint (val/srcc, top-1)
@@ -282,10 +356,15 @@ LightningCLI (scripts/train.py)
 | Frequency-Aware Branch | Captures periodic UAV artifacts (vibration, shadow) missed by spatial CNN |
 | Cross-Attention Gate | Adaptively weights frequency vs. spatial features per input |
 | FiLM task conditioning | Enables multi-task with minimal parameter overhead (4-dim embed) |
-| 3-stage curriculum | Progressive supervision: cheap VLM → medium VLA → expensive execution |
+| Single cognitive_score | Unified quality score from VLM multi-image aggregation replaces staged curriculum |
 | ListMLE loss | Per-distortion ranking signal improves relative quality ordering |
 | Feature sharing (forward_features) | Backbone+FPN+FAB computed once, reused for pred + cross-task loss |
 | Dynamic stage probing | Probes backbone forward pass to determine n_stages, selects last 3 — compatible with MobileNetV4, EfficientViT, MobileViT |
 | Regex-based backbone freeze | `_freeze_backbone_stages` matches `blocks.N`/`stages.N`/`stages_N` via `re` — supports diverse timm backbones |
 | scripts/train.py + LightningCLI | Replaces custom UAVIQACLI; self-contained YAML per experiment |
 | WandbLogger + CSVLogger | Cloud + local dual logging; no cloud dependency for local runs |
+| Inference framework with multiprocessing.Queue | Lightweight multi-GPU scheduling without Ray/Redis dependency |
+| SQLite checkpoint storage | Zero-config task-level resume; single file per run |
+| Chunk/batch separation | Chunk = scheduling unit, batch = GPU forward unit; independent sizing |
+| Backend-agnostic Executor ABC | Test with DummyExecutor, deploy with VLMExecutor, extend to vLLM/OpenAI |
+| Storage-agnostic ABCs | JsonStorage for MVP; swap to JsonlStorage/Parquet without changing workers |

@@ -23,9 +23,10 @@ class OverfitDataModule(L.LightningDataModule):
         self.n_samples = n_samples
         self.batch_size = batch_size
 
-    def setup(self, stage=None):
+    def setup(self, _stage=None):
+        from uav_iqa.annotations import NUM_SUBTASKS
         x = torch.randn(self.n_samples, 3, 256, 256)
-        task_ids = torch.randint(0, 4, (self.n_samples,))
+        task_ids = torch.randint(0, NUM_SUBTASKS, (self.n_samples,))
         y = torch.rand(self.n_samples)
 
         class OverfitDataset(torch.utils.data.Dataset):
@@ -34,13 +35,12 @@ class OverfitDataModule(L.LightningDataModule):
 
             def __getitem__(self, idx):
                 return {
-                    "image": x[idx],
+                    "images": x[idx].unsqueeze(0),
                     "task_id": task_ids[idx],
                     "score": y[idx],
-                    "vlm_score": y[idx],
-                    "vla_score": y[idx],
-                    "execution_score": y[idx],
                     "distortion": "overfit",
+                    "sample_id": f"overfit_{idx}",
+                    "num_uavs": 1,
                 }
 
         self.dataset = OverfitDataset()

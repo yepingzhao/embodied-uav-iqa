@@ -90,113 +90,59 @@ def count_parameters(model) -> tuple:
     return total, trainable
 
 
-def load_task_map(path: Optional[str]) -> Optional[dict]:
-    """Load a JSON task-map file, returning the parsed dict or None."""
-    if path is None:
-        return None
-    with open(path) as f:
-        return json.load(f)
-
-
-def split_samples(
-    samples: list,
-    ratios: list = None,
-    seed: int = 42,
-) -> dict:
-    """Shuffle and split a list into train/test.
-
-    Uses np.random.RandomState for reproducible permutation.
-    Default ratios: [0.8, 0.2].
-    """
-    if ratios is None:
-        ratios = [0.8, 0.2]
-    rng = np.random.RandomState(seed)
-    indices = rng.permutation(len(samples))
-    n = len(samples)
-    if len(ratios) != 2:
-        raise ValueError(f"Expected 2 ratios (train, test), got {len(ratios)}")
-    train_end = int(n * ratios[0])
-    return {
-        "train": [samples[i] for i in indices[:train_end]],
-        "test": [samples[i] for i in indices[train_end:]],
-    }
-
-
-def load_manifest(manifest_path: Path) -> list[dict]:
-    """Load manifest entries from a JSON file.
-
-    Returns the parsed list of entries. The caller is responsible for
-    checking that the file exists before calling.
-    """
-    with open(manifest_path) as f:
-        return json.load(f)
-
-
-def write_manifest(entries: list, manifest_path: Path, _log=None) -> int:
-    """Write manifest JSON, validate schema, and return entry count.
-
-    Creates parent directories as needed. Logs summary via `_log` if provided.
-    """
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(manifest_path, "w") as f:
-        json.dump(entries, f, indent=2)
-
-    from uav_iqa.dataset import validate_manifest
-
-    diag = validate_manifest(manifest_path)
-    if not diag.get("valid", True) and _log:
-        _log.warning("  Manifest validation warnings: %s", diag)
-
-    return len(entries)
-
-
 def load_flat_samples(output_dir: Path, split: str) -> list[dict]:
-    """Load grouped processed JSONs and flatten to old manifest-compatible format.
+    """Load processed flat JSON entries and convert to manifest-compatible format.
 
-    Each returned dict has: path, ref_path, task (subtask_name), distortion,
-    intensity_level, score (cognitive_score), ref_id.
+    The data synthesis pipeline writes flat entries (one per question × distortion)
+    with keys: sample_id, uav_paths, distorted_uav_paths, distortion_info,
+    subtask_type, cognitive_score, etc.
+
+    Each returned dict has: path, ref_path, uav_paths, uav_keys,
+    distorted_uav_paths, task, distortion, category, intensity_level,
+    score, ref_id, sample_id.
 
     This provides backward compatibility for benchmarking/finetuning scripts
     that expected the old manifest.json format.
     """
-    import json as _json
-
     split_dir = output_dir / split
     samples: list[dict] = []
 
     for fpath in sorted(split_dir.glob("*_VQA_*.json")):
         with open(fpath) as f:
-            groups = _json.load(f)
+            entries = json.load(f)
 
-        for group in groups:
-            uav_paths = group.get("uav_paths", {})
-            uav_keys = group.get("uav_keys", [])
-            distortions = group.get("distortions", {})
-            vqa_entries = group.get("vqa_entries", [])
+        if not isinstance(entries, list):
+            continue
 
-            if not uav_paths or not uav_keys:
+        for entry in entries:
+            uav_paths = entry.get("uav_paths", {})
+            if not uav_paths:
                 continue
 
-            for dist_key, dist_info in distortions.items():
-                for entry in vqa_entries:
-                    score = entry.get("cognitive_score", 0.0)
-                    subtask_name = entry.get("subtask_name", "unknown")
+            uav_keys = sorted(uav_paths.keys())
+            if not uav_keys:
+                continue
 
-                    samples.append({
-                        "path": str(dist_info.get("distorted_uav_paths", {}).get(
-                            uav_keys[0], ""
-                        )),
-                        "ref_path": str(uav_paths.get(uav_keys[0], "")),
-                        "uav_paths": uav_paths,
-                        "uav_keys": uav_keys,
-                        "distorted_uav_paths": dist_info.get("distorted_uav_paths", {}),
-                        "task": subtask_name,
-                        "distortion": dist_info.get("type", ""),
-                        "category": dist_info.get("category", "unknown"),
-                        "intensity_level": dist_info.get("intensity", 0.5),
-                        "score": score,
-                        "ref_id": str(Path(str(uav_paths.get(uav_keys[0], ""))).stem),
-                        "sample_id": dist_info.get("sample_id", ""),
-                    })
+            distorted_uav_paths = entry.get("distorted_uav_paths", {})
+            distortion_info = entry.get("distortion_info", {})
+
+            score = entry.get("cognitive_score")
+            if score is None:
+                score = 0.0
+
+            samples.append({
+                "path": str(distorted_uav_paths.get(uav_keys[0], "")),
+                "ref_path": str(uav_paths.get(uav_keys[0], "")),
+                "uav_paths": uav_paths,
+                "uav_keys": uav_keys,
+                "distorted_uav_paths": distorted_uav_paths,
+                "task": entry.get("subtask_type", "unknown"),
+                "distortion": distortion_info.get("type", ""),
+                "category": distortion_info.get("category", "unknown"),
+                "intensity_level": distortion_info.get("intensity", 0.5),
+                "score": score,
+                "ref_id": str(Path(str(uav_paths.get(uav_keys[0], ""))).stem),
+                "sample_id": entry.get("sample_id", ""),
+            })
 
     return samples

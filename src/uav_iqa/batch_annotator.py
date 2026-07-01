@@ -1,7 +1,7 @@
-"""Batch annotation engine for multi-UAV grouped JSON scoring.
+"""Batch annotation engine for multi-UAV flat JSON scoring.
 
-Orchestrates loading grouped processed JSON files, scoring scene+frame groups
-with ``VLMScorer.score_multi_image()``, checkpointing progress, and writing
+Orchestrates loading flat processed JSON files, scoring entries with
+``VLMScorer.score_multi_image()``, checkpointing progress, and writing
 updated JSONs back to disk.
 """
 
@@ -17,7 +17,7 @@ _log = logging.getLogger(__name__)
 
 
 class BatchAnnotator:
-    """Orchestrate batch VLM annotation of grouped processed JSONs.
+    """Orchestrate batch VLM annotation of flat processed JSONs.
 
     Parameters
     ----------
@@ -103,14 +103,14 @@ class BatchAnnotator:
         checkpoint_path: Optional[Path] = None,
         checkpoint_interval: int = 100,
     ) -> dict:
-        """Annotate one grouped JSON file.
+        """Annotate one flat processed JSON file.
 
         Parameters
         ----------
         json_path:
             Path to the processed JSON (e.g. ``train/Sim3_VQA_train.json``).
         max_entries:
-            Cap on how many VQA entries to score (None = unlimited).
+            Cap on how many entries to score (None = unlimited).
         checkpoint_path:
             Where to save/load checkpoint.
         checkpoint_interval:
@@ -118,74 +118,79 @@ class BatchAnnotator:
 
         Returns
         -------
-        dict with ``scored``, ``total``.
+        dict with ``scored``, ``newly_scored``, ``total``.
         """
-        groups = self.load_groups(json_path)
+        entries = self.load_groups(json_path)
 
         scored = 0
-        total = 0
+        newly_scored = 0
+        total = len(entries)
 
         model_name = getattr(self.scorer, "model_name", "unknown")
 
-        for gi, group in enumerate(groups):
-            uav_paths = group.get("uav_paths", {})
-            uav_keys = group.get("uav_keys", [])
-            distortions = group.get("distortions", {})
-
-            if not uav_paths or not uav_keys:
+        for entry in entries:
+            if model_name in entry.get("vlm_scores", {}):
+                scored += 1
                 continue
 
-            ref_image_paths = [
-                str(self.output_dir.parent / uav_paths.get(k, "").lstrip("/"))
-                for k in uav_keys
-            ]
-
-            for dist_key, dist_info in distortions.items():
-                dist_image_paths = []
-                for k in uav_keys:
-                    dp = dist_info.get("distorted_uav_paths", {}).get(k, "")
-                    dist_image_paths.append(
-                        str(self.output_dir.parent / dp.lstrip("/"))
-                    )
-
-                for entry in group.get("vqa_entries", []):
-                    total += 1
-
-                    if max_entries and scored >= max_entries:
-                        break
-
-                    cognitive = self.scorer.score_multi_image(
-                        ref_image_paths=ref_image_paths,
-                        dist_image_paths=dist_image_paths,
-                        question=entry.get("question", ""),
-                        subtask_type=entry.get("subtask_type", ""),
-                    )
-
-                    entry.setdefault("vlm_scores", {})[model_name] = cognitive
-                    scored += 1
-
-                    if checkpoint_path and scored % checkpoint_interval == 0:
-                        self.write_groups(groups, json_path)
-                        self.save_checkpoint(
-                            checkpoint_path,
-                            scores={"groups_processed": gi, "entries_scored": scored},
-                            completed=scored,
-                            total=total,
-                            metadata={
-                                "json_path": str(json_path),
-                                "model": model_name,
-                                "timestamp": time.time(),
-                            },
-                        )
-
-                if max_entries and scored >= max_entries:
-                    break
             if max_entries and scored >= max_entries:
                 break
 
-        self.write_groups(groups, json_path)
+            uav_paths = entry.get("uav_paths", {})
+            uav_keys = sorted(entry.get("uav_paths", {}).keys())
+            distorted_uav_paths = entry.get("distorted_uav_paths", {})
 
-        return {"scored": scored, "total": total}
+            if not uav_paths:
+                continue
+
+            ref_image_paths = [
+                str(self.output_dir.parent / uav_paths.get(k, "").lstrip("/")) for k in uav_keys
+            ]
+            dist_image_paths = [
+                str(self.output_dir.parent / distorted_uav_paths.get(k, "").lstrip("/"))
+                for k in uav_keys
+            ]
+
+            cognitive = self.scorer.score_multi_image(
+                ref_image_paths=ref_image_paths,
+                dist_image_paths=dist_image_paths,
+                question=entry.get("question", ""),
+                subtask_type=entry.get("subtask_type", ""),
+            )
+
+            entry.setdefault("vlm_scores", {})[model_name] = cognitive["cognitive_score"]
+            entry.setdefault("vlm_details", {})[model_name] = {
+                "cognitive_score": cognitive["cognitive_score"],
+                "bleu": cognitive["bleu"],
+                "rouge_l": cognitive["rouge_l"],
+                "cider": cognitive["cider"],
+                "ref_description": cognitive.get("ref_description", ""),
+                "dist_description": cognitive.get("dist_description", ""),
+                "prompt": cognitive.get("prompt", ""),
+            }
+            scores = list(entry.get("vlm_scores", {}).values())
+            entry["cognitive_score"] = round(sum(scores) / len(scores), 6) if scores else 0.0
+            scored += 1
+            newly_scored += 1
+
+            if checkpoint_path and scored % checkpoint_interval == 0:
+                self.write_groups(entries, json_path)
+                self.save_checkpoint(
+                    checkpoint_path,
+                    scores={},
+                    completed=scored,
+                    total=total,
+                    metadata={
+                        "last_sample_id": entry.get("sample_id", ""),
+                        "json_path": str(json_path),
+                        "model": model_name,
+                        "timestamp": time.time(),
+                    },
+                )
+
+        self.write_groups(entries, json_path)
+
+        return {"scored": scored, "newly_scored": newly_scored, "total": total}
 
     def annotate_splits(
         self,
@@ -200,7 +205,7 @@ class BatchAnnotator:
 
         Returns
         -------
-        Dict mapping ``split/json_name`` -> ``{scored, total}``.
+        Dict mapping ``split/json_name`` -> ``{scored, newly_scored, total}``.
         """
         results: Dict[str, dict] = {}
 
@@ -214,9 +219,7 @@ class BatchAnnotator:
                 key = f"{split}/{fpath.name}"
                 ckpt_path = None
                 if checkpoint_dir:
-                    safe_name = getattr(self.scorer, "model_name", "unknown").replace(
-                        "/", "_"
-                    )
+                    safe_name = getattr(self.scorer, "model_name", "unknown").replace("/", "_")
                     ckpt_path = checkpoint_dir / f"{safe_name}_{split}_{fpath.stem}.json"
                     if resume and ckpt_path.exists():
                         _log.info("Resuming from checkpoint: %s", ckpt_path)
@@ -229,6 +232,11 @@ class BatchAnnotator:
                     checkpoint_path=ckpt_path,
                     checkpoint_interval=checkpoint_interval,
                 )
-                _log.info("  %s: scored=%d", key, results[key]["scored"])
+                _log.info(
+                    "  %s: scored=%d, newly_scored=%d",
+                    key,
+                    results[key]["scored"],
+                    results[key]["newly_scored"],
+                )
 
         return results

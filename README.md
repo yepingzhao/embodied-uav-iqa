@@ -20,7 +20,7 @@ The project tests 4 claims (see [EXPERIMENT_PLAN.md](refine-logs/EXPERIMENT_PLAN
 | **C1** | UAV-specific distortions (propeller vibration, atmospheric scattering, 6DoF blur, packet loss, low-res+SR, propeller shadow) are **distinct** from generic distortions in terms of human/VLM quality assessment. |
 | **C2** | Synthetic distortions injected into clean AirCopBench frames **correlate with real** UAV-degraded image quality. |
 | **C3** | Existing IQA methods (PSNR, SSIM, BRISQUE, CLIP-IQA, MANIQA, etc.) **fail** to accurately assess UAV-specific distortions. |
-| **C4** | A task-conditioned IQA model **generalizes across** embodied tasks (tracking, inspection, delivery, SAR). |
+| **C4** | A task-conditioned IQA model **generalizes across** 14 embodied subtasks (scene understanding, object understanding, planning, collaboration). |
 
 ---
 
@@ -39,8 +39,8 @@ Input (3×256×256)
 
 - **Backbone:** MobileNetV4-S (via `timm`), pretrained, frozen first 2 stages
 - **Total params:** ~5.4M (INT8 quantized ~1.4MB)
-- **Task types:** tracking (0), inspection (1), delivery (2), sar (3)
-- **Training:** 50 epochs, 3-stage curriculum (VLM → VLA → Execution)
+- **14 subtask types:** scene_understanding (1.1–1.3), object_understanding (2.1–2.4), planning (3.1–3.3), collaboration (4.1–4.4)
+- **Training:** 50 epochs, single `cognitive_score` supervision (replaces 3-stage curriculum)
 - **Loss:** MSE + λ_rank · ListMLE + λ_cross_task · CrossTaskRegularization
 
 ---
@@ -67,8 +67,8 @@ Categories: blur (3), brightness (5), chromatic (3), noise (6), compression (3),
 ## Project Layout
 
 ```
-src/uav_iqa/               # Core library (~5.8K LOC, 16 modules)
-  __init__.py              # Public API exports (35 symbols)
+src/uav_iqa/               # Core library (~8K LOC, 16 top-level + 15 inference modules)
+  __init__.py              # Public API exports (45 symbols)
   distortion.py            # 36 distortion models (UAVDistortionPipeline)
   model.py                 # UAVIQANet (backbone → FPN → CBAM → FAB → task heads)
   dataset.py               # UAVIQADataset — manifest.json loader
@@ -78,14 +78,15 @@ src/uav_iqa/               # Core library (~5.8K LOC, 16 modules)
   lightning_module.py      # LightningModule with MSE + ListMLE + cross-task loss
   data_module.py           # LightningDataModule with manifest filtering
   metrics.py               # SRCC, PLCC, RMSE, Kendall τ metrics
-  callbacks.py             # SetupRunCallback, CurriculumStageCallback, MetricsHistoryCallback, ResultsSavingCallback
+  callbacks.py             # SetupRunCallback, MetricsHistoryCallback, ResultsSavingCallback; CurriculumStageCallback (deprecated/no-op)
   text_metrics.py          # BLEU, ROUGE-L, CIDEr text similarity for VLM comparison scoring
   vlm/                     # VLM scoring subpackage: config, scorer, VQA index
   vla_scorer.py            # BaseScorer: VLA/execution score interface
   batch_annotator.py       # BatchAnnotator: multi-GPU batch annotation across splits
+  inference/               # Multi-GPU offline inference framework (15 modules)
   utils.py                 # count_parameters, find_images, manifest I/O, logging
 
-scripts/                   # Executable experiment scripts (10 total)
+scripts/                   # Executable experiment scripts (12 total)
   data_synthesis.py              # Unified data synthesis CLI (extract/inject/manifest/annotate/all)
   download_models.py             # Download VLM model weights from HuggingFace Hub
   vlm_annotate.py                # Batch VLM annotation CLI with checkpoint/resume
@@ -96,9 +97,10 @@ scripts/                   # Executable experiment scripts (10 total)
   overfit_sanity_check.py        # 100-image overfit test (model correctness)
   validate_synth_real_correlation.py  # C2 correlation validation
   train.py                       # Unified training entry point (LightningCLI)
+  inference.py                   # CLI entry point for multi-GPU offline inference
 
 configs/
-  default.yaml                 # LightningCLI config template (70 lines)
+  default.yaml                 # LightningCLI config template (68 lines)
   experiments/                 # 21 per-experiment configs (r013–r024c)
 
 tests/
@@ -110,6 +112,10 @@ tests/
   test_vlm_scorer.py           # 109 tests for VLMScorer, prompts, pipeline
   test_vlm_smoke.py            # GPU smoke tests × 15 parametrized models
   test_batch_annotator.py      # Tests for BatchAnnotator (filter, checkpoint, resume)
+  test_annotations.py          # Tests for annotation parsing utilities
+  test_dataset.py              # Tests for UAVIQADataset collation and loading
+  test_model_text.py           # Tests for model text/export utilities
+  test_inference_phase[1-5].py # 5-phase tests for inference framework
 
 refine-logs/                   # Research refinement artifacts
   FINAL_PROPOSAL.md            # Method thesis (score 9.0/10)
@@ -280,25 +286,22 @@ Support for per-task and per-distortion evaluation via `metrics.py`.
 The [default config](configs/default.yaml) serves as a reference template. Each experiment has its own self-contained YAML in `configs/experiments/`.
 
 ```yaml
+seed_everything: 42
 model:
-  class_path: uav_iqa.lightning_module.UAVIQALightningModule
-  init_args:
-    backbone: mobilenetv4_conv_small
-    use_fab: true          # Frequency-Aware Branch
-    use_cbam: true         # CBAM attention
-    use_task_conditioning: true  # FiLM task heads
-    lambda_rank: 0.3       # ListMLE loss weight
-    lambda_cross_task: 0.1  # Cross-task regularization
-    lr: 1.2e-3
-    annotator_stage: vla
+  backbone: mobilenetv4_conv_small
+  use_fab: true            # Frequency-Aware Branch
+  use_cbam: true           # CBAM attention
+  use_task_conditioning: true  # FiLM task heads
+  lambda_rank: 0.3         # ListMLE loss weight
+  lambda_cross_task: 0.1   # Cross-task regularization
+  lr: 1.2e-3
+  total_epochs: 50
 
 data:
-  class_path: uav_iqa.data_module.UAVIQDataModule
-  init_args:
-    data_root: data/processed
-    batch_size: 256
-    image_size: 256
-    num_workers: 16
+  data_root: data/processed
+  batch_size: 256
+  image_size: 256
+  num_workers: 16
 
 trainer:
   accelerator: auto
@@ -309,7 +312,7 @@ trainer:
     - class_path: lightning.pytorch.loggers.WandbLogger
     - class_path: lightning.pytorch.loggers.CSVLogger
   callbacks:
-    - class_path: uav_iqa.callbacks.CurriculumStageCallback
+    - class_path: uav_iqa.callbacks.SetupRunCallback
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
 ```
 
@@ -344,15 +347,15 @@ black src/ tests/ scripts/
 
 ### Key Concepts
 
-- **Manifest format:** JSON list of `{path, task, distortion, intensity_level, ref_id, vlm_score, vla_score, execution_score, annotated}`
+- **Flat JSON format:** `{sample_id, uav_paths, distorted_uav_paths, distortion_info, subtask_type, cognitive_score}` — one entry per question×distortion pair.
 - **Distortion naming:** `{name}_L{intensity*10:02d}` (e.g., `propeller_vibration_blur_L04`). Supports `.png` and `.jpg` extensions.
-- **3-stage curriculum:** VLM annotations (epochs 1-20) → VLA (21-40) → Execution (41-50). Annotation source gated by kwargs.
+- **Single `cognitive_score` supervision:** Unified quality score from VLM multi-image aggregation (replaces 3-stage curriculum).
 - **Loss layers:** MSE + λ_rank · ListMLE (per-distortion ranking) + λ_cross_task · CrossTaskRegularization (negative pairwise score variance)
 - **Real-ESRGAN** is optional (`LowResSuperResolution` distortion); falls back to bicubic+sharpen if not installed
 - **openVLA/CARLA** are manual installs (not on PyPI); not needed for basic training/inference
 - **VLM extras** (`vllm`, `transformers`, `accelerate`) for annotation scoring: `uv sync --group dev --extra vlm`
 - **Training entry:** `scripts/train.py` (vanilla LightningCLI). `main.py`, `run_m3_train.py` and `UAVIQACLI` were removed in the 2026-06 refactor.
-- **Score annotation:** `scripts/data_synthesis.py annotate` applies degradation model: `score = ref_score × degradation_factor(distortion, task, intensity)`
+- **Score annotation:** `scripts/data_synthesis.py annotate` scores distorted groups via VLM, `aggregate` computes `cognitive_score` as mean of VLM scores.
 - **`scipy` removed as a direct dependency** for distortion models — uses `cv2.filter2D` with manual wrap padding. `scipy` is retained for metric computation.
 - **Model download:** `scripts/download_models.py` provides offline VLM model weight download from HuggingFace Hub for VLM annotation scoring. Supports `--all`, `--models <name>`, `--validate`, and `--validate-only`.
 

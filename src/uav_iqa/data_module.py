@@ -1,4 +1,4 @@
-"""LightningDataModule for multi-image UAV-IQA grouped dataset."""
+"""LightningDataModule for multi-image UAV-IQA flat dataset."""
 
 import logging
 from pathlib import Path
@@ -13,8 +13,8 @@ from .distortion import UAVDistortionPipeline
 _log = logging.getLogger(__name__)
 
 
-class UAVIQDataModule(L.LightningDataModule):
-    """LightningDataModule for multi-image UAV-IQA grouped JSONs."""
+class UAVIQADataModule(L.LightningDataModule):
+    """LightningDataModule for multi-image UAV-IQA flat processed JSONs."""
 
     def __init__(
         self,
@@ -56,7 +56,7 @@ class UAVIQDataModule(L.LightningDataModule):
             valid_types = {t.strip() for t in self.subtask_filter.split(",")}
             ds.samples = [
                 s for s in ds.samples
-                if s.get("vqa_entries", [{}])[0].get("subtask_type", "") in valid_types
+                if s.get("subtask_type", "") in valid_types
             ]
 
         if self.distortion_filter:

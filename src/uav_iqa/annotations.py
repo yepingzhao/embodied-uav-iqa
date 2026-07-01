@@ -170,9 +170,12 @@ SUBTASK_NAMES: dict[str, str] = {
     "4.4": "why_to_collaborate",
 }
 
-SUBTASK_TO_ID: dict[str, int] = {
-    name: i for i, name in enumerate(sorted(SUBTASK_NAMES.keys()))
-}
+_SUBTASK_CODES = sorted(SUBTASK_NAMES.keys())
+SUBTASK_TO_ID: dict[str, int] = {code: i for i, code in enumerate(_SUBTASK_CODES)}
+
+SUBTASK_NAME_LIST: tuple[str, ...] = tuple(SUBTASK_NAMES[code] for code in _SUBTASK_CODES)
+
+SUBTASK_NAME_TO_ID: dict[str, int] = {name: i for i, name in enumerate(SUBTASK_NAME_LIST)}
 
 NUM_SUBTASKS = len(SUBTASK_NAMES)
 
@@ -201,6 +204,53 @@ def extract_subtask_id(question_type: str) -> int:
     return SUBTASK_TO_ID.get(subtask_type, 0)
 
 
+_KEYWORD_MAP = {
+    name.replace("_", " ").title(): name for name in SUBTASK_NAME_LIST
+}
+
+
+def normalize_subtask_type(question_type: str) -> str:
+    """Convert any question_type string to its snake_case subtask name.
+
+    Returns a non-empty string in all cases.
+    """
+    if question_type:
+        code = extract_subtask_type(question_type)
+        if code and code in SUBTASK_NAMES:
+            return SUBTASK_NAMES[code]
+
+        for keyword, name in _KEYWORD_MAP.items():
+            if keyword in question_type:
+                return name
+
+    return "scene_description"
+
+
+def extract_uav_id_from_question_id(question_id: str, question_type: str = "") -> str:
+    """Extract the UAV identifier from a question_id string.
+
+    Examples:
+        question_id="Sim3_what2col_UAV2_1" -> "UAV2"
+        question_id="MDMT_OB_UAV2_001" -> "UAV2"
+        question_id="Sim3_QA_UAV1_1" -> "UAV1"
+        question_id="something_no_uav" -> "UAV1"
+    """
+    m = re.search(r"_UAV(\d+)_", question_id)
+    if m:
+        return f"UAV{m.group(1)}"
+
+    m = re.search(r"_UAV(\d+)$", question_id)
+    if m:
+        return f"UAV{m.group(1)}"
+
+    if question_type:
+        m = re.search(r"\(UAV(\d+)\)", question_type)
+        if m:
+            return f"UAV{m.group(1)}"
+
+    return "UAV1"
+
+
 # ---------------------------------------------------------------------------
 # Sample ID construction
 # ---------------------------------------------------------------------------
@@ -211,14 +261,27 @@ def build_sample_id(
     sequence_frame: str,
     distortion_type: str,
     level: int,
+    *,
+    split: str = "",
+    question_id: str = "",
 ) -> str:
     """Build a unique sample identifier.
 
-    Format: ``{dataset}__{sequence_frame}__{distortion_type}_L{level:02d}``
+    Backward-compatible with the old 4-arg signature (dataset, sequence_frame,
+    distortion_type, level).  For the extended format, pass *split* and
+    *question_id* as keyword arguments.
 
-    Example: ``Sim3__scene_001_frame_001__gaussian_blur_L04``
+    Short format: ``{dataset}__{safe_frame}__{distortion_type}_L{level:02d}``
+    Full format:  ``{dataset}__{split}__{safe_frame}__{question_id}__{distortion_type}_L{level:02d}``
+
+    Example: ``Sim3__train__scene_001_frame_001__Sim3_QA_UAV1_1__gaussian_blur_L04``
     """
     safe_frame = sequence_frame.replace("/", "_").replace("\\", "_")
+    if split or question_id:
+        return (
+            f"{dataset}__{split}__{safe_frame}__{question_id}"
+            f"__{distortion_type}_L{level:02d}"
+        )
     return f"{dataset}__{safe_frame}__{distortion_type}_L{level:02d}"
 
 
@@ -233,15 +296,6 @@ def get_dataset_name(vqa_filename: str) -> str:
     if m:
         return m.group(1)
     return stem.split("_")[0]
-
-
-def resolve_uav_path(uav_path: str, input_root: Path) -> Path:
-    """Resolve a VQA relative UAV path to an absolute path.
-
-    'Sim_3_UAVs/Samples/images/scene_001/UAV1/UAV1_frame_001.jpg'
-    -> input_root / 'Sim_3_UAVs/Samples/images/scene_001/UAV1/UAV1_frame_001.jpg'
-    """
-    return (input_root / uav_path.lstrip("/").replace("\\", "/")).resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -297,19 +351,19 @@ def parse_usability(usability_str: str) -> float:
     val = usability_str.strip()
     if val.startswith("1"):
         return 1.0
-    elif val.startswith("2"):
+    if val.startswith("2"):
         return 0.5
-    elif val.startswith("3"):
+    if val.startswith("3"):
         return 0.25
     return 0.0
 
 
 def build_ref_score_lookup(aircopbench_dir: Path) -> dict:
-    """Build a mapping: ref_id -> {vlm_score, vla_score, execution_score}.
+    """Build a mapping: ref_id -> {cognitive_score, annotated}.
 
     Reads AirCopBench Annotations/*.json files (single-image quality labels),
-    extracts Quality/Usibility fields, and computes an execution_score as
-    0.4*quality + 0.6*usability.
+    extracts Quality/Usibility fields, and computes a combined cognitive_score
+    as 0.4*quality + 0.6*usability.
 
     This is used by C2 correlation validation to compare VLM-predicted
     cognitive scores against human annotations.
@@ -340,13 +394,9 @@ def build_ref_score_lookup(aircopbench_dir: Path) -> dict:
                 usability = parse_usability(entry.get("Usibility", "1 (Available)"))
                 combined = 0.4 * quality + 0.6 * usability
                 lookup[ref_id] = {
-                    "vlm_score": quality,
-                    "vla_score": usability,
-                    "execution_score": combined,
+                    "cognitive_score": combined,
                     "annotated": True,
                 }
 
-    _log.info(
-        "Ref score lookup: %d annotated reference images", len(lookup)
-    )
+    _log.info("Ref score lookup: %d annotated reference images", len(lookup))
     return lookup

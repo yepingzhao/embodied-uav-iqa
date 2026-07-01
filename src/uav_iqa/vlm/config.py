@@ -97,14 +97,6 @@ MODEL_REGISTRY: Dict[str, VLMConfig] = {
         processor_class_name="AutoTokenizer",
     ),
     # --- InternLM-Xcomposer family ---
-    "InternLM-Xcomposer2": VLMConfig(
-        short_name="InternLM-Xcomposer2",
-        hf_model_id="internlm/internlm-xcomposer2-vl-7b",
-        family="internlm_xc",
-        chat_template="<|User|>:{prompt}<|Bot|>:",
-        model_class_name="AutoModelForCausalLM",
-        processor_class_name="AutoTokenizer",
-    ),
     "InternLM-Xcomposer2.5": VLMConfig(
         short_name="InternLM-Xcomposer2.5",
         hf_model_id="internlm/internlm-xcomposer2d5-7b",
@@ -139,14 +131,6 @@ MODEL_REGISTRY: Dict[str, VLMConfig] = {
         processor_class_name="AutoProcessor",
     ),
     # --- Phi family ---
-    "Phi3-Vision": VLMConfig(
-        short_name="Phi3-Vision",
-        hf_model_id="microsoft/Phi-3-vision-128k-instruct",
-        family="phi",
-        chat_template="<|user|>\n{prompt}<|end|>\n<|assistant|>\n",
-        model_class_name="AutoModelForCausalLM",
-        processor_class_name="AutoProcessor",
-    ),
     "Phi3.5-Vision": VLMConfig(
         short_name="Phi3.5-Vision",
         hf_model_id="microsoft/Phi-3.5-vision-instruct",
@@ -172,4 +156,9 @@ MODEL_REGISTRY: Dict[str, VLMConfig] = {
         model_class_name="AutoModelForCausalLM",
         processor_class_name="AutoTokenizer",
     ),
+}
+
+DEPRECATED_MODELS: dict[str, str] = {
+    "InternLM-Xcomposer2": "InternLM-Xcomposer2.5",
+    "Phi3-Vision": "Phi3.5-Vision",
 }

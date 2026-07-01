@@ -118,7 +118,7 @@ outputs/<experiment>/
 
 ### R013 — 完整 UAV-IQANet (task-conditioned)
 
-完整模型，所有组件启用：FAB + CBAM + FiLM task conditioning + 3-stage curriculum。
+完整模型，所有组件启用：FAB + CBAM + FiLM task conditioning + single cognitive_score。
 
 **关键配置**: `use_fab=true, use_cbam=true, use_task_conditioning=true`
 
@@ -306,7 +306,7 @@ done
 
 50 epochs 全部使用 VLM 认知评分（无 curriculum transition）。
 
-**关键配置**: `annotator_stage=vlm`
+**关键配置**: `model.init_args.num_tasks=14`
 
 ```bash
 for seed in 42 100 200; do
@@ -322,7 +322,7 @@ done
 
 50 epochs 全部使用 VLA 决策评分。
 
-**关键配置**: `annotator_stage=vla`
+**关键配置**: `model.init_args.num_tasks=14`
 
 ```bash
 for seed in 42 100 200; do

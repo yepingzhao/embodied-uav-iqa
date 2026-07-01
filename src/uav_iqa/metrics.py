@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.stats import pearsonr, spearmanr
 
-from .dataset import TASK_NAMES
+from .annotations import SUBTASK_NAME_LIST as TASK_NAMES
 
 
 def compute_srcc(pred: np.ndarray, target: np.ndarray) -> float:

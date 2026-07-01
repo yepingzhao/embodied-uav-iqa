@@ -3,21 +3,20 @@
 Provides:
 - DatasetFormat: minimal abstract base for extract step
 - AirCopBenchFormat / GenericImageDirFormat: concrete format classes
-- DataSynthesisPipeline: orchestrates extract/inject/annotate/aggregate steps
+- DataSynthesisPipeline: orchestrates inject/annotate/aggregate steps
 - create_pipeline: convenience factory function
 
-The pipeline produces a grouped JSON format where each scene+frame is one
-group containing all VQA entries and all distortion variants.  Training
-samples are (group, distortion) pairs with multi-image input.
+The pipeline produces a flat Processed JSON format where each entry is one
+(question, distortion) pair with multi-image input.  Every line is a
+self-contained training sample.
 """
 
 import hashlib
 import json
 import logging
 import os
-import shutil
+import tempfile
 from abc import ABC, abstractmethod
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import cv2
@@ -26,18 +25,16 @@ from tqdm import tqdm
 
 from uav_iqa.annotations import (
     build_sample_id,
-    extract_subtask_type,
+    extract_uav_id_from_question_id,
     get_dataset_name,
     group_by_scene_frame,
+    normalize_subtask_type,
     seed_for_distortion,
-    SUBTASK_NAMES,
 )
 from uav_iqa.distortion import UAVDistortionPipeline
 from uav_iqa.utils import find_images
 
 _log = logging.getLogger(__name__)
-
-IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
 
 
 # ===========================================================================
@@ -63,9 +60,7 @@ class DatasetFormat(ABC):
     @classmethod
     def get(cls, name: str) -> type["DatasetFormat"]:
         if name not in cls._registry:
-            raise ValueError(
-                f"Unknown dataset format: '{name}'. Available: {cls.list_formats()}"
-            )
+            raise ValueError(f"Unknown dataset format: '{name}'. Available: {cls.list_formats()}")
         return cls._registry[name]
 
     @classmethod
@@ -73,12 +68,10 @@ class DatasetFormat(ABC):
         return sorted(cls._registry.keys())
 
     @abstractmethod
-    def get_exclude_dirs(self) -> set[str]:
-        ...
+    def get_exclude_dirs(self) -> set[str]: ...
 
     @abstractmethod
-    def find_reference_images(self, input_root: Path) -> list[Path]:
-        ...
+    def find_reference_images(self, input_root: Path) -> list[Path]: ...
 
 
 # ===========================================================================
@@ -130,120 +123,19 @@ class DataSynthesisPipeline:
     """Orchestrates the data synthesis pipeline for UAV-IQA.
 
     Steps:
-    1. extract  — symlink reference images and copy VQA JSONs
-    2. inject   — group by scene+frame, apply 36 distortions to all UAVs
-    3. annotate — VLM multi-image inference for cognitive scores
-    4. aggregate — merge model scores, compute final cognitive_score
+    1. inject   — group by scene+frame, apply 36 distortions, produce flat entries
+    2. annotate — VLM multi-image inference for cognitive scores
+    3. aggregate — merge model scores, compute final cognitive_score
 
-    ``run_full()`` composes them end-to-end.
+    Output is a flat list where each entry is a (question, distortion) pair.
+    ``run_full()`` composes the steps end-to-end.
     """
 
     def __init__(self, dataset_format: DatasetFormat, seed: int = 42):
         self.format = dataset_format
         self.seed = seed
 
-    # ---- Step 1: Extract reference frames ----
-
-    def extract_references(
-        self,
-        input_root: str | Path,
-        output_dir: str | Path,
-        copy: bool = False,
-        max_refs_per_source: dict[str, int] | None = None,
-    ) -> Path:
-        """Extract clean reference frames into a flat directory.
-
-        Flattens nested directory structure: path parts joined with ``_``.
-        Default is symlink to save disk space; use ``copy=True`` for copies.
-        Also copies VQA JSON files from ``input_root/{train,test}/`` to
-        ``output_dir/../{train,test}/``.
-
-        Args:
-            input_root: Dataset root directory.
-            output_dir: Where to place extracted reference images (typically
-                        ``processed/ref_images``).
-            copy: If True, copy files instead of symlinking.
-            max_refs_per_source: Per-source image limit keyed by first path
-                component relative to ``input_root`` (e.g. ``{"Sim_3_UAVs": 500}``).
-
-        Returns:
-            The output_dir Path for chaining.
-        """
-        input_root = Path(input_root)
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        images = self.format.find_reference_images(input_root)
-        if not images:
-            raise RuntimeError(f"No reference images found in {input_root}")
-        _log.info("Found %d clean reference images in %s", len(images), input_root)
-
-        if max_refs_per_source:
-            import random
-
-            rng = random.Random(self.seed)
-            by_source: dict[str, list[Path]] = {}
-            for img in images:
-                source = img.relative_to(input_root).parts[0]
-                by_source.setdefault(source, []).append(img)
-            images = []
-            for source, src_images in sorted(by_source.items()):
-                limit = max_refs_per_source.get(source, len(src_images))
-                rng.shuffle(src_images)
-                sampled = src_images[:limit]
-                images.extend(sampled)
-                _log.info(
-                    "  %s: %d -> %d (limit=%d)",
-                    source,
-                    len(by_source[source]),
-                    len(sampled),
-                    limit,
-                )
-            _log.info("Sampled %d total images", len(images))
-
-        created = 0
-        skipped = 0
-
-        def _copy_one(img: Path) -> tuple[int, int]:
-            rel = img.relative_to(input_root)
-            stem = "_".join(rel.parts).replace("/", "_").replace("\\", "_")
-            dest = output_dir / stem
-            if not dest.exists():
-                if copy:
-                    shutil.copy2(img, dest)
-                else:
-                    try:
-                        dest.symlink_to(img.resolve())
-                    except OSError:
-                        _log.debug("Symlink failed for %s, falling back to copy", img)
-                        shutil.copy2(img, dest)
-                return 1, 0
-            return 0, 1
-
-        max_w = min(16, (os.cpu_count() or 4))
-        with ThreadPoolExecutor(max_workers=max_w) as ex:
-            futures = [ex.submit(_copy_one, img) for img in images]
-            for f in tqdm(
-                as_completed(futures),
-                total=len(futures),
-                desc="Extracting references",
-                unit="img",
-            ):
-                c, s = f.result()
-                created += c
-                skipped += s
-
-        op = "Copied" if copy else "Symlinked"
-        _log.info(
-            "%s %d images to %s (%d skipped, already exist)",
-            op,
-            created,
-            output_dir,
-            skipped,
-        )
-        return output_dir
-
-    # ---- Step 2: Inject distortions ----
+    # ---- Step 1: Inject distortions ----
 
     def inject_distortions(
         self,
@@ -256,19 +148,20 @@ class DataSynthesisPipeline:
     ) -> dict:
         """Apply all 36 distortion types to all UAV images within each scene+frame.
 
-        Reads VQA JSON files from ``output_dir/{train,test}/``, groups entries
+        Reads VQA JSON files from ``input_root/{train,test}/``, groups entries
         by ``sequence_frame``, and applies the SAME distortion type+intensity
         to all UAV images in a group.
 
         Produces:
-        - ``distorted/{sample_id}_{uav_idx}.{fmt}`` image files
+        - ``output_dir/distorted/{sample_id}_{uav_idx}.{fmt}`` image files
         - Enriched JSON files in ``output_dir/{train,test}/`` with
-          ``reference_uav_paths``, ``distorted_uav_paths``, ``distortions``,
-          and per-entry ``vlm_scores`` / ``cognitive_score`` fields.
+          ``distorted_uav_paths``, ``distortion_info``, and per-entry
+          ``vlm_scores`` / ``cognitive_score`` fields.
 
         Args:
-            input_root: Raw dataset root (for resolving VQA UAV paths).
-            output_dir: Processed output directory (contains VQA JSONs).
+            input_root: Raw dataset root (contains VQA JSONs + reference images).
+            output_dir: Processed output directory (receives distorted images +
+                enriched JSONs).
             workers: Parallel worker processes (0 = auto).
             compress: Save images with compression.
             dry_run: Process only first 2 groups, first 3 distortions.
@@ -286,7 +179,7 @@ class DataSynthesisPipeline:
 
         vqa_files: list[tuple[str, Path]] = []
         for split_name in ("train", "test"):
-            split_dir = output_dir / split_name
+            split_dir = input_root / split_name
             if not split_dir.is_dir():
                 _log.warning("Split directory not found: %s", split_dir)
                 continue
@@ -295,24 +188,29 @@ class DataSynthesisPipeline:
 
         if not vqa_files:
             raise RuntimeError(
-                f"No VQA JSON files found in {output_dir}/{{train,test}}/. "
-                f"Run the extract step first to copy VQA files."
+                f"No VQA JSON files found in {input_root}/{{train,test}}/. "
+                f"Ensure the raw dataset is correctly structured."
             )
 
         _log.info("Found %d VQA files to process", len(vqa_files))
 
         all_distortions = UAVDistortionPipeline.get_all_distortion_names()
+        n_intensity = len(UAVDistortionPipeline.INTENSITY_LEVELS)
         _log.info(
-            "%d distortion types × 5 intensity levels = %d variants per group",
+            "%d distortion types × %d intensity levels = %d variants per group",
             len(all_distortions),
-            len(all_distortions),
+            n_intensity,
+            len(all_distortions) * n_intensity,
         )
 
-        stats = {"total_groups": 0, "total_distortions": 0, "total_entries": 0}
+        stats = {"total_flat_entries": 0}
 
         for split_name, fpath in vqa_files:
             _log.info("Processing %s/%s", split_name, fpath.name)
             dataset_name = get_dataset_name(fpath.name)
+
+            out_split_dir = output_dir / split_name
+            out_split_dir.mkdir(parents=True, exist_ok=True)
 
             with open(fpath) as f:
                 entries = json.load(f)
@@ -326,7 +224,11 @@ class DataSynthesisPipeline:
             if dry_run:
                 groups = dict(list(groups.items())[:2])
                 distortions_subset = all_distortions[:3]
-                _log.info("  [DRY RUN] %d groups, %d distortion types", len(groups), len(distortions_subset))
+                _log.info(
+                    "  [DRY RUN] %d groups, %d distortion types",
+                    len(groups),
+                    len(distortions_subset),
+                )
             else:
                 distortions_subset = all_distortions
 
@@ -339,29 +241,17 @@ class DataSynthesisPipeline:
                 distortions_subset=distortions_subset,
                 compress=compress,
                 fmt=fmt,
-                workers=workers,
                 base_seed=self.seed,
             )
 
-            out_path = output_dir / split_name / fpath.name
+            out_path = out_split_dir / fpath.name
             with open(out_path, "w") as f:
                 json.dump(output_entries, f, indent=2, ensure_ascii=False)
             _log.info("  Wrote %d entries to %s", len(output_entries), out_path)
 
-            stats["total_groups"] += len(groups)
-            stats["total_distortions"] += sum(
-                len(g.get("distortions", {}))
-                for g in output_entries
-                if isinstance(g, dict)
-            )
-            stats["total_entries"] += len(output_entries)
+            stats["total_flat_entries"] += len(output_entries)
 
-        _log.info(
-            "Inject complete: %d groups, %d entries, %d total distortions",
-            stats["total_groups"],
-            stats["total_entries"],
-            stats["total_distortions"],
-        )
+        _log.info("Inject complete: %d flat entries", stats["total_flat_entries"])
         return stats
 
     def _inject_groups(
@@ -374,10 +264,9 @@ class DataSynthesisPipeline:
         distortions_subset: list[str],
         compress: bool,
         fmt: str,
-        workers: int,
         base_seed: int,
     ) -> list[dict]:
-        """Apply distortions to all groups and return enriched entries."""
+        """Apply distortions and return flat (question × distortion) entries."""
         output: list[dict] = []
         ext = ".jpg" if fmt == "jpeg" else ".png"
 
@@ -391,104 +280,90 @@ class DataSynthesisPipeline:
                 continue
 
             uav_keys = sorted(uav_paths.keys())
-            num_uavs = len(uav_keys)
+            distortion_results: list[tuple[dict, dict[str, str]]] = []
 
-            distortions: dict[str, dict] = {}
             for dist_name in distortions_subset:
                 intensity = self._pick_intensity(dist_name, dataset_name, seq_frame)
                 level = int(intensity * 10)
                 seed = seed_for_distortion(dataset_name, seq_frame, dist_name, base_seed)
-                sample_id = build_sample_id(dataset_name, seq_frame, dist_name, level)
+                safe_frame = seq_frame.replace("/", "_").replace("\\", "_")
+                image_prefix = f"{dataset_name}__{safe_frame}__{dist_name}_L{level:02d}"
 
                 dist_pipeline = UAVDistortionPipeline(seed=seed)
                 distorted_uav_paths: dict[str, str] = {}
 
-                skip_group = False
+                skip_dist = False
                 for idx, uav_key in enumerate(uav_keys):
                     uav_rel = uav_paths.get(uav_key, "")
                     if not uav_rel:
-                        skip_group = True
+                        skip_dist = True
                         break
-                    uav_abs = input_root / uav_rel.lstrip("/").replace("\\", "/")
-                    if not uav_abs.exists():
-                        _log.warning("UAV image not found: %s", uav_abs)
-                        skip_group = True
+                    uav_abs = self._validate_uav_path(uav_rel, input_root)
+                    if uav_abs is None:
+                        skip_dist = True
                         break
 
-                    out_name = f"{sample_id}_{idx}{ext}"
+                    out_name = f"{image_prefix}_{idx}{ext}"
                     out_path = distorted_dir / out_name
 
                     if not out_path.exists():
-                        img = cv2.imread(str(uav_abs))
-                        if img is None:
-                            skip_group = True
+                        ok = self._save_distorted_uav_image(
+                            uav_abs, dist_pipeline, dist_name, intensity,
+                            out_path, fmt, ext, compress,
+                        )
+                        if not ok:
+                            skip_dist = True
                             break
-                        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                        dist_img = dist_pipeline.apply_distortion(img_rgb, dist_name, intensity)
-                        dist_bgr = cv2.cvtColor(dist_img, cv2.COLOR_RGB2BGR)
-                        if fmt == "jpeg":
-                            encode_params = [cv2.IMWRITE_JPEG_QUALITY, 92]
-                        elif compress:
-                            encode_params = [cv2.IMWRITE_PNG_COMPRESSION, 3]
-                        else:
-                            encode_params = []
-                        success, buf = cv2.imencode(ext, dist_bgr, encode_params)
-                        if not success:
-                            _log.warning("Encoding failed: %s", out_path)
-                            skip_group = True
-                            break
-                        out_path.write_bytes(buf.tobytes())
 
-                    distorted_uav_paths[uav_key] = str(
-                        out_path.relative_to(distorted_dir.parent)
-                    )
+                    distorted_uav_paths[uav_key] = str(out_path.relative_to(distorted_dir.parent))
 
-                if skip_group:
+                if skip_dist:
                     continue
 
-                dist_key = f"{dist_name}_L{level:02d}"
-                distortions[dist_key] = {
-                    "sample_id": sample_id,
+                dist_info = {
                     "type": dist_name,
                     "category": UAVDistortionPipeline.get_distortion_categories().get(
                         dist_name, "unknown"
                     ),
-                    "intensity": intensity,
                     "level": level,
+                    "intensity": intensity,
                     "seed": seed,
-                    "distorted_uav_paths": distorted_uav_paths,
                 }
+                distortion_results.append((dist_info, distorted_uav_paths))
 
-            if not distortions:
+            if not distortion_results:
                 continue
 
-            group_entry = {
-                "dataset": dataset_name,
-                "split": split_name,
-                "sequence_frame": seq_frame,
-                "uav_paths": uav_paths,
-                "uav_keys": uav_keys,
-                "num_uavs": num_uavs,
-                "distortions": distortions,
-                "vqa_entries": [
-                    {
-                        "question_id": e.get("question_id", ""),
-                        "question_type": e.get("question_type", ""),
+            for e in entries:
+                question_id = e.get("question_id", "")
+                question_type = e.get("question_type", "")
+                for dist_info, distorted_uav_paths in distortion_results:
+                    flat_entry = {
+                        "sample_id": build_sample_id(
+                            dataset_name,
+                            seq_frame,
+                            dist_info["type"],
+                            dist_info["level"],
+                            split=split_name,
+                            question_id=question_id,
+                        ),
+                        "dataset": dataset_name,
+                        "split": split_name,
+                        "sequence_frame": seq_frame,
+                        "question_id": question_id,
+                        "question_type": question_type,
+                        "subtask_type": normalize_subtask_type(question_type),
+                        "uav_id": extract_uav_id_from_question_id(question_id, question_type),
                         "question": e.get("question", ""),
                         "options": e.get("options", []),
                         "correct_answer": e.get("correct_answer", ""),
-                        "subtask_type": extract_subtask_type(e.get("question_type", "")),
-                        "subtask_name": SUBTASK_NAMES.get(
-                            extract_subtask_type(e.get("question_type", "")), "unknown"
-                        ),
-                        "uav_id": e.get("uav_id", ""),
+                        "uav_paths": uav_paths,
+                        "distorted_uav_paths": distorted_uav_paths,
+                        "distortion_info": dist_info,
                         "vlm_scores": {},
-                        "cognitive_score": 0.0,
+                        "cognitive_score": None,
                     }
-                    for e in entries
-                ],
-            }
-            output.append(group_entry)
+                    output.append(flat_entry)
 
         return output
 
@@ -508,114 +383,193 @@ class DataSynthesisPipeline:
         rng = np.random.RandomState(h % (2**31))
         return float(rng.choice(UAVDistortionPipeline.INTENSITY_LEVELS))
 
+    @staticmethod
+    def _validate_uav_path(uav_rel: str, input_root: Path) -> Path | None:
+        """Validate and resolve a relative UAV image path.
+
+        Returns the resolved absolute Path on success, or None if the path
+        fails validation (missing file, path traversal, or OS error).
+        """
+        uav_abs = input_root / uav_rel.lstrip("/").replace("\\", "/")
+        try:
+            uav_abs = uav_abs.resolve()
+            if not str(uav_abs).startswith(str(input_root.resolve())):
+                _log.warning("Path traversal attempt blocked: %s", uav_rel)
+                return None
+        except OSError:
+            _log.warning("Cannot resolve UAV image path: %s", uav_rel)
+            return None
+        if not uav_abs.exists():
+            _log.warning("UAV image not found: %s", uav_abs)
+            return None
+        return uav_abs
+
+    @staticmethod
+    def _save_distorted_uav_image(
+        uav_abs: Path,
+        dist_pipeline: UAVDistortionPipeline,
+        dist_name: str,
+        intensity: float,
+        out_path: Path,
+        fmt: str,
+        ext: str,
+        compress: bool,
+    ) -> bool:
+        """Apply distortion to one UAV image and save to disk.
+
+        Returns True on success, False if any step fails.
+        """
+        img = cv2.imread(str(uav_abs))
+        if img is None:
+            _log.warning("Failed to read UAV image: %s", uav_abs)
+            return False
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        dist_img = dist_pipeline.apply_distortion(img_rgb, dist_name, intensity)
+        dist_bgr = cv2.cvtColor(dist_img, cv2.COLOR_RGB2BGR)
+        if fmt == "jpeg":
+            encode_params = [cv2.IMWRITE_JPEG_QUALITY, 92]
+        elif compress:
+            encode_params = [cv2.IMWRITE_PNG_COMPRESSION, 3]
+        else:
+            encode_params = []
+        success, buf = cv2.imencode(ext, dist_bgr, encode_params)
+        if not success:
+            _log.warning("Encoding failed: %s", out_path)
+            return False
+        out_path.write_bytes(buf.tobytes())
+        return True
+
+    @staticmethod
+    def _atomic_json_write(data: object, fpath: Path) -> None:
+        """Atomically write JSON data using a tempfile + os.replace."""
+        tf_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", dir=fpath.parent, delete=False
+            ) as tf:
+                tf_path = tf.name
+                json.dump(data, tf, indent=2, ensure_ascii=False)
+            os.replace(tf_path, fpath)
+        except Exception:
+            if tf_path and os.path.exists(tf_path):
+                os.unlink(tf_path)
+            raise
+
     # ---- Step 3: Annotate scores ----
 
     def annotate_scores(
         self,
         output_dir: str | Path,
         scorer,
-        scorer_batch_size: int = 8,
+        input_root: str | Path | None = None,
         max_entries: int | None = None,
+        files: list[str] | None = None,
     ) -> None:
-        """Annotate processed groups with VLM cognitive scores.
+        """Annotate flat entries with VLM cognitive scores.
 
-        For each group+distortion pair, generates reference and distorted
-        descriptions via multi-image VLM inference, then computes text
-        similarity to derive a ``cognitive_score``.
+        For each entry, generates reference and distorted descriptions via
+        multi-image VLM inference, then computes text similarity to derive a
+        ``cognitive_score``.
 
-        Writes detailed per-model records to ``vlm/<model>/{split}/*.json``
-        and updates the main JSON ``vlm_scores`` / ``cognitive_score`` fields.
+        Updates the main JSON ``vlm_scores`` / ``cognitive_score`` fields
+        in-place.
 
         Args:
             output_dir: Processed output directory with train/test JSONs.
             scorer: VLM scorer instance (``VLMScorer``).
-            scorer_batch_size: Batch size for VLM scoring.
-            max_entries: Limit number of entries to annotate per split (for debugging).
+            input_root: Raw dataset root for resolving reference image paths.
+                Required when reference images are not in output_dir.
+            max_entries: Limit number of entries to annotate per split
+                (for debugging).
+            files: Specific file paths relative to output_dir to annotate
+                (e.g. ``["train/Sim3_VQA_train.json"]``). If None, annotates
+                all ``*_VQA_*.json`` files.
         """
         output_dir = Path(output_dir)
+        input_root = Path(input_root) if input_root else output_dir.parent
         model_name = getattr(scorer, "model_name", "unknown")
 
-        for split_name in ("train", "test"):
-            split_dir = output_dir / split_name
-            if not split_dir.is_dir():
-                continue
+        if files:
+            fpaths = [output_dir / f for f in files]
+        else:
+            fpaths = sorted(output_dir.glob("train/*_VQA_*.json")) + sorted(
+                output_dir.glob("test/*_VQA_*.json")
+            )
 
-            for fpath in sorted(split_dir.glob("*_VQA_*.json")):
-                self._annotate_one_file(
-                    fpath=fpath,
-                    output_dir=output_dir,
-                    split_name=split_name,
-                    model_name=model_name,
-                    scorer=scorer,
-                    scorer_batch_size=scorer_batch_size,
-                    max_entries=max_entries,
-                )
+        for fpath in fpaths:
+            split_name = fpath.parent.name
+            self._annotate_one_file(
+                fpath=fpath,
+                output_dir=output_dir,
+                input_root=input_root,
+                split_name=split_name,
+                model_name=model_name,
+                scorer=scorer,
+                max_entries=max_entries,
+            )
 
     def _annotate_one_file(
         self,
         fpath: Path,
         output_dir: Path,
+        input_root: Path,
         split_name: str,
         model_name: str,
         scorer,
-        scorer_batch_size: int,
         max_entries: int | None,
     ) -> None:
-        """Annotate one processed JSON file with a single VLM model."""
+        """Annotate one flat-entry JSON file with a single VLM model."""
         with open(fpath) as f:
-            groups = json.load(f)
+            entries = json.load(f)
 
-        if not isinstance(groups, list) or not groups:
+        if not isinstance(entries, list) or not entries:
             return
 
         _log.info("Annotating %s [%s/%s]", fpath.name, split_name, model_name)
 
         processed = 0
-        for group in tqdm(groups, desc=f"  {model_name}/{split_name}/{fpath.stem}", unit="grp"):
-            distortions = group.get("distortions", {})
-            uav_paths = group.get("uav_paths", {})
-            uav_keys = group.get("uav_keys", [])
-
-            if not uav_paths or not uav_keys:
+        for entry in tqdm(entries, desc=f"  {model_name}/{split_name}/{fpath.stem}", unit="entry"):
+            uav_paths = entry.get("uav_paths", {})
+            distorted_uav_paths = entry.get("distorted_uav_paths", {})
+            if not uav_paths or not distorted_uav_paths:
                 continue
 
-            ref_image_paths = [str(output_dir.parent / uav_paths.get(k, "").lstrip("/"))
-                for k in uav_keys]
+            question = entry.get("question", "")
+            if not question:
+                continue
 
-            for dist_key, dist_info in distortions.items():
-                dist_image_paths = []
-                for k in uav_keys:
-                    dp = dist_info["distorted_uav_paths"].get(k, "")
-                    dist_image_paths.append(str(output_dir.parent / dp.lstrip("/")))
+            uav_keys = sorted(uav_paths.keys())
+            ref_image_paths = [str(input_root / uav_paths.get(k, "").lstrip("/")) for k in uav_keys]
+            dist_image_paths = [
+                str(output_dir / distorted_uav_paths.get(k, "").lstrip("/")) for k in uav_keys
+            ]
 
-                for entry in group.get("vqa_entries", []):
-                    question = entry.get("question", "")
-                    if not question:
-                        continue
+            cognitive = scorer.score_multi_image(
+                ref_image_paths=ref_image_paths,
+                dist_image_paths=dist_image_paths,
+                question=question,
+                subtask_type=entry.get("subtask_type", ""),
+            )
 
-                    cognitive = scorer.score_multi_image(
-                        ref_image_paths=ref_image_paths,
-                        dist_image_paths=dist_image_paths,
-                        question=question,
-                        subtask_type=entry.get("subtask_type", ""),
-                    )
+            entry.setdefault("vlm_scores", {})[model_name] = cognitive["cognitive_score"]
+            entry.setdefault("vlm_details", {})[model_name] = {
+                "cognitive_score": cognitive["cognitive_score"],
+                "bleu": cognitive["bleu"],
+                "rouge_l": cognitive["rouge_l"],
+                "cider": cognitive["cider"],
+                "ref_description": cognitive.get("ref_description", ""),
+                "dist_description": cognitive.get("dist_description", ""),
+                "prompt": cognitive.get("prompt", ""),
+            }
+            entry["cognitive_score"] = round(
+                float(sum(entry["vlm_scores"].values()) / len(entry["vlm_scores"])), 6
+            )
 
-                    entry.setdefault("vlm_scores", {})[model_name] = cognitive
-                    entry["cognitive_score"] = round(
-                        float(np.mean(list(entry["vlm_scores"].values()))), 6
-                    )
-
-                    processed += 1
-                    if max_entries and processed >= max_entries:
-                        break
-
-                if max_entries and processed >= max_entries:
-                    break
+            processed += 1
             if max_entries and processed >= max_entries:
                 break
 
-        with open(fpath, "w") as f:
-            json.dump(groups, f, indent=2, ensure_ascii=False)
+        self._atomic_json_write(entries, fpath)
         _log.info("  Annotated %d entries -> %s", processed, fpath)
 
     # ---- Step 4: Aggregate scores ----
@@ -640,57 +594,37 @@ class DataSynthesisPipeline:
 
             for fpath in sorted(split_dir.glob("*_VQA_*.json")):
                 with open(fpath) as f:
-                    groups = json.load(f)
+                    entries = json.load(f)
+
+                if not isinstance(entries, list) or not entries:
+                    continue
 
                 updated = 0
-                for group in groups:
-                    for entry in group.get("vqa_entries", []):
-                        scores = entry.get("vlm_scores", {})
-                        if scores:
-                            if strategy == "mean":
-                                entry["cognitive_score"] = round(
-                                    float(np.mean(list(scores.values()))), 6
-                                )
-                            updated += 1
+                for entry in entries:
+                    scores = entry.get("vlm_scores", {})
+                    if scores:
+                        if strategy == "mean":
+                            entry["cognitive_score"] = round(
+                                float(sum(scores.values()) / len(scores)), 6
+                            )
+                        updated += 1
 
                 if updated:
-                    with open(fpath, "w") as f:
-                        json.dump(groups, f, indent=2, ensure_ascii=False)
+                    self._atomic_json_write(entries, fpath)
                 _log.info("Aggregated %d entries in %s", updated, fpath.name)
 
     # ---- Full pipeline ----
-
-    @staticmethod
-    def _copy_vqa_files(input_root: Path, output_dir: Path) -> None:
-        """Copy VQA JSON files from raw input to processed output directory."""
-        for split_name in ("train", "test"):
-            src_dir = input_root / split_name
-            if not src_dir.is_dir():
-                _log.info("VQA source not found: %s", src_dir)
-                continue
-            dst_dir = output_dir / split_name
-            dst_dir.mkdir(parents=True, exist_ok=True)
-            for fpath in sorted(src_dir.glob("*_VQA_*.json")):
-                dst = dst_dir / fpath.name
-                if not dst.exists():
-                    shutil.copy2(fpath, dst)
-            copied = sum(1 for _ in dst_dir.glob("*_VQA_*.json"))
-            _log.info("Copied %d VQA files to %s", copied, dst_dir)
 
     def run_full(
         self,
         input_root: str | Path,
         output_dir: str | Path,
         steps: str = "all",
-        copy: bool = False,
         workers: int = 0,
         compress: bool = True,
-        split: tuple = (0.8, 0.2),
         dry_run: bool = False,
         fmt: str = "png",
-        max_refs_per_source: dict[str, int] | None = None,
         scorer=None,
-        scorer_batch_size: int = 8,
         max_annotate_entries: int | None = None,
     ) -> None:
         """Run the full data synthesis pipeline end-to-end.
@@ -698,16 +632,13 @@ class DataSynthesisPipeline:
         Args:
             input_root: Raw dataset root directory.
             output_dir: Root output directory (creates subdirs inside).
-            steps: Comma-separated step names: ``"extract"``, ``"inject"``,
+            steps: Comma-separated step names: ``"inject"``,
                    ``"annotate"``, ``"aggregate"``, or ``"all"``.
-            copy: If True, copy reference images instead of symlinking.
             workers: Parallel workers for distortion injection (0 = auto).
             compress: Save distorted images with compression.
             dry_run: Process only 2 groups with 3 distortions for testing.
             fmt: Output format, ``"png"`` or ``"jpeg"``.
-            max_refs_per_source: Per-source image limit (e.g. ``{"Sim_3_UAVs": 500}``).
             scorer: VLM scorer for annotation step.
-            scorer_batch_size: Batch size for VLM scoring.
             max_annotate_entries: Limit entries during annotation (debugging).
         """
         output_dir = Path(output_dir)
@@ -715,18 +646,8 @@ class DataSynthesisPipeline:
 
         step_set = self._parse_steps(steps)
 
-        if "extract" in step_set:
-            _log.info("=== Step 1: Extract reference frames ===")
-            self.extract_references(
-                input_root=input_root,
-                output_dir=output_dir / "ref_images",
-                copy=copy,
-                max_refs_per_source=max_refs_per_source,
-            )
-            self._copy_vqa_files(Path(input_root), output_dir)
-
         if "inject" in step_set:
-            _log.info("=== Step 2: Inject distortions ===")
+            _log.info("=== Step 1: Inject distortions ===")
             self.inject_distortions(
                 input_root=input_root,
                 output_dir=output_dir,
@@ -737,19 +658,19 @@ class DataSynthesisPipeline:
             )
 
         if "annotate" in step_set:
-            _log.info("=== Step 3: Annotate scores ===")
+            _log.info("=== Step 2: Annotate scores ===")
             if scorer is None:
                 _log.warning("No scorer provided — skipping annotation step")
             else:
                 self.annotate_scores(
                     output_dir=output_dir,
                     scorer=scorer,
-                    scorer_batch_size=scorer_batch_size,
+                    input_root=input_root,
                     max_entries=max_annotate_entries,
                 )
 
         if "aggregate" in step_set:
-            _log.info("=== Step 4: Aggregate scores ===")
+            _log.info("=== Step 3: Aggregate scores ===")
             self.aggregate_scores(output_dir=output_dir)
 
         _log.info("Pipeline complete. Output: %s", output_dir)
@@ -757,8 +678,8 @@ class DataSynthesisPipeline:
     @staticmethod
     def _parse_steps(steps: str) -> set[str]:
         if steps == "all":
-            return {"extract", "inject", "annotate", "aggregate"}
-        valid = {"extract", "inject", "annotate", "aggregate"}
+            return {"inject", "annotate", "aggregate"}
+        valid = {"inject", "annotate", "aggregate"}
         selected = {s.strip() for s in steps.split(",")}
         invalid = selected - valid
         if invalid:
@@ -771,9 +692,7 @@ class DataSynthesisPipeline:
 # ===========================================================================
 
 
-def create_pipeline(
-    dataset: str = "aircopbench", seed: int = 42
-) -> DataSynthesisPipeline:
+def create_pipeline(dataset: str = "aircopbench", seed: int = 42) -> DataSynthesisPipeline:
     """Create a ``DataSynthesisPipeline`` for a named dataset format.
 
     Example:

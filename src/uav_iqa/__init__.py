@@ -3,18 +3,22 @@ from .batch_annotator import BatchAnnotator
 from .annotations import (
     SUBTASK_NAMES,
     SUBTASK_TO_ID,
+    SUBTASK_NAME_LIST,
+    SUBTASK_NAME_TO_ID,
     NUM_SUBTASKS,
     build_ref_score_lookup,
     build_sample_id,
     build_vqa_split_lookup,
     extract_subtask_type,
     extract_subtask_id,
+    extract_uav_id_from_question_id,
     get_dataset_name,
+    normalize_subtask_type,
     group_by_scene_frame,
     parse_distortion_key,
     seed_for_distortion,
 )
-from .data_module import UAVIQDataModule
+from .data_module import UAVIQADataModule
 from .data_synthesis import (
     DatasetFormat,
     DataSynthesisPipeline,
@@ -42,11 +46,7 @@ from .model import UAVIQANet
 from .utils import (
     find_images,
     load_flat_samples,
-    load_manifest,
-    load_task_map,
     setup_logging,
-    split_samples,
-    write_manifest,
 )
 from .vla_scorer import BaseScorer
 from uav_iqa.vlm import VLMScorer
@@ -69,7 +69,7 @@ __all__ = [
     "per_distortion_category_metrics",
     "validate_manifest",
     "UAVIQALightningModule",
-    "UAVIQDataModule",
+    "UAVIQADataModule",
     "ListMLELoss",
     "CrossTaskRegularization",
     "parse_distortion_key",
@@ -78,18 +78,18 @@ __all__ = [
     "group_by_scene_frame",
     "extract_subtask_type",
     "extract_subtask_id",
+    "extract_uav_id_from_question_id",
+    "normalize_subtask_type",
     "SUBTASK_NAMES",
     "SUBTASK_TO_ID",
+    "SUBTASK_NAME_LIST",
+    "SUBTASK_NAME_TO_ID",
     "NUM_SUBTASKS",
     "build_sample_id",
     "get_dataset_name",
     "seed_for_distortion",
     "setup_logging",
-    "load_task_map",
     "load_flat_samples",
-    "load_manifest",
-    "split_samples",
-    "write_manifest",
     "find_images",
     "DatasetFormat",
     "DataSynthesisPipeline",

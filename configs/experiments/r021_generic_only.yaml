@@ -1,7 +1,7 @@
 seed_everything: 42
 model:
   backbone: mobilenetv4_conv_small
-  num_tasks: 4
+  num_tasks: 14
   use_fab: true
   use_cbam: true
   use_task_conditioning: true
@@ -12,17 +12,13 @@ model:
   weight_decay: 0.0001
   warmup_epochs: 5
   total_epochs: 50
-  annotator_stage: vla
 data:
   data_root: data/processed
   batch_size: 256
   num_workers: 16
   image_size: 256
-  annotator_stage: vla
-  task: null
-  val_task: null
+  subtask_filter: null  # all 14 subtasks
   distortion_filter: generic
-  leave_out_task: null
   dry_run: false
 trainer:
   accelerator: auto

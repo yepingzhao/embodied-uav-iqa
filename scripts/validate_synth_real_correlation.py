@@ -105,7 +105,7 @@ def main():
     data_root = Path(args.data_root)
     ref_dir = Path(args.ref_dir)
     image_paths = [str(data_root / entry.get("path", "")) for entry in entries]
-    task_labels = [entry.get("task", "tracking") for entry in entries]
+    task_labels = [entry.get("task", "scene_description") for entry in entries]
 
     ref_paths = []
     for entry in entries:
@@ -134,7 +134,7 @@ def main():
     for entry, pred in zip(entries, predicted_scores):
         ref_id = entry.get("ref_id", "")
         if ref_id in ref_lookup:
-            real = ref_lookup[ref_id]["execution_score"]
+            real = ref_lookup[ref_id]["cognitive_score"]
         else:
             continue
 

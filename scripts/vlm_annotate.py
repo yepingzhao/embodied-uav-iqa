@@ -1,27 +1,20 @@
 #!/usr/bin/env python3
 """Batch VLM annotation CLI — score grouped processed JSONs with VLM models.
 
-Replaces the placeholder cognitive_scores with actual VLM multi-image scores.
+**DEPRECATED:** This script is deprecated. Use the canonical tool instead:
+    python scripts/data_synthesis.py annotate
+
+The canonical path uses ``DataSynthesisPipeline.annotate_scores()``.
+This script uses ``BatchAnnotator`` which is an alternative code path.
+
+This file is kept importable for backward compatibility but ``main()``
+emits a ``DeprecationWarning`` at runtime.
 
 Examples:
     python scripts/vlm_annotate.py \\
         --output-dir data/processed \\
         --model Qwen2.5-VL \\
         --backend vllm
-
-    python scripts/vlm_annotate.py \\
-        --output-dir data/processed \\
-        --all-models
-
-    python scripts/vlm_annotate.py \\
-        --output-dir data/processed \\
-        --model Qwen2.5-VL \\
-        --max-entries 100
-
-    python scripts/vlm_annotate.py \\
-        --output-dir data/processed \\
-        --models Qwen2.5-VL InternVL2 \\
-        --splits train
 """
 
 import argparse
@@ -77,6 +70,15 @@ def cmd_annotate(args):
 
 
 def main():
+    import warnings
+
+    warnings.warn(
+        "scripts/vlm_annotate.py is deprecated. "
+        "Use 'python scripts/data_synthesis.py annotate' instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
     parser = argparse.ArgumentParser(
         description="Batch VLM annotation for grouped processed JSONs"
     )

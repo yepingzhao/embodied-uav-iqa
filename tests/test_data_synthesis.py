@@ -132,38 +132,6 @@ class TestCreatePipeline:
 
 
 # ===========================================================================
-# DataSynthesisPipeline — extract step
-# ===========================================================================
-
-
-class TestPipelineExtract:
-    def test_extract_copies_files(self):
-        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
-            src = Path(src)
-            dst = Path(dst)
-            _make_dummy_image(src / "img1.jpg")
-            _make_dummy_image(src / "subdir" / "img2.png")
-
-            pipeline = DataSynthesisPipeline(GenericImageDirFormat())
-            out = pipeline.extract_references(src, dst, copy=True)
-            assert out == dst
-            extracted = list(dst.rglob("*"))
-            assert len([p for p in extracted if p.suffix in (".jpg", ".png")]) == 2
-
-    def test_extract_symlink_mode(self):
-        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
-            src = Path(src)
-            dst = Path(dst)
-            _make_dummy_image(src / "img1.jpg")
-
-            pipeline = DataSynthesisPipeline(GenericImageDirFormat())
-            pipeline.extract_references(src, dst, copy=False)
-            extracted = list(dst.rglob("*.jpg"))
-            assert len(extracted) == 1
-            assert extracted[0].is_symlink() or extracted[0].exists()
-
-
-# ===========================================================================
 # DataSynthesisPipeline — inject step
 # ===========================================================================
 
@@ -180,8 +148,8 @@ class TestPipelineInject:
                 uav_dir.mkdir(parents=True)
                 _make_dummy_image(uav_dir / f"{uav}_frame_001.jpg", size=64)
 
-            # Create mock VQA JSON in train/
-            train_dir = dst / "train"
+            # Create mock VQA JSON in input_root/train/
+            train_dir = src / "train"
             train_dir.mkdir(parents=True)
             vqa_entry = {
                 "sequence_frame": "scene_001_frame_001",
@@ -206,26 +174,22 @@ class TestPipelineInject:
                 fmt="png",
             )
 
-            assert stats["total_groups"] == 1
-            assert stats["total_entries"] >= 1
-            assert stats["total_distortions"] >= 1
+            assert stats["total_flat_entries"] >= 1
 
-            # Check output JSON was written
-            out_vqa = train_dir / "Sim3_VQA_train.json"
+            # Check output JSON was written in flat format to dst/
+            out_vqa = dst / "train" / "Sim3_VQA_train.json"
             assert out_vqa.exists()
             with open(out_vqa) as f:
                 data = json.load(f)
-            assert len(data) == 1
-            group = data[0]
-            assert "distortions" in group
-            assert "vqa_entries" in group
-            assert len(group["distortions"]) >= 1
-            for dk, di in group["distortions"].items():
-                assert "sample_id" in di
-                assert "type" in di
-                assert "category" in di
-                assert "distorted_uav_paths" in di
-                assert len(di["distorted_uav_paths"]) == 3
+            assert len(data) >= 1
+            entry = data[0]
+            assert "sample_id" in entry
+            assert "distortion_info" in entry
+            assert "distorted_uav_paths" in entry
+            assert "uav_paths" in entry
+            assert "question_id" in entry
+            assert len(entry["distorted_uav_paths"]) == 3
+            assert entry["cognitive_score"] is None
 
             # Check distorted images exist
             distorted_dir = dst / "distorted"
@@ -240,13 +204,13 @@ class TestPipelineInject:
 
 
 class TestPipelineStepsParsing:
-    def test_all_expands_to_four(self):
+    def test_all_expands_to_three(self):
         steps = DataSynthesisPipeline._parse_steps("all")
-        assert steps == {"extract", "inject", "annotate", "aggregate"}
+        assert steps == {"inject", "annotate", "aggregate"}
 
     def test_comma_separated(self):
-        steps = DataSynthesisPipeline._parse_steps("extract,inject")
-        assert steps == {"extract", "inject"}
+        steps = DataSynthesisPipeline._parse_steps("inject,aggregate")
+        assert steps == {"inject", "aggregate"}
 
     def test_invalid_raises(self):
         with pytest.raises(ValueError, match="Unknown steps"):

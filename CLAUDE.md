@@ -7,36 +7,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 UAV-Embodied-IQA: visual quality assessment for aerial embodied intelligence (research codebase). It provides:
 - **6 UAV-specific distortion models** (propeller vibration, atmospheric scattering, 6DoF viewpoint blur, packet-loss blocks, low-res+SR artifacts, propeller shadow)
 - **30 generic distortion types** via Albumentations (36 total with UAV distortions)
-- **UAV-IQANet**: a lightweight NR-IQA model (~5.8M params, MobileNetV4-S backbone + PANet FPN + CBAM + frequency-aware branch + task-conditioned FiLM heads)
+- **UAV-IQANet**: a lightweight NR-IQA model (~5.4M params, MobileNetV4-S backbone + PANet FPN + CBAM + frequency-aware branch + task-conditioned FiLM heads)
 - **Benchmarking** against 15+ existing IQA methods via pyiqa
 
 ## Project structure
 
 ```
-src/uav_iqa/           # Core library (~5.8K LOC total, 16 modules)
-  __init__.py          #   Public API: exports 35 symbols
+src/uav_iqa/           # Core library (~8K LOC total, 16 top-level + 15 inference modules)
+  __init__.py          #   Public API: exports 45 symbols
   distortion.py        #   36 distortion models (UAVDistortionPipeline + 6 UAV + 30 generic)
   model.py             #   UAVIQANet (backbone → PANet FPN → CBAM → FAB → task heads)
-  dataset.py           #   UAVIQADataset — loads manifest.json, image/scores/task_id
+  dataset.py           #   UAVIQADataset — loads grouped JSON, image/cognitive_score/subtask
   losses.py            #   ListMLELoss + CrossTaskRegularization
   annotations.py       #   AirCopBench annotation parsing, degradation factors, score synthesis
   data_synthesis.py    #   Dataset-agnostic data pipeline (DatasetFormat ABC + AirCopBenchFormat + GenericImageDirFormat + DataSynthesisPipeline)
   lightning_module.py  #   UAVIQALightningModule (training_step, validation_step, etc.)
-  data_module.py       #   UAVIQDataModule (train/val/test dataloaders, manifest filtering)
+  data_module.py       #   UAVIQADataModule (train/test dataloaders, grouped JSON)
   metrics.py           #   SRCC, PLCC, RMSE, Kendall tau metrics
-  callbacks.py         #   SetupRunCallback, CurriculumStageCallback, MetricsHistoryCallback, ResultsSavingCallback
+  callbacks.py         #   SetupRunCallback, MetricsHistoryCallback, ResultsSavingCallback
   text_metrics.py      #   BLEU, ROUGE-L, CIDEr text similarity for VLM comparison scoring
   vlm/                 #   VLM scoring subpackage: config, scorer, VQA index
   vla_scorer.py        #   BaseScorer: VLA/execution score interface
   batch_annotator.py   #   BatchAnnotator: multi-GPU batch annotation across splits
-  utils.py             #   Utilities: count_parameters, logging, image I/O, manifest helpers
+  inference/           #   Multi-GPU offline inference framework (15 modules)
+  utils.py             #   Utilities: count_parameters, logging, image I/O
 configs/               # YAML-driven configuration
   default.yaml         #   Default training/model/distortion config template
   experiments/         #   21 per-experiment configs (r013–r024c)
 scripts/               # Data pipeline + benchmark + experiment scripts
-  data_synthesis.py                  # Unified data synthesis CLI (extract/inject/manifest/annotate/all)
+  data_synthesis.py                  # Unified data synthesis CLI (extract/inject/annotate/aggregate/all)
   download_models.py                 # Download VLM model weights from HuggingFace Hub
   vlm_annotate.py                    # Batch VLM annotation CLI with checkpoint/resume
+  vlm_cognitive_score_vqa.py         # VQA-paradigm cognitive scoring with VLM + BLEU/ROUGE-L/CIDEr
   train.py                           # Training entry point (LightningCLI wrapper, replaces main.py)
   benchmark_iqa_methods.py           # Benchmark 15+ IQA methods via pyiqa
   finetune_baselines.py              # Fine-tune FR/NR baselines on UAV data
@@ -44,8 +46,9 @@ scripts/               # Data pipeline + benchmark + experiment scripts
   visualize_distortions.py           # Verify all 36 distortions produce visually plausible outputs
   overfit_sanity_check.py            # Overfit test: train on 100 random images, verify loss → 0
   validate_synth_real_correlation.py # C2 correlation validation: synthetic vs real scores
+  inference.py                       # Multi-GPU offline inference CLI (Phase 5)
 data/                  # Datasets (raw = external inputs, processed = generated artifacts)
-tests/                 # pytest tests (8 files: test_distortion, test_lightning, test_data_synthesis, test_text_metrics, test_vlm_config, test_vlm_scorer, test_vlm_smoke, test_batch_annotator)
+tests/                 # pytest tests (13+ files: test_distortion, test_lightning, test_data_synthesis, test_text_metrics, test_vlm_config, test_vlm_scorer, test_vlm_smoke, test_batch_annotator, test_annotations, test_dataset, test_model_text, test_inference_phase1-5)
 refine-logs/           # Research-refine artifacts (FINAL_PROPOSAL, EXPERIMENT_PLAN, etc.)
 docs/                  # CODEMAPS, literature reviews, research roadmap, and EXPERIMENTS.md
 ```
@@ -64,16 +67,14 @@ python scripts/data_synthesis.py all \
 # Or run steps individually:
 python scripts/data_synthesis.py extract --dataset aircopbench --input-root ... --output-dir ...
 python scripts/data_synthesis.py inject --image-dir ... --output-dir ...
-python scripts/data_synthesis.py manifest --dataset aircopbench --distorted-dir ... --output-dir ...
-python scripts/data_synthesis.py annotate --dataset aircopbench --manifest-dir ...
+python scripts/data_synthesis.py annotate --dataset aircopbench --distorted-dir ...
+python scripts/data_synthesis.py aggregate --dataset aircopbench --annotated-dir ...
 ```
 
-1. **`extract`** — Extract clean reference frames from dataset → `data/processed/ref_images/`
-2. **`inject`** — Apply all 36 distortions × 1 random intensity level → `data/processed/distorted/`
-3. **`manifest`** — Scan distorted dir, generate train/val/test `manifest.json` → `data/processed/{train,val,test}/`
-4. **`annotate`** — Annotate manifest entries using annotations (if available) and degradation model: `score = ref_score × degradation_factor(distortion, intensity)` + noise
-5. **`scripts/train.py`** — Train UAVIQANet via LightningCLI + experiment config (reads `data/processed/`, writes `outputs/<experiment>_seed<N>/`)
-6. **`benchmark_iqa_methods.py`** — Evaluate existing IQA methods (PSNR, SSIM, LPIPS, BRISQUE, CLIP-IQA, MANIQA, etc.) on the test set
+1. **`extract`** — Copy VQA JSONs from raw dataset to processed directory → `data/processed/`
+2. **`inject`** — Apply same distortion to all UAV paths in a group (36 distortions × random intensity), produces flat entries → `data/processed/`
+3. **`annotate`** — Score flat entries via VLM → adds `vlm_scores` per entry
+4. **`aggregate`** — Compute `cognitive_score` (mean of VLM scores) as single training label
 
 ## Setup and development commands
 
@@ -111,14 +112,14 @@ Input (3×256×256)
        → 1 score per task
 ```
 
-Task types: `tracking=0`, `inspection=1`, `delivery=2`, `sar=3`
+14 subtask types across 4 dimensions: scene_understanding (1.1–1.3), object_understanding (2.1–2.3), planning (3.1–3.4), collaboration (4.1–4.4)
 
 ## Key concepts
 
-- **Manifest format**: JSON list of `{path, task, distortion, intensity_level, ref_id, vlm_score, vla_score, execution_score, annotated}`
-- **3-stage curriculum**: VLM annotations (epochs 1-20) → VLA (21-40) → Execution (41-50)
+- **Flat JSON format**: `{sample_id, uav_paths, distorted_uav_paths, distortion_info, subtask_type, cognitive_score}` — one entry per question×distortion pair. Extract copies VQA JSONs, inject applies same distortion to all UAV paths in a group and writes flat entries, annotate scores via VLM, aggregate computes `cognitive_score` (mean of VLM scores).
+- **Training splits**: train/test only (no val); `cognitive_score` is the single training label
 - **Loss**: MSE + λ_rank * ListMLE (per-distortion ranking) + λ_cross_task * CrossTaskRegularization (negative pairwise score variance)
-- **Callbacks**: `SetupRunCallback` (manifest hash, DDP-safe), `CurriculumStageCallback` (VLM→VLA→Execution, DDP-safe), `MetricsHistoryCallback` (epoch metrics → `history.json`), `ResultsSavingCallback` (best ckpt → `results.json`)
+- **Callbacks**: `SetupRunCallback` (data hash, DDP-safe), `MetricsHistoryCallback` (epoch metrics → `history.json`), `ResultsSavingCallback` (best ckpt → `results.json`)
 - **Ablation toggles**: configured via `model.init_args.use_fab/cbam/task_conditioning` in experiment YAML (e.g., `r016_no_fab.yaml`)
 - **Distortion naming**: `{name}_L{intensity*10:02d}` (e.g., `propeller_vibration_blur_L04`)
 
@@ -148,10 +149,10 @@ python scripts/train.py fit --config configs/experiments/r020_efficientvit_b0.ya
 python scripts/train.py fit --config configs/experiments/r021_generic_only.yaml   # only generic distortions
 python scripts/train.py fit --config configs/experiments/r021b_uav_only.yaml      # only UAV distortions
 
-# Curriculum ablation (annotation source only)
-python scripts/train.py fit --config configs/experiments/r022_vlm_only.yaml       # VLM only
-python scripts/train.py fit --config configs/experiments/r022b_vla_only.yaml      # VLA only
-python scripts/train.py fit --config configs/experiments/r023_no_exec.yaml        # VLM+VLA, no execution
+# Annotation source ablation
+python scripts/train.py fit --config configs/experiments/r022_vlm_only.yaml       # VLM-only cognitive_score
+python scripts/train.py fit --config configs/experiments/r022b_vla_only.yaml      # VLA-only cognitive_score
+python scripts/train.py fit --config configs/experiments/r023_no_exec.yaml        # Execution score excluded
 
 # Per-task training
 python scripts/train.py fit --config configs/experiments/r024a_tracking.yaml

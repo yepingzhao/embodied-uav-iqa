@@ -4,7 +4,6 @@
 Backed by ``uav_iqa.data_synthesis``.
 
 Subcommands:
-    extract    Extract clean reference frames + copy VQA JSONs.
     inject     Group by scene+frame, apply 36 distortions to all UAVs.
     annotate   VLM multi-image inference for cognitive scores.
     aggregate  Merge per-model scores into final cognitive_score.
@@ -82,19 +81,6 @@ def _add_output_dir_arg(parser, default: str):
     parser.add_argument("--output-dir", default=default, help="Output directory")
 
 
-def _parse_ref_limits(raw: str | None) -> dict[str, int] | None:
-    if not raw:
-        return None
-    out: dict[str, int] = {}
-    for pair in raw.split(","):
-        pair = pair.strip()
-        if "=" not in pair:
-            raise ValueError(f"Invalid ref-limit format: '{pair}'. Expected KEY=VALUE")
-        k, v = pair.split("=", 1)
-        out[k.strip()] = int(v.strip())
-    return out
-
-
 def _make_scorer(args):
     if not args.scorer_model:
         return None
@@ -105,16 +91,6 @@ def _make_scorer(args):
         backend=args.scorer_backend,
         device=args.scorer_device,
         seed=args.seed,
-    )
-
-
-def cmd_extract(args):
-    pipeline = create_pipeline(args.dataset, seed=args.seed)
-    pipeline.extract_references(
-        input_root=args.input_root,
-        output_dir=args.output_dir,
-        copy=args.copy,
-        max_refs_per_source=_parse_ref_limits(args.max_refs),
     )
 
 
@@ -136,8 +112,9 @@ def cmd_annotate(args):
     pipeline.annotate_scores(
         output_dir=args.output_dir,
         scorer=scorer,
-        scorer_batch_size=args.scorer_batch_size,
+        input_root=args.input_root,
         max_entries=args.max_entries,
+        files=args.files,
     )
 
 
@@ -157,14 +134,11 @@ def cmd_all(args):
         input_root=args.input_root,
         output_dir=args.output_dir,
         steps=args.steps,
-        copy=args.copy,
         workers=args.workers,
         compress=not args.no_compress,
         dry_run=args.dry_run,
         fmt=args.format,
-        max_refs_per_source=_parse_ref_limits(args.max_refs),
         scorer=scorer,
-        scorer_batch_size=args.scorer_batch_size,
         max_annotate_entries=args.max_annotate_entries,
     )
 
@@ -172,20 +146,6 @@ def cmd_all(args):
 def main():
     parser = argparse.ArgumentParser(description="UAV-IQA data synthesis pipeline")
     sub = parser.add_subparsers(dest="command", required=True)
-
-    # ---- extract ----
-    p_extract = sub.add_parser("extract", help="Extract clean reference frames + copy VQA JSONs")
-    _add_dataset_arg(p_extract, required=True)
-    p_extract.add_argument("--input-root", required=True, help="Dataset root directory")
-    _add_output_dir_arg(p_extract, "data/processed/ref_images")
-    p_extract.add_argument("--copy", action="store_true", help="Copy instead of symlink")
-    p_extract.add_argument(
-        "--max-refs",
-        default=None,
-        help="Per-source image limits, e.g. 'Sim_3_UAVs=500' (comma-separated KEY=VALUE)",
-    )
-    _add_seed_arg(p_extract)
-    p_extract.set_defaults(func=cmd_extract)
 
     # ---- inject ----
     p_inject = sub.add_parser("inject", help="Group by scene+frame and inject distortions")
@@ -209,9 +169,15 @@ def main():
     p_annotate = sub.add_parser("annotate", help="VLM multi-image annotation")
     _add_dataset_arg(p_annotate)
     p_annotate.add_argument("--output-dir", default="data/processed", help="Processed output directory")
+    p_annotate.add_argument("--input-root", help="Raw dataset root (for resolving reference image paths)")
     p_annotate.add_argument(
         "--max-entries", type=int, default=None,
         help="Limit entries per split (debugging)",
+    )
+    p_annotate.add_argument(
+        "--files", nargs="+", default=None,
+        help="Specific file paths relative to output-dir (e.g. train/Sim3_VQA_train.json). "
+             "Use for multi-GPU: assign different files to each GPU.",
     )
     _add_seed_arg(p_annotate)
     _add_scorer_args(p_annotate)
@@ -235,9 +201,8 @@ def main():
     _add_output_dir_arg(p_all, "data/processed")
     p_all.add_argument(
         "--steps", default="all",
-        help="Comma-separated steps: extract,inject,annotate,aggregate (or 'all')",
+        help="Comma-separated steps: inject,annotate,aggregate (or 'all')",
     )
-    p_all.add_argument("--copy", action="store_true", help="Copy ref images instead of symlink")
     p_all.add_argument("--workers", type=int, default=0, help="Parallel workers (0=auto)")
     p_all.add_argument("--no-compress", action="store_true", help="Disable compression")
     p_all.add_argument(
@@ -247,10 +212,6 @@ def main():
     p_all.add_argument(
         "--dry-run", action="store_true",
         help="Inject only 2 groups with 3 distortions",
-    )
-    p_all.add_argument(
-        "--max-refs", default=None,
-        help="Per-source image limits (e.g. 'Sim_3_UAVs=500') for extract step",
     )
     p_all.add_argument(
         "--max-annotate-entries", type=int, default=None,

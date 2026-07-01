@@ -37,12 +37,11 @@ class TestLightningModule:
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="No GPU available")
     def test_training_step(self):
         model = UAVIQALightningModule(lambda_rank=0.0, lambda_cross_task=0.0)
-        model.curriculum_stage = "vla"
 
         batch = {
-            "image": torch.randn(4, 3, 256, 256),
-            "task_id": torch.randint(0, 4, (4,)),
-            "vla_score": torch.rand(4),
+            "images": torch.randn(4, 3, 256, 256),
+            "task_id": torch.randint(0, 14, (4,)),
+            "cognitive_score": torch.rand(4),
             "distortion": ["blur_L02", "blur_L02", "noise_L04", "noise_L04"],
         }
 
@@ -56,31 +55,39 @@ class TestLightningDataModule:
     @pytest.fixture
     def mock_data_dir(self, tmp_path):
         data_root = tmp_path / "data"
-        for split in ["train", "val", "test"]:
+        data_root.mkdir(parents=True)
+
+        def _write_entries(split):
             split_dir = data_root / split
             split_dir.mkdir(parents=True)
-            manifest = []
+            entries = []
             for i in range(20):
-                manifest.append(
-                    {
-                        "path": f"{split}/img_{i:03d}.png",
-                        "task": "tracking",
-                        "vlm_score": 0.5,
-                        "vla_score": 0.6,
-                        "execution_score": 0.7,
-                        "distortion": "blur_L02",
-                        "intensity_level": 0.2,
-                        "ref_id": i,
-                    }
-                )
-            with open(split_dir / "manifest.json", "w") as f:
-                json.dump(manifest, f)
+                entries.append({
+                    "sample_id": f"Sim3__scene_{i:03d}__blur_L02",
+                    "subtask_type": "1.1",
+                    "subtask_name": "scene_description",
+                    "cognitive_score": 0.5,
+                    "uav_paths": {"UAV1": f"refs/uav_{i:03d}.png"},
+                    "distorted_uav_paths": {"UAV1": f"split/distorted_{i:03d}.png"},
+                    "distortion_info": {
+                        "type": "blur",
+                        "category": "blur",
+                        "intensity": 0.2,
+                        "level": 2,
+                        "seed": 42,
+                    },
+                })
+            with open(split_dir / f"Sim3_VQA_{split}.json", "w") as f:
+                json.dump(entries, f)
+
+        _write_entries("train")
+        _write_entries("test")
         return str(data_root)
 
     def test_data_module_setup(self, mock_data_dir):
-        from uav_iqa.data_module import UAVIQDataModule
+        from uav_iqa.data_module import UAVIQADataModule
 
-        dm = UAVIQDataModule(
+        dm = UAVIQADataModule(
             data_root=mock_data_dir,
             batch_size=4,
             num_workers=0,

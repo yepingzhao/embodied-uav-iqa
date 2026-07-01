@@ -19,14 +19,14 @@ load_dotenv()  # Load .env before Lightning/W&B read env vars
 
 from lightning.pytorch.cli import LightningCLI  # noqa: E402
 
-from uav_iqa.data_module import UAVIQDataModule  # noqa: E402
+from uav_iqa.data_module import UAVIQADataModule  # noqa: E402
 from uav_iqa.lightning_module import UAVIQALightningModule  # noqa: E402
 
 
 def main():
     LightningCLI(
         UAVIQALightningModule,
-        UAVIQDataModule,
+        UAVIQADataModule,
         args=None,  # parse sys.argv
     )
 

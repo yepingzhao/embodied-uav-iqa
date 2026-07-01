@@ -202,7 +202,7 @@
 
 | File | Removed | Reason |
 |------|---------|--------|
-| `src/uav_iqa/data_module.py` | `train_split`, `val_split` in `UAVIQDataModule.__init__` | Stored via `save_hyperparameters()` but never directly accessed |
+| `src/uav_iqa/data_module.py` | `train_split`, `val_split` in `UAVIQADataModule.__init__` | Stored via `save_hyperparameters()` but never directly accessed |
 
 ### Dead Methods Removed
 
@@ -312,7 +312,7 @@ The following vulture/ruff findings were reviewed and determined to be **not dea
 |------|--------|
 | `CurriculumStageCallback`, `SetupRunCallback`, `MetricsHistoryCallback`, `ResultsSavingCallback` | Lightning framework hooks — called dynamically |
 | `UAVIQALightningModule` methods (`training_step`, `validation_step`, `test_step`, etc.) | Lightning framework hooks — called dynamically |
-| `UAVIQDataModule` methods (`setup`, `train_dataloader`, `val_dataloader`, etc.) | Lightning framework hooks — called dynamically |
+| `UAVIQADataModule` methods (`setup`, `train_dataloader`, `val_dataloader`, etc.) | Lightning framework hooks — called dynamically |
 | `ALL_TASKS` and task constants in `vlm_vla_scorer.py` | Used in `tests/test_vlm_scorer.py` |
 | `# noqa: F401` directives in `vlm_vla_scorer.py` | Defensive — prevent F401 in editors with different configs |
 | Lambda parameters (`seq_length`, `self_m`, `infer_mode`, `num_logits_to_keep`) | Intentionally match patched method interface signatures |
@@ -364,3 +364,274 @@ The following vulture/ruff findings were reviewed and determined to be **not dea
 - Ruff lint: All checks passed (0 violations)
 - pytest: 88/88 tests passing (distortion + text_metrics + data_synthesis + batch_annotator + vlm_config)
 - No functional changes — only dead file removal and doc updates
+
+## [2026-06-29] Batch 8: Dead Code Cleanup
+
+### Unused Functions Removed
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `src/uav_iqa/annotations.py` | `resolve_uav_path()` (8 lines) | Defined but never called anywhere in codebase |
+| `src/uav_iqa/vla_scorer.py` | `extract_ref_id()` (9 lines) | Defined but never called anywhere in codebase |
+| `src/uav_iqa/text_metrics.py` | `compute_similarity()` (38 lines) | Defined but never called anywhere in codebase |
+| `src/uav_iqa/text_metrics.py` | `derive_cognitive_score()` (31 lines) | Defined but never called anywhere in codebase |
+
+### Unused Variables / Aliases Removed
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `src/uav_iqa/model.py` | `TASK_MAP = TASK_TO_ID` alias | Unused alias — `TASK_TO_ID` is used directly via import |
+
+### Dead Methods Removed
+
+| File | Method | Reason |
+|------|--------|--------|
+| `src/uav_iqa/distortion.py` | `UAVDistortionPipeline.generate_group()` (25 lines) | Defined but never called — `DataSynthesisPipeline._inject_groups()` handles group-level distortion directly |
+| `src/uav_iqa/distortion.py` | `UAVDistortionPipeline.inject_directory()` (71 lines) | Defined but never called — `DataSynthesisPipeline.inject_distortions()` is the active entry point |
+
+### Supporting Infrastructure Removed
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `src/uav_iqa/text_metrics.py` | `SentenceTransformer` / `BERTScorer` optional import blocks (12 lines) | Only used by removed `compute_similarity()` |
+| `src/uav_iqa/text_metrics.py` | `_ST_CACHE`, `_BS_CACHE` global variables (2 lines) | Only used by removed `compute_similarity()` |
+| `src/uav_iqa/distortion.py` | `from tqdm import tqdm` (1 line) | Only used by removed `inject_directory()` |
+
+### Impact
+
+- Files modified: 5 (`annotations.py`, `model.py`, `vla_scorer.py`, `text_metrics.py`, `distortion.py`)
+- Functions removed: 4
+- Methods removed: 2
+- Lines of code removed: ~170
+- All ruff checks passing
+- All tests passing (distortion + text_metrics + data_synthesis)
+
+### Testing
+
+- Ruff lint: All checks passed (0 violations)
+- pytest: All 19 distortion tests passing, 10 text_metrics tests passing, 18 data_synthesis tests passing
+- No functional changes — only dead code/alias/infrastructure removal
+
+## [2026-06-29] Batch 9: Dead Code Cleanup
+
+### Unused Import Alias Removed
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `src/uav_iqa/model.py:240` | `SUBTASK_NAME_TO_ID as TASK_TO_ID` from import | Imported but never referenced in file body. `NUM_SUBTASKS as _NUM_TASKS` kept. |
+
+### Unused Functions Removed
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `src/uav_iqa/utils.py` | `split_samples()` (22 lines) | Defined but never called anywhere in codebase |
+| `src/uav_iqa/utils.py` | `load_task_map()` (7 lines) | Defined but never called anywhere in codebase |
+
+### Unused Exports Removed
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `src/uav_iqa/__init__.py` | `load_task_map`, `split_samples` from import | Corresponding functions removed |
+| `src/uav_iqa/__init__.py` | `"load_task_map"`, `"split_samples"` from `__all__` | No longer exported |
+
+### Unused Parameter Renamed
+
+| File | Method | Parameter |
+|------|--------|-----------|
+| `scripts/finetune_baselines.py:169` | `_make_dataset` | `samples` → `_samples` (unused in method body) |
+
+### Impact
+
+- Files modified: 4 (`model.py`, `utils.py`, `__init__.py`, `finetune_baselines.py`)
+- Functions removed: 2
+- Lines of code removed: ~32
+- All ruff checks passing
+- All 66 fast tests passing
+
+### Testing
+
+- Ruff lint: All checks passed (0 violations)
+- pytest: 66/66 fast tests passing (distortion + text_metrics + data_synthesis + vlm_config)
+- No functional changes — only dead code/import/export cleanup
+
+## [2026-06-29] Batch 10: Dead Code Cleanup
+
+### Unused Function Removed
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `src/uav_iqa/distortion.py` | `_inject_one_image_mp()` (45 lines) | Defined but never called anywhere in codebase; superseded by `UAVDistortionPipeline` in-class methods |
+
+### Unused Variable Assignment Removed
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `src/uav_iqa/vlm/scorer.py` | `self._sampling_params = SamplingParams(...)` (3 lines) | Assigned in vLLM load path but never read anywhere in file; `SamplingParams` import also removed |
+
+### Unused Import Removed
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `src/uav_iqa/vlm/scorer.py` | `SamplingParams` from `from vllm import LLM, SamplingParams` | Became unused after `_sampling_params` assignment removed |
+
+### Impact
+
+- Files modified: 2
+- Functions removed: 1 (45 lines)
+- Unused assignment removed: 1
+- Unused import removed: 1
+- Total lines of code removed: ~49
+- All ruff checks passing
+- All 75 tests passing (distortion + data_synthesis + text_metrics + vlm_config + batch_annotator)
+
+### Testing
+
+- Ruff lint: All checks passed (0 violations)
+- pytest: 75/75 tests passing (56 fast + 19 batch_annotator)
+- No functional changes — only dead code/variable/import removal
+
+## [2026-07-01] Batch 11: Final Cleanup After Analysis
+
+### Unused Parameter Renamed
+
+| File | Method | Parameter |
+|------|--------|-----------|
+| `scripts/finetune_baselines.py:176` | `BaselineDataModule.setup` | `stage` → `_stage` (unused in method body) |
+| `scripts/overfit_sanity_check.py:26` | `OverfitDataModule.setup` | `stage` → `_stage` (unused in method body) |
+
+### Dead Code Analysis Summary
+
+Vulture analysis at 60%+ confidence found 52 potential issues in `src/`, 27 in `scripts/`, and 35 in `tests/`. After review:
+
+| Category | Count | Action |
+|----------|-------|--------|
+| **Lightning framework hooks** (called dynamically) | ~30 | Left as-is — false positive |
+| **Monkey-patching interface params** (signature must match original) | 6 | Left as-is — required for compat |
+| **Abstract method params** (ABC interface convention) | 2 | Left as-is — interface contract |
+| **Model attributes** (set dynamically, used by transformers) | 7 | Left as-is — false positive |
+| **Test mock params** (mock interface matching) | ~20 | Left as-is — required for testing |
+| **Confirmed unused params** | 2 | Fixed: renamed `stage` → `_stage` |
+
+### Codebase Health
+
+The codebase is in excellent shape after 11 batches of dead code cleanup:
+- **ruff**: 0 violations across all files
+- **Unused imports**: 0 (ruff F401)
+- **Unused variables**: 0 (ruff F841)
+- **All 29 fast tests passing**
+
+No further dead code removal is warranted without risking functionality.
+
+### Testing
+
+- Ruff lint: All checks passed (0 violations)
+- pytest: 29/29 fast tests passing (distortion + text_metrics)
+- Import verification: All core modules import successfully
+- No functional changes — only unused parameter to `_` rename
+
+## [2026-07-01] Batch 12: Unused noqa + try/except import cleanup
+
+### Unused noqa Directives Removed (RUF100)
+
+The following `# noqa: F401` and `# noqa: E402` directives were removed from imports that ruff no longer flags as violations after converting the try/except pattern:
+
+| File | Fix |
+|------|-----|
+| `scripts/download_models.py:224` | `import huggingface_hub  # noqa: F401` → `find_spec("huggingface_hub")` |
+| `scripts/download_models.py:233` | `import transformers  # noqa: F401` → `find_spec("transformers")` |
+| `scripts/download_models.py:234` | `import torch  # noqa: F401` → `find_spec("torch")` |
+| `scripts/finetune_baselines.py:335` | `import pyiqa  # noqa: F401` → `find_spec("pyiqa")` |
+| `scripts/train.py:20,22,23` | `# noqa: E402` retained intentionally (import after `load_dotena()`) |
+| `src/uav_iqa/vlm/scorer.py:27-29` | `# noqa: F401` re-added intentionally (try/except alias pattern) |
+| `src/uav_iqa/vlm/scorer.py:141,156,167` | `import vllm/transformers  # noqa: F401` → `find_spec(...)` |
+| `src/uav_iqa/vlm/scorer.py:795,1044` | `from vllm import SamplingParams  # noqa: F401` → regular import (used) |
+
+### Try/Except Import Pattern Migrated
+
+Replaced `try: import X / except ImportError` availability-check pattern with `importlib.util.find_spec("X")`:
+
+- **`scripts/download_models.py`**: 3 dependency checks (`huggingface_hub`, `transformers`, `torch`)
+- **`scripts/finetune_baselines.py`**: 1 dependency check (`pyiqa`)
+- **`src/uav_iqa/vlm/scorer.py`**: 3 backend resolution checks (`vllm` × 2, `transformers` × 1)
+
+Rationale: Ruff's recommended pattern for import-availability checks. More explicit intent, no false positive F401.
+
+### Dead Code Analysis Summary
+
+Re-ran vulture at 60%+ confidence on `src/`, `scripts/`, `tests/`. All 114 flagged items after filtering:
+
+| Category | Count | Action |
+|----------|-------|--------|
+| **Lightning framework hooks** (dynamic dispatch) | ~30 | Left as-is — false positive |
+| **Monkey-patching/transformers compat** (signature-matching params) | ~15 | Left as-is — required |
+| **getattr-dispatch methods** (benchmark_iqa_methods, etc.) | ~12 | Left as-is — false positive |
+| **Abstract/interface methods** | ~5 | Left as-is — interface contract |
+| **Test mock params** | ~20 | Left as-is — required |
+| **Model attributes** (set dynamically, used by transformers) | ~7 | Left as-is — false positive |
+| **Confirmed fixable** (noqa + import patterns) | 15 | Fixed in this session |
+
+### Impact
+
+- Files modified: 4 (scripts: 3 + src: 1)
+- Unused noqa directives removed: 15 (with 4 intentionally re-added)
+- Ruff violations: 0 (clean)
+- Functial changes: None — all dependency checks maintain equivalent behavior
+- All fast tests passing (distortion + text_metrics)
+- All core modules import successfully
+
+### Testing
+
+- Ruff lint: All checks passed (0 violations)
+- pytest: 19/19 distortion tests passing, 10/10 text_metrics tests passing
+- Import verification: `uav_iqa` and `uav_iqa.inference` packages import cleanly
+- No funchal changes — only noqa cleanup and import pattern migration
+
+## [2026-07-01] Batch 13: Redundant Code Path Simplification
+
+### Unused Parameters Removed
+
+| File | Method | Removed | Reason |
+|------|--------|---------|--------|
+| `src/uav_iqa/data_synthesis.py` | `_inject_groups` | `workers: int` | Received but never used in method body |
+| `src/uav_iqa/data_synthesis.py` | `_annotate_one_file` | `scorer_batch_size: int` | Received but never used; scoring is per-entry, not batched |
+| `src/uav_iqa/data_synthesis.py` | `annotate_scores` | `scorer_batch_size: int` | Pass-through only; never used in method body |
+| `src/uav_iqa/data_synthesis.py` | `run_full` | `scorer_batch_size: int` | Pass-through only; never used in method body |
+
+### Unused Parameter Renamed
+
+| File | Method | Parameter |
+|------|--------|-----------|
+| `scripts/inference.py:85` | `factory` (DummyExecutor) | `gpu_idx` → `_gpu_idx` (unused in dry-run branch) |
+
+### Redundant Return/elif Patterns Simplified (RET)
+
+Ruff auto-fix applied to 14 occurrences across:
+- `src/uav_iqa/annotations.py` — Unnecessary `elif` after `return`
+- `src/uav_iqa/distortion.py` — Unnecessary assignment before `return`
+- `src/uav_iqa/model.py` — Unnecessary assignment & `else` after `return` (× 4)
+- `src/uav_iqa/lightning_module.py` — Unnecessary `else` after `return` (× 2)
+- `src/uav_iqa/vlm/scorer.py` — Unnecessary assignment & `elif` after `return` (× 6)
+
+### Impact
+
+- Files modified: 6
+- Unused parameters removed: 4
+- Unused parameters renamed: 1
+- Redundant patterns simplified: 14
+- All ruff checks: ARG/F/RUF/RET passing for all modified files
+- Tests: 16/16 data_synthesis tests passing
+
+## [2026-07-01] Dead Code Cleanup Session (Refactor Skill)
+
+### Unused Imports Removed
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `src/uav_iqa/vlm/backends.py` | `Tuple` from `typing` import | Never used in file (ruff F401) |
+
+### Impact
+
+- Files modified: 1
+- Lines of code removed: 1
+- All ruff F-check: passing across entire codebase
+- Tests: confirmed passing

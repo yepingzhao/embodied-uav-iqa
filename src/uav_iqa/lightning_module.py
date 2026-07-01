@@ -81,6 +81,27 @@ class UAVIQALightningModule(L.LightningModule):
         chunks = [gathered[i][: sizes[i]] for i in range(world_size)]
         return torch.cat(chunks, dim=0)
 
+    @staticmethod
+    def _resolve_batch_inputs(batch: Dict) -> tuple:
+        """Safely extract (images, scores, task_ids, question_text) from batch with explicit None checks."""
+        images = batch.get("images")
+        if images is None:
+            raise KeyError("Batch must contain 'images' key")
+
+        scores = batch.get("score")
+        if scores is None:
+            scores = batch.get("cognitive_score")
+        if scores is None:
+            raise KeyError("Batch must contain 'score' or 'cognitive_score' key")
+
+        task_ids = batch.get("task_id")
+        if task_ids is None:
+            raise KeyError("Batch must contain 'task_id' key")
+
+        question_text = batch.get("question")
+
+        return images, task_ids, scores, question_text
+
     def _gather_objects(self, obj_list: list) -> list:
         """Gather arbitrary Python objects from all DDP processes."""
         if not dist.is_initialized() or dist.get_world_size() == 1:
@@ -94,17 +115,18 @@ class UAVIQALightningModule(L.LightningModule):
         return result
 
     def forward(
-        self, x: torch.Tensor, task_ids: Optional[torch.Tensor] = None
+        self,
+        x: torch.Tensor,
+        task_ids: Optional[torch.Tensor] = None,
+        question_text: Optional[List[str]] = None,
     ) -> torch.Tensor:
-        return self.model(x, task_ids)
+        return self.model(x, task_ids, question_text=question_text)
 
     def training_step(self, batch: Dict, _: int) -> torch.Tensor:
-        images = batch["image"]
-        task_ids = batch["task_id"]
-        scores = batch.get("score", batch.get("cognitive_score"))
+        images, task_ids, scores, question_text = self._resolve_batch_inputs(batch)
 
         # Share features: compute backbone+FPN+FAB once, reuse for both pred and cross-task
-        f = self.model.forward_features(images)
+        f = self.model.forward_features(images, question_text=question_text)
         pred = self.model(images, task_ids, features=f)
 
         loss_mse = self.mse_loss(pred, scores)
@@ -115,9 +137,7 @@ class UAVIQALightningModule(L.LightningModule):
             # Build a tensor of distortion indices for batched mask construction
             unique_dists = list(set(distortions))
             dist_to_idx = {d: i for i, d in enumerate(unique_dists)}
-            dist_ids = torch.tensor(
-                [dist_to_idx[d] for d in distortions], device=self.device
-            )
+            dist_ids = torch.tensor([dist_to_idx[d] for d in distortions], device=self.device)
             for idx, dist in enumerate(unique_dists):
                 mask = dist_ids == idx
                 if mask.sum() >= 3:
@@ -125,12 +145,12 @@ class UAVIQALightningModule(L.LightningModule):
 
         loss_ct = torch.tensor(0.0, device=self.device)
         if self.model.use_task_conditioning:
-            all_task_scores = self.model.forward_all_tasks(images, features=f)
+            all_task_scores = self.model.forward_all_tasks(
+                images, features=f, question_text=question_text
+            )
             loss_ct = self.cross_task_loss(all_task_scores)
 
-        loss = (
-            loss_mse + self.lambda_rank * loss_rank + self.lambda_cross_task * loss_ct
-        )
+        loss = loss_mse + self.lambda_rank * loss_rank + self.lambda_cross_task * loss_ct
 
         self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         self.log("train/mse", loss_mse, on_step=True, on_epoch=True)
@@ -142,13 +162,9 @@ class UAVIQALightningModule(L.LightningModule):
         return loss
 
     def validation_step(self, batch: Dict, _: int) -> None:
-        images = batch["image"]
-        task_ids = batch["task_id"]
-        scores = batch.get("score", batch.get("cognitive_score"))
-        if scores is None:
-            scores = batch.get("score")
+        images, task_ids, scores, question_text = self._resolve_batch_inputs(batch)
 
-        pred = self.model(images, task_ids)
+        pred = self.model(images, task_ids, question_text=question_text)
 
         self._val_preds.append(pred.detach().cpu())
         self._val_targets.append(scores.detach().cpu())
@@ -198,13 +214,9 @@ class UAVIQALightningModule(L.LightningModule):
         self._val_distortions.clear()
 
     def test_step(self, batch: Dict, _: int) -> None:
-        images = batch["image"]
-        task_ids = batch["task_id"]
-        scores = batch.get("score", batch.get("cognitive_score"))
-        if scores is None:
-            scores = batch.get("score")
+        images, task_ids, scores, question_text = self._resolve_batch_inputs(batch)
 
-        pred = self.model(images, task_ids)
+        pred = self.model(images, task_ids, question_text=question_text)
 
         self._test_preds.append(pred.detach().cpu())
         self._test_targets.append(scores.detach().cpu())
@@ -253,9 +265,7 @@ class UAVIQALightningModule(L.LightningModule):
         self._test_distortions.clear()
 
     def configure_optimizers(self):
-        opt = torch.optim.AdamW(
-            self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay
-        )
+        opt = torch.optim.AdamW(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
         if self.warmup_epochs > 0:
             warmup = torch.optim.lr_scheduler.LinearLR(
@@ -268,9 +278,7 @@ class UAVIQALightningModule(L.LightningModule):
                 opt, [warmup, cosine], milestones=[self.warmup_epochs]
             )
         else:
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                opt, T_max=self.total_epochs
-            )
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=self.total_epochs)
 
         return {
             "optimizer": opt,

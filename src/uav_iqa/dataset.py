@@ -1,9 +1,8 @@
-"""UAV-IQA multi-image dataset loader.
+"""UAV-IQA flat dataset loader.
 
-Loads grouped JSON files from the data synthesis pipeline.  Each training
-sample is a ``(scene+frame group, distortion type)`` pair that yields
-multiple UAV images with the same distortion, a subtask identifier, and
-a cognitive quality score.
+Loads flat processed JSON files from the data synthesis pipeline. Each JSON
+entry is a single (question x distortion) training sample with embedded
+paths, distortion info, and cognitive score.
 """
 
 import json
@@ -14,13 +13,14 @@ from typing import List
 import torch
 from torch.utils.data import Dataset
 
-from uav_iqa.annotations import SUBTASK_TO_ID
+from uav_iqa.annotations import SUBTASK_NAME_TO_ID
+from uav_iqa.utils import load_image_tensor
 
 _log = logging.getLogger(__name__)
 
 
 def validate_manifest(manifest_path: Path) -> dict:
-    """Validate a manifest JSON file (old flat format) or grouped JSON (new format).
+    """Validate a manifest JSON file (flat format).
 
     Returns a dict with keys ``valid`` (bool), ``count`` (int), and
     optional ``warnings`` / ``score_stats``.
@@ -36,22 +36,9 @@ def validate_manifest(manifest_path: Path) -> dict:
 
     return {"valid": True, "count": len(data), "warnings": []}
 
-TASK_NAMES = (
-    "scene_description", "scene_comparison", "observing_posture",
-    "object_recognition", "object_counting", "object_grounding",
-    "object_matching",
-    "quality_assessment", "usability_assessment", "causal_assessment",
-    "when_to_collaborate", "what_to_collaborate", "who_to_collaborate",
-    "why_to_collaborate",
-)
-
-TASK_TO_ID: dict[str, int] = {name: i for i, name in enumerate(TASK_NAMES)}
-
-NUM_TASKS = len(TASK_NAMES)
-
 
 class UAVIQADataset(Dataset):
-    """Multi-image UAV-IQA dataset from grouped processed JSONs.
+    """Multi-image UAV-IQA dataset from flat processed JSONs.
 
     Each ``__getitem__`` returns a dict with:
       - ``images``: tensor (N_UAV, 3, H, W)
@@ -85,31 +72,36 @@ class UAVIQADataset(Dataset):
 
         for fpath in sorted(split_dir.glob("*_VQA_*.json")):
             with open(fpath) as f:
-                groups = json.load(f)
+                entries = json.load(f)
 
-            for group in groups:
-                distortions = group.get("distortions", {})
-                uav_paths = group.get("uav_paths", {})
-                uav_keys = group.get("uav_keys", [])
-                if not uav_paths or not uav_keys or not distortions:
-                    continue
+            for entry in entries:
+                uav_paths = entry.get("uav_paths", {})
+                uav_keys = sorted(uav_paths.keys())
+                distortion_info = entry.get("distortion_info", {})
+                cs = entry.get("cognitive_score")
+                cognitive_score = float(cs) if cs is not None else 0.0
 
-                for dist_key, dist_info in distortions.items():
-                    distorted_uav = dist_info.get("distorted_uav_paths", {})
-                    if not distorted_uav:
-                        continue
-
-                    samples.append({
-                        "uav_paths": uav_paths,
-                        "uav_keys": uav_keys,
-                        "num_uavs": group.get("num_uavs", len(uav_keys)),
-                        "distortion": dist_info.get("type", "unknown"),
-                        "intensity": dist_info.get("intensity", 0.0),
-                        "sample_id": dist_info.get("sample_id", ""),
-                        "distorted_uav_paths": distorted_uav,
-                        "vqa_entries": group.get("vqa_entries", []),
-                        "data_root": str(self.data_root.parent),
-                    })
+                subtask_type = entry.get("subtask_type", "")
+                task_id = SUBTASK_NAME_TO_ID.get(subtask_type)
+                if task_id is None:
+                    _log.warning(
+                        "Unknown subtask_type '%s' for sample %s, defaulting to 0",
+                        subtask_type,
+                        entry.get("sample_id", "?"),
+                    )
+                    task_id = 0
+                samples.append({
+                    "uav_paths": uav_paths,
+                    "uav_keys": uav_keys,
+                    "distorted_uav_paths": entry.get("distorted_uav_paths", {}),
+                    "distortion": distortion_info.get("type", "unknown"),
+                    "intensity": distortion_info.get("intensity", 0.0),
+                    "sample_id": entry.get("sample_id", ""),
+                    "subtask_type": subtask_type,
+                    "task_id": task_id,
+                    "cognitive_score": cognitive_score,
+                    "question": entry.get("question", ""),
+                })
 
         _log.info(
             "Loaded %d samples from %s/%s",
@@ -123,20 +115,18 @@ class UAVIQADataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx: int) -> dict:
-        from uav_iqa.utils import load_image_tensor
-
         sample = self.samples[idx]
         uav_keys = sample["uav_keys"]
         distorted_uav = sample["distorted_uav_paths"]
-        data_root = Path(sample["data_root"])
 
         images = []
         for k in uav_keys:
             dp = distorted_uav.get(k, "")
-            img_path = data_root / dp.lstrip("/")
+            img_path = self.data_root / dp.lstrip("/")
             try:
                 img = load_image_tensor(img_path, self.image_size)
-            except (OSError, IOError, Exception):
+            except (OSError, IOError):
+                _log.warning("Failed to load image: %s", img_path)
                 img = torch.zeros(3, self.image_size, self.image_size)
             images.append(img)
 
@@ -145,33 +135,16 @@ class UAVIQADataset(Dataset):
         if self.augment:
             image_tensor = self._augment(image_tensor)
 
-        vqa_entries = sample.get("vqa_entries", [])
-        if not vqa_entries:
-            return {
-                "images": image_tensor,
-                "task_id": torch.tensor(0, dtype=torch.long),
-                "score": torch.tensor(0.0, dtype=torch.float32),
-                "sample_id": sample.get("sample_id", ""),
-                "distortion": sample.get("distortion", "unknown"),
-                "num_uavs": sample.get("num_uavs", len(uav_keys)),
-            }
-
-        entry = vqa_entries[0]
-        subtask_type = entry.get("subtask_type", "")
-        task_id = SUBTASK_TO_ID.get(subtask_type, 0)
-        cognitive_score = entry.get("cognitive_score", 0.0)
-        if isinstance(cognitive_score, dict):
-            cognitive_score = 0.0
-        elif not isinstance(cognitive_score, (int, float)):
-            cognitive_score = 0.0
+        num_uavs = len(uav_keys)
 
         return {
             "images": image_tensor,
-            "task_id": torch.tensor(task_id, dtype=torch.long),
-            "score": torch.tensor(float(cognitive_score), dtype=torch.float32),
-            "sample_id": sample.get("sample_id", ""),
-            "distortion": sample.get("distortion", "unknown"),
-            "num_uavs": sample.get("num_uavs", len(uav_keys)),
+            "task_id": torch.tensor(sample["task_id"], dtype=torch.long),
+            "score": torch.tensor(sample["cognitive_score"], dtype=torch.float32),
+            "sample_id": sample["sample_id"],
+            "distortion": sample["distortion"],
+            "num_uavs": num_uavs,
+            "question": sample.get("question", ""),
         }
 
     @staticmethod
@@ -203,4 +176,5 @@ class UAVIQADataset(Dataset):
             "sample_id": [b["sample_id"] for b in batch],
             "distortion": [b["distortion"] for b in batch],
             "num_uavs": [b["num_uavs"] for b in batch],
+            "question": [b.get("question", "") for b in batch],
         }

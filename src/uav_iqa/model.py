@@ -1,11 +1,74 @@
 import logging
 import math
 import re
-from typing import Optional
+from typing import List, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+class UAVIQATextEncoder(nn.Module):
+    """Character-level CNN text encoder for short VQA question text.
+
+    Uses multiple 1D convolution kernel sizes (3, 4, 5) over character
+    embeddings followed by max-over-time pooling — a classic Char-CNN
+    architecture (Zhang et al., 2015) adapted for lightweight deployment.
+
+    Vocab: 95 printable ASCII characters + PAD(0) + UNK(1) = 97 entries.
+    Max sequence length is truncated to ``max_len``.
+    """
+
+    _PRINTABLE = (
+        " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "0123456789.,;:!?\"'()-[]{}@#$%^&*+=/\\<>_`~|"
+    )
+    PAD_IDX = 0
+    UNK_IDX = 1
+
+    def __init__(
+        self,
+        text_dim: int = 128,
+        char_embed_dim: int = 64,
+        num_filters: int = 64,
+        max_len: int = 256,
+    ):
+        super().__init__()
+        self.text_dim = text_dim
+        self.max_len = max_len
+
+        self.vocab_size = len(self._PRINTABLE) + 2  # + PAD + UNK
+        self.char_to_idx = {ch: i + 2 for i, ch in enumerate(self._PRINTABLE)}
+
+        self.char_embed = nn.Embedding(self.vocab_size, char_embed_dim, padding_idx=self.PAD_IDX)
+
+        self.conv3 = nn.Conv1d(char_embed_dim, num_filters, 3, padding=1)
+        self.conv4 = nn.Conv1d(char_embed_dim, num_filters, 4, padding=2)
+        self.conv5 = nn.Conv1d(char_embed_dim, num_filters, 5, padding=2)
+
+        self.proj = nn.Linear(num_filters * 3, text_dim)
+
+    def _tokenize(self, texts: List[str]) -> torch.Tensor:
+        """Convert a list of strings to a padded (B, max_len) tensor of char indices."""
+        batch_rows = []
+        for text in texts:
+            row = [self.char_to_idx.get(ch, self.UNK_IDX) for ch in text[: self.max_len]]
+            batch_rows.append(row)
+        max_actual = max(len(r) for r in batch_rows) if batch_rows else 0
+        padded = [r + [self.PAD_IDX] * (max_actual - len(r)) for r in batch_rows]
+        return torch.tensor(padded, dtype=torch.long)
+
+    def forward(self, texts: List[str]) -> torch.Tensor:
+        token_ids = self._tokenize(texts).to(self.char_embed.weight.device)
+        x = self.char_embed(token_ids)  # (B, max_len, char_embed_dim)
+        x = x.transpose(1, 2)  # (B, char_embed_dim, max_len)
+
+        c3 = F.relu(self.conv3(x)).max(dim=2).values  # (B, num_filters)
+        c4 = F.relu(self.conv4(x)).max(dim=2).values
+        c5 = F.relu(self.conv5(x)).max(dim=2).values
+
+        combined = torch.cat([c3, c4, c5], dim=1)  # (B, num_filters*3)
+        return self.proj(combined)  # (B, text_dim)
 
 
 class PanetFPN(nn.Module):
@@ -15,9 +78,7 @@ class PanetFPN(nn.Module):
         super().__init__()
         self.out_channels = out_channels
 
-        self.lateral_convs = nn.ModuleList(
-            [nn.Conv2d(ic, out_channels, 1) for ic in in_channels]
-        )
+        self.lateral_convs = nn.ModuleList([nn.Conv2d(ic, out_channels, 1) for ic in in_channels])
         self.smooth_convs = nn.ModuleList(
             [nn.Conv2d(out_channels, out_channels, 3, padding=1) for _ in in_channels]
         )
@@ -77,8 +138,7 @@ class CBAM(nn.Module):
         avg_out = torch.mean(x, dim=1, keepdim=True)
         max_out, _ = torch.max(x, dim=1, keepdim=True)
         sa = self.spatial_attn(torch.cat([avg_out, max_out], dim=1))
-        x = x * sa
-        return x
+        return x * sa
 
 
 class FrequencyAwareBranch(nn.Module):
@@ -156,9 +216,7 @@ class FrequencyAwareBranch(nn.Module):
         )
         n_h, n_w = patches.shape[2], patches.shape[3]
         n_patches = n_h * n_w
-        patches = patches.contiguous().view(
-            B, n_patches, self.patch_size, self.patch_size
-        )
+        patches = patches.contiguous().view(B, n_patches, self.patch_size, self.patch_size)
 
         fft = torch.fft.fft2(patches.float())
         magnitude = torch.abs(fft)
@@ -173,16 +231,13 @@ class FrequencyAwareBranch(nn.Module):
 
         feats = self.tiny_cnn(lp)
         feats = feats.view(B, -1)
-        f_f = self.proj(feats)
-        return f_f
+        return self.proj(feats)
 
 
 class CrossAttentionGate(nn.Module):
     """Gating mechanism: α = σ(W_g · [f_s, f_f]), producing α ∈ R^64."""
 
-    def __init__(
-        self, spatial_dim: int = 256, freq_dim: int = 64, hidden_dim: int = 128
-    ):
+    def __init__(self, spatial_dim: int = 256, freq_dim: int = 64, hidden_dim: int = 128):
         super().__init__()
         self.gate_net = nn.Sequential(
             nn.Linear(spatial_dim + freq_dim, hidden_dim),
@@ -200,14 +255,50 @@ class TaskConditionedHead(nn.Module):
     """FiLM-modulated regression head per task.
 
     t_k ∈ R^4 → γ_k, β_k ∈ R^128 → h' = γ ⊙ h + β → FC(128→1).
+
+    Note: ``num_tasks`` changed from 4 → 14 (v2 refactor).  Checkpoints
+    trained with ``num_tasks=4`` will fail to load due to embedding size
+    mismatch.  Use :meth:`migrate_num_tasks_state_dict` to bridge old
+    checkpoints.
     """
+
+    @staticmethod
+    def migrate_num_tasks_state_dict(
+        state_dict: dict[str, torch.Tensor],
+        old_num_tasks: int = 4,
+        new_num_tasks: int = 14,
+    ) -> dict[str, torch.Tensor]:
+        """Pad or trim ``task_embed`` weights for ``num_tasks`` migration.
+
+        When loading an old checkpoint trained with fewer tasks, this
+        utility pads the embedding table with the mean of existing rows
+        so the new model can start from a reasonable initialization.
+        """
+        key = "task_head.task_embed.weight"
+        if key not in state_dict:
+            return state_dict
+        w = state_dict[key]
+        if w.shape[0] == new_num_tasks:
+            return state_dict
+        if w.shape[0] < new_num_tasks:
+            pad_rows = new_num_tasks - w.shape[0]
+            state_dict[key] = torch.cat([w, w.mean(dim=0, keepdim=True).repeat(pad_rows, 1)])
+        else:
+            state_dict[key] = w[:new_num_tasks]
+        _log = logging.getLogger(__name__)
+        _log.info(
+            "Migrated task_embed from %d → %d tasks via %s",
+            w.shape[0], new_num_tasks,
+            "padding" if w.shape[0] < new_num_tasks else "trimming",
+        )
+        return state_dict
 
     def __init__(
         self,
         in_features: int = 320,
         hidden_dim: int = 128,
         task_embed_dim: int = 4,
-        num_tasks: int = 4,
+        num_tasks: int = 14,
     ):
         super().__init__()
         self.num_tasks = num_tasks
@@ -238,29 +329,34 @@ class UAVIQANet(nn.Module):
         MobileNetV4-S backbone → PANet FPN → CBAM → f_s ∈ R^256
         FAB (patch FFT + tiny CNN) → f_f ∈ R^64
         Cross-attention gate → fused f ∈ R^320
+        (optional) Char-CNN text encoder → f_t ∈ R^128
         Task-conditioned regression heads (FiLM)
 
     Total: ~5.4M params, INT8 quantized ~1.4MB.
     """
 
-    from .dataset import TASK_TO_ID, NUM_TASKS as _NUM_TASKS
-
-    TASK_MAP = TASK_TO_ID
-
     def __init__(
         self,
         backbone: str = "mobilenetv4_conv_small",
-        num_tasks: int = _NUM_TASKS,
+        num_tasks: int | None = None,
         freeze_backbone_stage: int = 2,
         use_fab: bool = True,
         use_cbam: bool = True,
         use_task_conditioning: bool = True,
+        use_text_encoder: bool = True,
+        text_dim: int = 128,
     ):
         super().__init__()
+        if num_tasks is None:
+            from .annotations import NUM_SUBTASKS
+
+            num_tasks = NUM_SUBTASKS
         self.use_fab = use_fab
         self.use_cbam = use_cbam
         self.use_task_conditioning = use_task_conditioning
+        self.use_text_encoder = use_text_encoder
         self.num_tasks = num_tasks
+        self.text_dim = text_dim
 
         import timm
 
@@ -319,6 +415,15 @@ class UAVIQANet(nn.Module):
         else:
             fused_dim = 256
 
+        if self.use_text_encoder:
+            self.text_encoder = UAVIQATextEncoder(text_dim=text_dim)
+            fused_dim = fused_dim + text_dim
+            # Learnable null embedding used when no question_text is provided
+            self.null_text_embed = nn.Parameter(torch.randn(1, text_dim) * 0.02)
+        else:
+            self.text_encoder = None
+            self.null_text_embed = None
+
         if self.use_task_conditioning:
             self.task_head = TaskConditionedHead(
                 in_features=fused_dim,
@@ -375,9 +480,25 @@ class UAVIQANet(nn.Module):
                 num_stages,
             )
 
-    def _extract_fused_features(self, x: torch.Tensor) -> torch.Tensor:
-        """Shared backbone → FPN → CBAM → FAB → gate pipeline."""
-        feats = self.backbone(x)
+    def _extract_fused_features(
+        self, x: torch.Tensor, text_features: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """Shared backbone → FPN → CBAM → FAB → gate pipeline.
+
+        Supports single-image ``(B, 3, H, W)`` and multi-image
+        ``(B, N_UAV, 3, H, W)`` inputs (pooled across UAV dimension).
+
+        If ``text_features`` is provided (from ``encode_text``), it is
+        concatenated with the image features after spatial pooling.
+        """
+        if x.dim() == 5:
+            B, N, C, H, W = x.shape
+            x_flat = x.view(B * N, C, H, W)
+        else:
+            x_flat = x
+            B, N = x.shape[0], 1
+
+        feats = self.backbone(x_flat)
         feats = self.fpn(feats)
 
         x_spatial = self.fpn_proj(feats[0])
@@ -388,42 +509,98 @@ class UAVIQANet(nn.Module):
         f_s = self.spatial_proj(x_spatial)
 
         if self.use_fab:
-            f_f = self.fab(x)
+            f_f = self.fab(x_flat)
             f_f = self.gate(f_s, f_f)
-            return torch.cat([f_s, f_f], dim=-1)
-        return f_s
+            fused = torch.cat([f_s, f_f], dim=-1)
+        else:
+            fused = f_s
 
-    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
-        """Extract fused features (backbone + FPN + CBAM + FAB) once for reuse."""
-        return self._extract_fused_features(x)
+        if N > 1:
+            fused = fused.view(B, N, -1).mean(dim=1)
+
+        # Fuse text features (or null embedding) when text encoder is enabled
+        if self.use_text_encoder and self.null_text_embed is not None:
+            if text_features is not None:
+                fused = torch.cat([fused, text_features], dim=-1)
+            else:
+                null_feat = self.null_text_embed.expand(fused.shape[0], -1)
+                fused = torch.cat([fused, null_feat], dim=-1)
+
+        return fused
+
+    def forward_features(
+        self, x: torch.Tensor, question_text: Optional[List[str]] = None
+    ) -> torch.Tensor:
+        """Extract fused features (backbone + FPN + CBAM + FAB) once for reuse.
+
+        If ``question_text`` is provided and ``use_text_encoder`` is True,
+        text features are encoded and concatenated.
+        """
+        text_features = self._maybe_encode_text(question_text)
+        return self._extract_fused_features(x, text_features=text_features)
+
+    def encode_text(self, texts: List[str]) -> Optional[torch.Tensor]:
+        """Encode question text strings into feature vectors.
+
+        Returns None if ``use_text_encoder`` is False or text_encoder is None.
+        """
+        if not self.use_text_encoder or self.text_encoder is None:
+            return None
+        return self.text_encoder(texts)
+
+    def _maybe_encode_text(self, question_text: Optional[List[str]]) -> Optional[torch.Tensor]:
+        """Encode question_text if available; if use_text_encoder but no text,
+        return a repeated null embedding. Returns None only when text encoder
+        is disabled entirely."""
+        if not self.use_text_encoder or self.text_encoder is None:
+            return None
+        if question_text is not None and len(question_text) > 0:
+            return self.text_encoder(question_text)
+        # No text provided — return null embedding repeated for batch size
+        # (caller must ensure batch size is known; _extract_fused_features handles)
+        return None  # handled in _extract_fused_features
 
     def forward(
         self,
         x: torch.Tensor,
         task_ids: Optional[torch.Tensor] = None,
         features: Optional[torch.Tensor] = None,
+        question_text: Optional[List[str]] = None,
     ) -> torch.Tensor:
-        f = features if features is not None else self._extract_fused_features(x)
+        f = (
+            features
+            if features is not None
+            else self._extract_fused_features(
+                x, text_features=self._maybe_encode_text(question_text)
+            )
+        )
 
         if self.use_task_conditioning:
             if task_ids is None:
                 task_ids = torch.zeros(x.shape[0], dtype=torch.long, device=x.device)
             return self.task_head(f, task_ids)
-        else:
-            return self.shared_head(f).squeeze(-1)
+        return self.shared_head(f).squeeze(-1)
 
     def forward_all_tasks(
-        self, x: torch.Tensor, features: Optional[torch.Tensor] = None
+        self,
+        x: torch.Tensor,
+        features: Optional[torch.Tensor] = None,
+        question_text: Optional[List[str]] = None,
     ) -> torch.Tensor:
-        f = features if features is not None else self._extract_fused_features(x)
+        f = (
+            features
+            if features is not None
+            else self._extract_fused_features(
+                x, text_features=self._maybe_encode_text(question_text)
+            )
+        )
 
         if self.use_task_conditioning:
-            B = x.shape[0]
+            B = f.shape[0]
             scores = []
             for t in range(self.task_head.num_tasks):
-                task_ids = torch.full((B,), t, dtype=torch.long, device=x.device)
+                task_ids = torch.full((B,), t, dtype=torch.long, device=f.device)
                 scores.append(self.task_head(f, task_ids))
             return torch.stack(scores, dim=1)
-        else:
-            q = self.shared_head(f).squeeze(-1)
-            return q.unsqueeze(-1).expand(-1, self.num_tasks)
+        q = self.shared_head(f).squeeze(-1)
+        return q.unsqueeze(-1).expand(-1, self.num_tasks)

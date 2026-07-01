@@ -24,7 +24,7 @@ for _cand in _TEST_IMAGE_CANDIDATES:
     if Path(_cand).exists():
         TEST_IMAGE = _cand
         break
-TEST_TASK = "tracking"
+TEST_TASK = "scene_description"
 
 MODEL_NAMES = list(MODEL_REGISTRY.keys())
 
@@ -45,7 +45,7 @@ def _cleanup_gpu(scorer):
     TEST_IMAGE is None, reason="No test image found in expected locations"
 )
 @pytest.mark.parametrize("model_name", MODEL_NAMES, ids=MODEL_NAMES)
-def test_vlm_model_load_and_generate_description(model_name):
+def test_vlm_model_load_and_generate_answer(model_name):
     scorer = VLMScorer(
         model_name=model_name,
         backend="transformers",
@@ -54,7 +54,7 @@ def test_vlm_model_load_and_generate_description(model_name):
     t0 = time.time()
     try:
         prompts = scorer._get_description_prompts(TEST_TASK)
-        desc = scorer._generate_description(TEST_IMAGE, TEST_TASK, prompts[0])
+        desc = scorer._generate_answer(TEST_IMAGE, TEST_TASK, prompts[0])
         score_time = time.time() - t0
 
         assert isinstance(desc, str)

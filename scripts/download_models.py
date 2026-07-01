@@ -4,12 +4,12 @@
 Downloads models registered in MODEL_REGISTRY using huggingface_hub.snapshot_download.
 Supports per-family model classes and trust_remote_code.
 
-Models (15 total, 6 families):
+Models (13 total, 6 families):
   qwen:        Qwen2-VL, Qwen2.5-VL
   internvl:    Mini-InternVL, InternVL2, InternVL2.5, InternVL3
-  internlm_xc: InternLM-Xcomposer2, InternLM-Xcomposer2.5
+  internlm_xc: InternLM-Xcomposer2.5
   ovis:        Ovis1.5-Gemma, Ovis1.6-Llama, Ovis2
-  phi:         Phi3-Vision, Phi3.5-Vision, Phi4-Multimodal
+  phi:         Phi3.5-Vision, Phi4-Multimodal
   mplug:       MPlugOwl3
 
 Examples:
@@ -17,7 +17,7 @@ Examples:
     python scripts/download_models.py --all
 
     # Download specific models by short name
-    python scripts/download_models.py --models Qwen2-VL InternVL2 Phi3-Vision
+    python scripts/download_models.py --models Qwen2-VL InternVL2 Phi3.5-Vision
 
     # Download to custom directory with auth token (for gated models)
     python scripts/download_models.py --all --cache-dir /data/models --token hf_xxx
@@ -46,18 +46,18 @@ _log = logging.getLogger("download_models")
 def _load_registry():
     """Lazy-load MODEL_REGISTRY without pulling in the full uav_iqa package.
 
-    Uses importlib.util to load just vlm_vla_scorer.py (stdlib-only imports),
+    Uses importlib.util to load just vlm/config.py (stdlib-only imports),
     avoiding the heavyweight lightning/torch import chain in uav_iqa.__init__.
     """
     module_path = (
-        Path(__file__).resolve().parent.parent / "src" / "uav_iqa" / "vlm_vla_scorer.py"
+        Path(__file__).resolve().parent.parent / "src" / "uav_iqa" / "vlm" / "config.py"
     )
 
     spec = importlib.util.spec_from_file_location(
-        "uav_iqa.vlm_vla_scorer", str(module_path)
+        "uav_iqa.vlm.config", str(module_path)
     )
     if spec is None or spec.loader is None:
-        _log.error("Cannot find vlm_vla_scorer.py at %s", module_path)
+        _log.error("Cannot find vlm/config.py at %s", module_path)
         sys.exit(1)
 
     module = importlib.util.module_from_spec(spec)
@@ -220,22 +220,22 @@ def main():
     args = build_parser().parse_args()
 
     # Validate dependencies
-    try:
-        import huggingface_hub  # noqa: F401
-    except ImportError:
+    import importlib.util
+
+    if importlib.util.find_spec("huggingface_hub") is None:
         _log.error(
             "huggingface_hub not installed. Run: uv sync --group dev --extra vlm"
         )
         sys.exit(1)
 
     if args.validate or args.validate_only:
-        try:
-            import transformers  # noqa: F401
-            import torch  # noqa: F401
-        except ImportError:
+        if importlib.util.find_spec("transformers") is None:
             _log.error(
-                "transformers/torch not installed. Run: uv sync --group dev --extra vlm"
+                "transformers not installed. Run: uv sync --group dev --extra vlm"
             )
+            sys.exit(1)
+        if importlib.util.find_spec("torch") is None:
+            _log.error("torch not installed. Run: uv sync --group dev --extra vlm")
             sys.exit(1)
 
     MODEL_REGISTRY = _load_registry()

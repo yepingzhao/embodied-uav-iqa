@@ -4,7 +4,6 @@ from typing import Optional
 
 import cv2
 import numpy as np
-from tqdm import tqdm
 
 
 def _load_image(image, mode="float32"):
@@ -125,8 +124,7 @@ class AtmosphericScatteringHaze(BaseDistortion):
     def _estimate_depth(self, image: np.ndarray) -> np.ndarray:
         gray = cv2.cvtColor(_to_uint8(image), cv2.COLOR_RGB2GRAY)
         depth = 255.0 / (gray.astype(np.float32) + 1e-3)
-        depth = cv2.GaussianBlur(depth, (15, 15), 10)
-        return depth
+        return cv2.GaussianBlur(depth, (15, 15), 10)
 
     def get_param_range(self, intensity: float) -> dict:
         intensity = np.clip(intensity, 0.0, 1.0)
@@ -276,9 +274,7 @@ class LowResSuperResolution(BaseDistortion):
 
         small_h = max(4, int(h / scale))
         small_w = max(4, int(w / scale))
-        small = cv2.resize(
-            image_uint8, (small_w, small_h), interpolation=cv2.INTER_CUBIC
-        )
+        small = cv2.resize(image_uint8, (small_w, small_h), interpolation=cv2.INTER_CUBIC)
 
         sr_model = self._get_sr_model()
         if sr_model is not None:
@@ -433,9 +429,7 @@ class GenericDistortions:
             num_color_bits = max(1, int(math.log2(num_colors)))
             image = _to_uint8(image)
             for c in range(3):
-                image[:, :, c] = (image[:, :, c] >> (8 - num_color_bits)) << (
-                    8 - num_color_bits
-                )
+                image[:, :, c] = (image[:, :, c] >> (8 - num_color_bits)) << (8 - num_color_bits)
             image = image.astype(np.float32) / 255.0
             transform = A.NoOp(p=1.0)
         elif name == "white_noise":
@@ -453,9 +447,7 @@ class GenericDistortions:
             )
         elif name == "impulse_noise":
             amt = intensity * 0.1
-            transform = A.SaltAndPepper(
-                amount=(amt, amt + 0.02), salt_vs_pepper=(0.4, 0.6), p=1.0
-            )
+            transform = A.SaltAndPepper(amount=(amt, amt + 0.02), salt_vs_pepper=(0.4, 0.6), p=1.0)
         elif name == "multiplicative_noise":
             multiplier = (1.0 - intensity * 0.3, 1.0 + intensity * 0.3)
             transform = A.MultiplicativeNoise(multiplier=multiplier, p=1.0)
@@ -464,10 +456,7 @@ class GenericDistortions:
             ksize = int(sigma * 2) | 1
             ksize = max(3, min(ksize, 31))
             image_uint8 = _to_uint8(image)
-            image = (
-                cv2.GaussianBlur(image_uint8, (ksize, ksize), sigma).astype(np.float32)
-                / 255.0
-            )
+            image = cv2.GaussianBlur(image_uint8, (ksize, ksize), sigma).astype(np.float32) / 255.0
             transform = A.NoOp(p=1.0)
         elif name == "cnn_denoise":
             h_param = 3 + int(intensity * 30)
@@ -495,28 +484,20 @@ class GenericDistortions:
                     ".jp2", cv2.cvtColor(image_uint8, cv2.COLOR_RGB2BGR), encode_param
                 )
                 decoded = cv2.imdecode(enc, cv2.IMREAD_COLOR)
-                image = (
-                    cv2.cvtColor(decoded, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-                )
+                image = cv2.cvtColor(decoded, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
             except AttributeError:
                 encode_param = [cv2.IMWRITE_JPEG_QUALITY, q]
                 _, enc = cv2.imencode(
                     ".jpg", cv2.cvtColor(image_uint8, cv2.COLOR_RGB2BGR), encode_param
                 )
                 decoded = cv2.imdecode(enc, cv2.IMREAD_COLOR)
-                image = (
-                    cv2.cvtColor(decoded, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-                )
+                image = cv2.cvtColor(decoded, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
             transform = A.NoOp(p=1.0)
         elif name == "webp_compression":
             q = max(5, int(90 - intensity * 85))
-            transform = A.ImageCompression(
-                quality_range=(q, q), compression_type="webp", p=1.0
-            )
+            transform = A.ImageCompression(quality_range=(q, q), compression_type="webp", p=1.0)
         elif name == "spatial_warp":
-            transform = A.ElasticTransform(
-                alpha=intensity * 200, sigma=intensity * 20 + 5, p=1.0
-            )
+            transform = A.ElasticTransform(alpha=intensity * 200, sigma=intensity * 20 + 5, p=1.0)
         elif name == "spatial_scale":
             scale_limit = (1.0 - intensity * 0.3, 1.0 + intensity * 0.3)
             transform = A.Affine(scale=scale_limit, p=1.0)
@@ -543,10 +524,7 @@ class GenericDistortions:
             new_h = max(4, int(image.shape[0] * scale))
             new_w = max(4, int(image.shape[1] * scale))
             small = cv2.resize(_to_uint8(image), (new_w, new_h))
-            image = (
-                cv2.resize(small, (image.shape[1], image.shape[0])).astype(np.float32)
-                / 255.0
-            )
+            image = cv2.resize(small, (image.shape[1], image.shape[0])).astype(np.float32) / 255.0
             transform = A.NoOp(p=1.0)
         elif name == "grayscale":
             gray = cv2.cvtColor(_to_uint8(image), cv2.COLOR_RGB2GRAY)
@@ -557,9 +535,7 @@ class GenericDistortions:
             transform = A.Sharpen(alpha=(limit, limit), lightness=(0, 0), p=1.0)
         elif name == "contrast":
             limit = (1.0 - intensity * 0.5, 1.0 + intensity * 0.5)
-            transform = A.RandomBrightnessContrast(
-                brightness_limit=0, contrast_limit=limit, p=1.0
-            )
+            transform = A.RandomBrightnessContrast(brightness_limit=0, contrast_limit=limit, p=1.0)
         elif name == "block_lost":
             loss_rate = 0.01 + intensity * 0.29
             h, w = image.shape[:2]
@@ -587,14 +563,8 @@ class GenericDistortions:
                     y1, y2 = bi * bs, min((bi + 1) * bs, h)
                     x1, x2 = bj * bs, min((bj + 1) * bs, w)
                     bh, bw = y2 - y1, x2 - x1
-                    top = (
-                        image_uint8[y1 - 1, x1:x2] if bi > 0 else image_uint8[y1, x1:x2]
-                    )
-                    bot = (
-                        image_uint8[y2, x1:x2]
-                        if bi + 1 < hb
-                        else image_uint8[y2 - 1, x1:x2]
-                    )
+                    top = image_uint8[y1 - 1, x1:x2] if bi > 0 else image_uint8[y1, x1:x2]
+                    bot = image_uint8[y2, x1:x2] if bi + 1 < hb else image_uint8[y2 - 1, x1:x2]
                     top = top.reshape(1, bw, 3).astype(np.float32)
                     bot = bot.reshape(1, bw, 3).astype(np.float32)
                     inter = np.linspace(0, 1, bh).reshape(-1, 1, 1)
@@ -640,52 +610,6 @@ class GenericDistortions:
         return _to_uint8(result)
 
 
-def _inject_one_image_mp(
-    img_path: str, output_dir: str, compress: bool, seed: int, fmt: str = "png"
-) -> dict:
-    """Pickle-safe worker for ProcessPoolExecutor. Creates its own pipeline instance."""
-    from pathlib import Path
-
-    local_results = {"distorted": 0, "failed": 0, "errors": []}
-    try:
-        img = cv2.imread(img_path)
-        if img is None:
-            local_results["errors"].append(f"Cannot read: {img_path}")
-            local_results["failed"] += 1
-            return local_results
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-        pipeline = UAVDistortionPipeline(seed=seed)
-        base_name = Path(img_path).stem
-        all_distortions = pipeline.get_all_distortion_names()
-        distorted = pipeline.generate_all(img, all_distortions)
-
-        out_dir = Path(output_dir)
-        ext = ".jpg" if fmt == "jpeg" else ".png"
-        for key, dist_img in distorted.items():
-            out_path = out_dir / f"{base_name}__{key}{ext}"
-            if out_path.exists():
-                local_results["distorted"] += 1
-                continue
-            dist_img_bgr = cv2.cvtColor(dist_img, cv2.COLOR_RGB2BGR)
-            if fmt == "jpeg":
-                params = [cv2.IMWRITE_JPEG_QUALITY, 92]
-            elif compress:
-                params = [cv2.IMWRITE_PNG_COMPRESSION, 3]
-            else:
-                params = []
-            success, buf = cv2.imencode(ext, dist_img_bgr, params)
-            if not success:
-                local_results["errors"].append(f"Encoding failed: {out_path}")
-                local_results["failed"] += 1
-                continue
-            out_path.write_bytes(buf.tobytes())
-            local_results["distorted"] += 1
-    except Exception as e:
-        local_results["errors"].append(f"{img_path}: {e}")
-        local_results["failed"] += 1
-    return local_results
-
 
 class UAVDistortionPipeline:
     """Unified pipeline for applying all 36 distortion types at 1 randomly selected intensity level."""
@@ -726,44 +650,14 @@ class UAVDistortionPipeline:
         intensity: Optional[float] = None,
     ) -> dict:
         if distortion_types is None:
-            distortion_types = (
-                list(self.UAV_DISTORTIONS.keys()) + self.GENERIC_DISTORTIONS
-            )
+            distortion_types = list(self.UAV_DISTORTIONS.keys()) + self.GENERIC_DISTORTIONS
 
         rng = np.random.RandomState(self.seed)
         results = {}
         for dist_name in distortion_types:
-            level = (
-                intensity if intensity is not None else float(rng.choice(self.INTENSITY_LEVELS))
-            )
+            level = intensity if intensity is not None else float(rng.choice(self.INTENSITY_LEVELS))
             key = f"{dist_name}_L{int(level * 10):02d}"
             results[key] = self.apply_distortion(reference_image, dist_name, level)
-        return results
-
-    def generate_group(
-        self,
-        images: list,
-        distortion_type: str,
-        intensity: float,
-    ) -> dict:
-        """Apply the SAME distortion to all images in a group.
-
-        All UAV images from the same scene+frame receive identical distortion
-        type and intensity, reflecting that environmental conditions affect
-        all UAVs simultaneously at a given capture moment.
-
-        Args:
-            images: List of images (paths or uint8 arrays) to distort.
-            distortion_type: Distortion name (e.g. 'gaussian_blur').
-            intensity: Distortion intensity level.
-
-        Returns:
-            Dict mapping integer index -> distorted uint8 array.
-        """
-        results = {}
-        for i, img in enumerate(images):
-            img_arr = _load_image(img)
-            results[str(i)] = self.apply_distortion(img_arr, distortion_type, intensity)
         return results
 
     @staticmethod
@@ -788,77 +682,6 @@ class UAVDistortionPipeline:
         cats = {name: "uav" for name in UAVDistortionPipeline.UAV_DISTORTIONS}
         cats.update(GenericDistortions.CATEGORIES)
         return cats
-
-    def inject_directory(
-        self,
-        image_paths: list,
-        output_dir: str,
-        compress: bool = True,
-        max_workers: int = 4,
-        fmt: str = "png",
-    ) -> dict:
-        """Apply all distortions to all images and save to output_dir.
-
-        Uses ProcessPoolExecutor for true multi-core parallelism on CPU-bound
-        distortion operations. Falls back to serial processing if max_workers <= 1.
-
-        Args:
-            fmt: Output format, ``"png"`` or ``"jpeg"`` (JPEG quality 92).
-        """
-        import json
-        from concurrent.futures import ProcessPoolExecutor, as_completed
-        from pathlib import Path
-
-        # Reuse the module-level function via ProcessPoolExecutor
-        _worker = _inject_one_image_mp
-
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        all_distortions = self.get_all_distortion_names()
-        total_expected = len(image_paths) * len(all_distortions)
-        print(
-            f"Processing {len(image_paths)} images × {len(all_distortions)} "
-            f"distortions × 1 random level = {total_expected} outputs"
-        )
-
-        results = {"total_distorted": 0, "failed": 0, "errors": []}
-
-        if max_workers <= 1:
-            for img_path in tqdm(image_paths, desc="Injecting distortions", unit="img"):
-                r = _inject_one_image_mp(
-                    img_path, str(output_dir), compress, self.seed, fmt
-                )
-                results["total_distorted"] += r["distorted"]
-                results["failed"] += r["failed"]
-                results["errors"].extend(r["errors"])
-        else:
-            with ProcessPoolExecutor(max_workers=max_workers) as executor:
-                futures = {
-                    executor.submit(
-                        _worker, p, str(output_dir), compress, self.seed, fmt
-                    ): p
-                    for p in image_paths
-                }
-                for future in tqdm(
-                    as_completed(futures),
-                    total=len(image_paths),
-                    desc="Injecting distortions",
-                    unit="img",
-                ):
-                    r = future.result()
-                    results["total_distorted"] += r["distorted"]
-                    results["failed"] += r["failed"]
-                    results["errors"].extend(r["errors"])
-
-        log_path = output_dir / "distortion_log.json"
-        with open(log_path, "w") as f:
-            json.dump(results, f, indent=2)
-
-        print(
-            f"Done: {results['total_distorted']} generated, {results['failed']} failed"
-        )
-        return results
 
 
 # Module-level constant — computed once, import everywhere

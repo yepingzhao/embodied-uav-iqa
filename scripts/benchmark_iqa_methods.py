@@ -59,7 +59,7 @@ def load_image_and_score(sample, data_dir, image_size=256):
         image_np,
         image_tensor,
         float(score),
-        sample.get("task", "tracking"),
+        sample.get("task", "scene_description"),
         sample.get("distortion", "unknown"),
         sample.get("intensity_level", 0.0),
         sample.get("ref_path", ""),
@@ -366,7 +366,7 @@ def run_benchmark(
         if isinstance(score, list):
             score = np.mean(score)
         targets.append(float(score))
-        task_ids.append(s.get("task", "tracking"))
+        task_ids.append(s.get("task", "scene_description"))
         distortion_labels.append(s.get("distortion", "unknown"))
     targets = np.array(targets)
 

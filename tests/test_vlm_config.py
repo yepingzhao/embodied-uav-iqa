@@ -49,11 +49,11 @@ class TestVLMConfig:
 
 
 class TestModelRegistry:
-    """Tests for MODEL_REGISTRY — the 15 supported VLMs."""
+    """Tests for MODEL_REGISTRY — the 13 supported VLMs."""
 
-    def test_registry_has_exactly_15_models(self):
-        """MODEL_REGISTRY contains exactly 15 models."""
-        assert len(MODEL_REGISTRY) == 15
+    def test_registry_has_exactly_13_models(self):
+        """MODEL_REGISTRY contains exactly 13 models."""
+        assert len(MODEL_REGISTRY) == 13
 
     def test_all_registry_entries_are_vlm_config(self):
         """Every entry in MODEL_REGISTRY is a VLMConfig."""
@@ -64,18 +64,16 @@ class TestModelRegistry:
             ), f"{name} short_name mismatch: {cfg.short_name}"
 
     def test_registry_short_names_match_expected(self):
-        """Registry keys match the 15 expected model short names."""
+        """Registry keys match the 13 expected model short names."""
         expected = {
             "Mini-InternVL",
             "InternVL2",
             "InternVL2.5",
             "InternVL3",
-            "InternLM-Xcomposer2",
             "InternLM-Xcomposer2.5",
             "Ovis1.5-Gemma",
             "Ovis1.6-Llama",
             "Ovis2",
-            "Phi3-Vision",
             "Phi3.5-Vision",
             "Phi4-Multimodal",
             "Qwen2-VL",
@@ -120,8 +118,8 @@ class TestModelRegistry:
             assert MODEL_REGISTRY[name].hf_model_id.startswith("OpenGVLab/")
 
     def test_registry_internlm_xc_family_models(self):
-        """InternLM-Xcomposer family contains 2 and 2.5."""
-        for name in ("InternLM-Xcomposer2", "InternLM-Xcomposer2.5"):
+        """InternLM-Xcomposer family contains 2.5."""
+        for name in ("InternLM-Xcomposer2.5",):
             assert MODEL_REGISTRY[name].family == "internlm_xc"
             assert MODEL_REGISTRY[name].hf_model_id.startswith("internlm/")
 
@@ -132,8 +130,8 @@ class TestModelRegistry:
             assert MODEL_REGISTRY[name].hf_model_id.startswith("AIDC-AI/")
 
     def test_registry_phi_family_models(self):
-        """Phi family contains Phi3, Phi3.5, Phi4."""
-        for name in ("Phi3-Vision", "Phi3.5-Vision", "Phi4-Multimodal"):
+        """Phi family contains Phi3.5, Phi4."""
+        for name in ("Phi3.5-Vision", "Phi4-Multimodal"):
             assert MODEL_REGISTRY[name].family == "phi"
             assert MODEL_REGISTRY[name].hf_model_id.startswith("microsoft/")
 
@@ -160,7 +158,7 @@ class TestVLMScorerRegistry:
         assert scorer.vlm_config.family == "internvl"
 
     def test_init_with_all_registry_names(self):
-        """All 15 registry model names can be used to create VLMScorer."""
+        """All 13 registry model names can be used to create VLMScorer."""
         for short_name in MODEL_REGISTRY:
             scorer = VLMScorer(model_name=short_name)
             assert scorer.vlm_config.short_name == short_name
@@ -197,5 +195,5 @@ class TestVLMScorerRegistry:
 
     def test_vlm_scorer_vlm_config_is_vlm_config_instance(self):
         """vlm_config attribute is a VLMConfig instance."""
-        scorer = VLMScorer(model_name="Phi3-Vision")
+        scorer = VLMScorer(model_name="Phi3.5-Vision")
         assert isinstance(scorer.vlm_config, VLMConfig)

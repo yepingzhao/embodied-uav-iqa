@@ -1,6 +1,6 @@
 # UAV-Embodied-IQA — Codemap Index
 
-**Last Updated:** 2026-06-27
+**Last Updated:** 2026-07-01
 **Project:** Visual Quality Assessment for Aerial Embodied Intelligence
 **arXiv:** 2511.11025
 
@@ -15,6 +15,7 @@ This directory contains architectural codemaps for the UAV-Embodied-IQA research
 | [ARCHITECTURE.md](ARCHITECTURE.md) | High-level system architecture, component relationships, data flow |
 | [MODULES.md](MODULES.md) | Core library modules: public APIs, dependencies, exports |
 | [FILES.md](FILES.md) | Complete file tree with per-file purpose annotations |
+| [INFERENCE_FRAMEWORK.md](../INFERENCE_FRAMEWORK.md) | Multi-GPU offline inference framework architecture |
 
 ## Quick Navigation
 
@@ -24,7 +25,8 @@ scripts/               →  Executable experiment entrypoints (see FILES.md)
 configs/               →  LightningCLI YAML configurations
 tests/                 →  pytest test suite
 refine-logs/           →  Research refinement artifacts (proposal, plan, reviews)
-docs/                  →  Literature reviews and research roadmap
+docs/                  →  Literature reviews, research roadmap, inference framework spec
+docs/INFERENCE_FRAMEWORK.md →  Multi-GPU offline inference architecture spec
 ```
 
 ## 4 Research Claims
@@ -46,6 +48,8 @@ docs/                  →  Literature reviews and research roadmap
 | `scripts/vlm_annotate.py` | Batch VLM annotation CLI — score manifest entries with real VLMs via VLMScorer + BatchAnnotator |
 | `scripts/benchmark_iqa_methods.py` | Benchmark 15+ existing IQA methods |
 | `scripts/finetune_baselines.py` | Fine-tune DL-based IQA baselines (brisque/niqe/clipiqa/maniqa/topiq_nr) on UAV data |
+| `scripts/vlm_cognitive_score_vqa.py` | VQA-paradigm cognitive scoring with VLM + BLEU/ROUGE-L/CIDEr |
+| `scripts/inference.py` | **Multi-GPU offline inference CLI** — batch scoring via inference framework |
 | `scripts/overfit_sanity_check.py` | Model correctness overfit test |
 | `scripts/validate_synth_real_correlation.py` | C2 correlation validation |
 | `scripts/fix_configs.py` | Convert experiment configs from nested to flat `init_args` format |
@@ -84,7 +88,9 @@ docs/                  →  Literature reviews and research roadmap
 
 ## Key Public API (`__init__.py`)
 
-The package exports **35 symbols**:
+The package exports **45 symbols** (from `uav_iqa/__init__.py`). The `inference/` subpackage exports **25 additional symbols** (from `uav_iqa/inference/__init__.py`).
+
+### Top-Level (uav_iqa)
 
 | Category | Count | Symbols |
 |----------|-------|---------|
@@ -92,9 +98,14 @@ The package exports **35 symbols**:
 | Model | 1 | `UAVIQANet` |
 | Dataset | 2 | `UAVIQADataset`, `validate_manifest` |
 | Metrics | 4 | `compute_srcc`, `compute_plcc`, `evaluate_iqa`, `per_distortion_category_metrics` |
-| Lightning wrappers | 2 | `UAVIQALightningModule`, `UAVIQDataModule` |
+| Lightning wrappers | 2 | `UAVIQALightningModule`, `UAVIQADataModule` |
 | Losses | 2 | `ListMLELoss`, `CrossTaskRegularization` |
-| Annotation utilities | 5 | `parse_distortion_key`, `parse_quality_score`, `parse_usability`, `build_ref_score_lookup`, `assign_task_label` |
-| Utility functions | 6 | `setup_logging`, `find_images`, `load_task_map`, `load_manifest`, `split_samples`, `write_manifest` |
+| Annotation utilities | 11 | `parse_distortion_key`, `build_ref_score_lookup`, `build_vqa_split_lookup`, `group_by_scene_frame`, `extract_subtask_type`, `extract_subtask_id`, `extract_uav_id_from_question_id`, `normalize_subtask_type`, `build_sample_id`, `get_dataset_name`, `seed_for_distortion` |
+| Constants | 5 | `SUBTASK_NAMES`, `SUBTASK_TO_ID`, `SUBTASK_NAME_LIST`, `SUBTASK_NAME_TO_ID`, `NUM_SUBTASKS` |
+| Utility functions | 5 | `setup_logging`, `load_task_map`, `load_flat_samples`, `split_samples`, `find_images` |
 | Data synthesis | 3 | `DatasetFormat`, `DataSynthesisPipeline`, `create_pipeline` |
 | VLM/VLA scoring | 3 | `BaseScorer`, `VLMScorer`, `BatchAnnotator` |
+
+### Inference Subpackage (uav_iqa.inference)
+
+Exports **25 symbols**: BaseExecutor, BaseQueue, BaseStorage, CheckpointStore, Collector, DummyExecutor, FileRecord, InferenceConfig, InferenceEngine, JsonStorage, Metrics, MpQueue, Result, Scheduler, Task, TaskRepository, TaskStatus, VLMExecutor, Validator, Writer, make_result_queue, make_task_queue, worker_main.

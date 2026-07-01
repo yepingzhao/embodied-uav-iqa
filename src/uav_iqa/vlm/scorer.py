@@ -20,13 +20,14 @@ from uav_iqa.text_metrics import (
     compute_cognitive_score,
     compute_rouge_l,
 )
-from uav_iqa.vlm.config import MODEL_REGISTRY, VLMConfig
+from uav_iqa.vlm.backends import run_transformers_family, run_vllm_inference
+from uav_iqa.vlm.config import DEPRECATED_MODELS, MODEL_REGISTRY, VLMConfig
 from uav_iqa.vlm.vqa_index import VQAIndex
 
 try:
-    from transformers import AutoConfig as _AutoConfig  # noqa: F401
-    from transformers import PreTrainedModel as _TransformerPTM  # noqa: F401
-    from transformers import CLIPVisionModel as _CLIPVisionModel  # noqa: F401
+    from transformers import AutoConfig as _AutoConfig
+    from transformers import PreTrainedModel as _TransformerPTM
+    from transformers import CLIPVisionModel as _CLIPVisionModel
 except ImportError:
     _AutoConfig = None
     _TransformerPTM = None
@@ -78,11 +79,19 @@ class VLMScorer:
         """Resolve a model name to a VLMConfig.
 
         Looks up the name in MODEL_REGISTRY first (by short name),
-        then by hf_model_id (for e.g. 'internlm/internlm-xcomposer2-vl-7b').
+        then by hf_model_id.
         Falls back to checking if it's already a valid HF model ID.
         If the name is not in the registry and doesn't look like a
         HF path (org/model), raises ValueError.
         """
+        if name in DEPRECATED_MODELS:
+            new_name = DEPRECATED_MODELS[name]
+            _log.warning(
+                "VLM model '%s' is deprecated, auto-mapping to '%s'",
+                name, new_name,
+            )
+            name = new_name
+
         if name in MODEL_REGISTRY:
             return MODEL_REGISTRY[name]
 
@@ -137,42 +146,39 @@ class VLMScorer:
                     self.vlm_config.family,
                 )
                 return self._resolve_transformers_backend()
-            try:
-                import vllm  # noqa: F401
+            import importlib.util
 
+            if importlib.util.find_spec("vllm") is not None:
                 return "vllm"
-            except ImportError:
-                raise RuntimeError(
-                    "vLLM backend explicitly requested but not installed. "
-                    "Install with: pip install vllm"
-                )
+            raise RuntimeError(
+                "vLLM backend explicitly requested but not installed. "
+                "Install with: pip install vllm"
+            )
 
         if self.backend == "transformers":
             return self._resolve_transformers_backend()
 
         # auto: try vllm first, then transformers, then raise
         if vllm_viable:
-            try:
-                import vllm  # noqa: F401
+            import importlib.util
 
+            if importlib.util.find_spec("vllm") is not None:
                 return "vllm"
-            except ImportError:
-                pass
 
         return self._resolve_transformers_backend()
 
     def _resolve_transformers_backend(self) -> str:
         """Resolve the transformers backend."""
-        try:
-            import transformers  # noqa: F401
+        import importlib.util
 
+        if importlib.util.find_spec("transformers") is not None:
             return "transformers"
-        except ImportError:
-            if self.backend == "transformers":
-                raise RuntimeError(
-                    "Transformers backend explicitly requested but not installed. "
-                    "Install with: pip install transformers accelerate"
-                )
+
+        if self.backend == "transformers":
+            raise RuntimeError(
+                "Transformers backend explicitly requested but not installed. "
+                "Install with: pip install transformers accelerate"
+            )
 
         # auto mode: no backend available
         raise RuntimeError(
@@ -196,9 +202,7 @@ class VLMScorer:
             _DC.seen_tokens = property(lambda self: self.get_seq_length())
         if not hasattr(_DC, "get_usable_length"):
             _DC.get_usable_length = lambda self, seq_length, layer_idx=None: (
-                self.get_seq_length()
-                if layer_idx is None
-                else self.get_seq_length(layer_idx)
+                self.get_seq_length() if layer_idx is None else self.get_seq_length(layer_idx)
             )
         _DC.max_cache_len = None
         if not hasattr(_DC, "get_max_length"):
@@ -236,9 +240,7 @@ class VLMScorer:
 
             _SE.forward = _patched_se_forward
 
-            def _patched_svt_forward(
-                self, pixel_values, interpolate_pos_encoding=False, **kwargs
-            ):
+            def _patched_svt_forward(self, pixel_values, interpolate_pos_encoding=False, **kwargs):
                 hidden_states = self.embeddings(
                     pixel_values,
                     interpolate_pos_encoding=interpolate_pos_encoding,
@@ -266,9 +268,7 @@ class VLMScorer:
             _bi.NotImplementError = NotImplementedError
 
         for _llm_name in ("Phi3ForCausalLM", "InternLM2ForCausalLM"):
-            if hasattr(tf_mod, _llm_name) and not hasattr(
-                getattr(tf_mod, _llm_name), "generate"
-            ):
+            if hasattr(tf_mod, _llm_name) and not hasattr(getattr(tf_mod, _llm_name), "generate"):
                 _llm_cls = getattr(tf_mod, _llm_name)
                 _llm_cls.generate = getattr(tf_mod, "GenerationMixin").generate
 
@@ -277,11 +277,9 @@ class VLMScorer:
         backend = self._resolve_backend()
 
         if backend == "vllm":
-            from vllm import LLM, SamplingParams
+            from vllm import LLM
 
-            _log.info(
-                "Loading model %s via vLLM on %s...", self.model_name, self.device
-            )
+            _log.info("Loading model %s via vLLM on %s...", self.model_name, self.device)
             llm_kwargs: dict = dict(
                 model=self.model_name,
                 trust_remote_code=self.vlm_config.trust_remote_code,
@@ -290,10 +288,7 @@ class VLMScorer:
             if self.cache_dir:
                 llm_kwargs["download_dir"] = self.cache_dir
             self._model = LLM(**llm_kwargs)
-            self._sampling_params = SamplingParams(
-                temperature=0.0,
-                max_tokens=10,
-            )
+
         elif backend == "transformers":
             import torch
 
@@ -447,9 +442,7 @@ class VLMScorer:
                 def _patched_get_init_context(cls, *args, **kwargs):
                     ctxs = _orig_get_init_ctx.__func__(cls, *args, **kwargs)
                     return [
-                        c
-                        for c in ctxs
-                        if not (isinstance(c, torch.device) and str(c) == "meta")
+                        c for c in ctxs if not (isinstance(c, torch.device) and str(c) == "meta")
                     ]
 
                 _TransformerPTM.get_init_context = _patched_get_init_context
@@ -488,9 +481,7 @@ class VLMScorer:
                                     ).unsqueeze(0),
                                     output_hidden_states=True,
                                 )
-                                image_feature = self_vit.feature_select(
-                                    image_forward_out
-                                )
+                                image_feature = self_vit.feature_select(image_forward_out)
                                 image_features.append(image_feature)
                         else:
                             image_forward_outs = self_vit.vision_tower(
@@ -521,9 +512,7 @@ class VLMScorer:
                     infer_mode="base",
                     **kwargs,
                 ):
-                    if past_key_values is not None and hasattr(
-                        past_key_values, "to_legacy_cache"
-                    ):
+                    if past_key_values is not None and hasattr(past_key_values, "to_legacy_cache"):
                         past_key_values = past_key_values.to_legacy_cache()
                         # DynamicCache(config=...) pre-allocates None entries
                         # for all layers; treat that as "no cache yet".
@@ -542,25 +531,19 @@ class VLMScorer:
                         **kwargs,
                     )
 
-                self._model.prepare_inputs_for_generation = _patched_prepare.__get__(
-                    self._model
-                )
+                self._model.prepare_inputs_for_generation = _patched_prepare.__get__(self._model)
 
                 # Xcomposer2.5's chat() passes `infer_mode` to generate(),
                 # which prepare_inputs_for_generation consumes but forward
                 # does not.  transformers 4.57.6 validates all model_kwargs,
                 # flagging `infer_mode`.  Make the model tolerate it.
                 if "2d5" in self.model_name:
-                    self._model._validate_model_kwargs_bak = (
-                        self._model._validate_model_kwargs
-                    )
+                    self._model._validate_model_kwargs_bak = self._model._validate_model_kwargs
                     self._model._validate_model_kwargs = lambda *a, **kw: None
 
                 # Load tokenizer separately and assign to model.tokenizer.
                 # The model.chat() API requires model.tokenizer to be set.
-                self._processor = proc_cls.from_pretrained(
-                    self.model_name, **load_kwargs
-                )
+                self._processor = proc_cls.from_pretrained(self.model_name, **load_kwargs)
                 self._model.tokenizer = self._processor
             else:
                 # Ovis2 uses aimv2 vision encoder whose config type
@@ -581,9 +564,7 @@ class VLMScorer:
                 # Phi and Ovis require eager attention; MPlugOwl3 rejects
                 # eager and requires sdpa or flash_attention_2.
                 if self.vlm_config.family in ("phi", "ovis", "mplug"):
-                    _forced_attn = (
-                        "sdpa" if self.vlm_config.family == "mplug" else "eager"
-                    )
+                    _forced_attn = "sdpa" if self.vlm_config.family == "mplug" else "eager"
                     from transformers import AutoConfig as _AC
 
                     _cfg = _AC.from_pretrained(
@@ -613,9 +594,7 @@ class VLMScorer:
 
                 if self.vlm_config.family == "ovis":
                     try:
-                        self._processor = proc_cls.from_pretrained(
-                            self.model_name, **load_kwargs
-                        )
+                        self._processor = proc_cls.from_pretrained(self.model_name, **load_kwargs)
                         # Ovis2: AutoProcessor returns bare tokenizer
                         # (no processor_config.json, AIMv2 backbone not
                         # mapped to any registered processor).  Load
@@ -661,9 +640,7 @@ class VLMScorer:
                             if "configuration_hyper_qwen2" in _mf:
                                 _cfg_pkg = _mv.__package__
                                 _cfg_dir = _os.path.dirname(_mf)
-                                _mm_path = _os.path.join(
-                                    _cfg_dir, "modeling_hyper_qwen2.py"
-                                )
+                                _mm_path = _os.path.join(_cfg_dir, "modeling_hyper_qwen2.py")
                                 if _os.path.exists(_mm_path):
                                     _mm_name = f"{_cfg_pkg}.modeling_hyper_qwen2"
                                     _spec = _il.util.spec_from_file_location(
@@ -706,9 +683,7 @@ class VLMScorer:
                 _lm_cls = type(_lm)
                 _lm_cls.__bases__ = (GenerationMixin,) + _lm_cls.__bases__
                 if _lm.generation_config is None:
-                    _lm.generation_config = GenerationConfig(
-                        **self._model.config.to_dict()
-                    )
+                    _lm.generation_config = GenerationConfig(**self._model.config.to_dict())
 
                 # transformers 4.57+ passes DynamicCache objects for
                 # past_key_values, but stale remote-code attention code
@@ -725,101 +700,39 @@ class VLMScorer:
             _log.info("Model loaded successfully: %s", self.model_name)
 
     @staticmethod
-    def _get_description_prompts(task: str) -> List[str]:
-        """Return 3 task-conditioned description prompts (fallback when no VQA match).
+    def _get_description_prompts(task: str = "") -> List[str]:
+        """Return 3 task-agnostic aerial image description prompts.
 
-        These prompts ask the VLM to describe the scene rather than rate it.
+        These prompts ask the VLM to describe the scene rather than rate it
+        and are used as a fallback when no VQA prompts are available.
         Each prompts the model to focus on a different aspect:
-          1. Scene description (objects, layout, task context)
+          1. Scene description (objects, layout, context)
           2. Fine detail assessment (textures, small-scale features)
           3. Visibility/degradation impact
+
+        Note: ``task`` is accepted for API compatibility with future
+        task-conditioned description prompts but is currently unused.
         """
-        base_prompts = {
-            "tracking": [
-                (
-                    "Describe the key objects (vehicles, pedestrians, obstacles) and "
-                    "spatial layout in this aerial view. For a visual object tracking "
-                    "mission, identify moving or trackable targets and any occluding elements. "
-                    "Output 3-5 sentences."
-                ),
-                (
-                    "Identify fine details, textures, and small-scale features visible "
-                    "in this aerial image relevant to object tracking. Note edge sharpness, "
-                    "motion cues, and distinguishability of individual targets. "
-                    "Output 2-3 sentences."
-                ),
-                (
-                    "Assess the visibility conditions in this aerial image for a tracking "
-                    "mission: describe any blur, noise, contrast issues, or visual artifacts "
-                    "that could affect target detection and tracking accuracy. "
-                    "Output 2-3 sentences."
-                ),
-            ],
-            "inspection": [
-                (
-                    "Describe the key infrastructure elements (bridges, pipelines, buildings) "
-                    "and spatial layout in this aerial view. For an inspection mission, "
-                    "identify structural components that would require detailed examination. "
-                    "Output 3-5 sentences."
-                ),
-                (
-                    "Identify fine surface details, cracks, corrosion patterns, and texture "
-                    "anomalies visible in this aerial image relevant to infrastructure inspection. "
-                    "Note resolution quality for detecting sub-centimeter defects. "
-                    "Output 2-3 sentences."
-                ),
-                (
-                    "Assess the visibility conditions in this aerial image for an inspection "
-                    "mission: describe any blur, noise, lighting issues, or visual artifacts "
-                    "that could affect defect detection and structural assessment. "
-                    "Output 2-3 sentences."
-                ),
-            ],
-            "delivery": [
-                (
-                    "Describe the key terrain features (landing zones, obstacles, paths) and "
-                    "spatial layout in this aerial view. For a package delivery mission, "
-                    "identify safe approach corridors and potential hazard areas. "
-                    "Output 3-5 sentences."
-                ),
-                (
-                    "Identify fine details, surface textures, and small obstacles visible "
-                    "in this aerial image relevant to precision landing. Note depth cues "
-                    "and spatial accuracy of mapped features. "
-                    "Output 2-3 sentences."
-                ),
-                (
-                    "Assess the visibility conditions in this aerial image for a delivery "
-                    "mission: describe any blur, contrast issues, depth perception artifacts, "
-                    "or visual artifacts that could affect landing zone identification. "
-                    "Output 2-3 sentences."
-                ),
-            ],
-            "sar": [
-                (
-                    "Describe the key terrain features (vegetation, water bodies, structures) "
-                    "and spatial layout in this aerial view. For a search-and-rescue mission, "
-                    "identify areas where persons or distress signals might be located. "
-                    "Output 3-5 sentences."
-                ),
-                (
-                    "Identify fine details, color variations, and subtle visual cues visible "
-                    "in this aerial image relevant to search-and-rescue. Note resolution "
-                    "quality for detecting persons against varied backgrounds. "
-                    "Output 2-3 sentences."
-                ),
-                (
-                    "Assess the visibility conditions in this aerial image for a SAR mission: "
-                    "describe any noise, color fidelity issues, contrast problems, or visual "
-                    "artifacts that could affect target detection in challenging terrain. "
-                    "Output 2-3 sentences."
-                ),
-            ],
-        }
-        if task not in base_prompts:
-            _log.warning("Unknown task '%s', no prompts available", task)
-            return None
-        return base_prompts[task]
+        return [
+            (
+                "Describe the key objects, terrain, structures, and spatial layout "
+                "visible in this aerial view. Note any features relevant to aerial "
+                "scene understanding, such as moving objects, infrastructure, landing "
+                "zones, or vegetation. Output 3-5 sentences."
+            ),
+            (
+                "Identify fine details, textures, edges, and small-scale features "
+                "visible in this aerial image. Note image sharpness, color fidelity, "
+                "and the distinguishability of individual elements at different scales. "
+                "Output 2-3 sentences."
+            ),
+            (
+                "Assess the visibility conditions in this aerial image: describe any "
+                "blur, noise, contrast issues, lighting artifacts, or visual degradations "
+                "that could affect scene perception and downstream task performance. "
+                "Output 2-3 sentences."
+            ),
+        ]
 
     def _build_description_prompt(self, task: str, prompt_idx: int) -> Optional[str]:
         """Build a description-generation prompt formatted with chat template.
@@ -833,20 +746,18 @@ class VLMScorer:
         chat_template = self.vlm_config.chat_template
         return chat_template.format(prompt=desc_text)
 
-    def _generate_description(
+    def _generate_answer(
         self, image_path: str, task: str, prompt: str, max_tokens: int = 200
     ) -> str:
         """Call the VLM to generate a scene description for an image.
 
-        Args:
-            image_path: Path to the image file.
-            task: Task type (tracking, inspection, delivery, sar).
-            prompt: The raw description prompt text (not chat template formatted).
-            max_tokens: Maximum new tokens for description generation.
-
-        Returns:
-            Raw text response from the VLM.
+        Delegates to ``_generate_answer_multi`` with a single-element list.
         """
+        return self._generate_answer_multi([image_path], task, prompt, max_tokens=max_tokens)
+
+    def _run_inference(
+        self, image_paths: List[str], task: str, prompt: str, max_tokens: int
+    ) -> str:
         backend = self._resolve_backend()
         if backend == "none":
             raise RuntimeError("No VLM backend available for description generation")
@@ -857,237 +768,59 @@ class VLMScorer:
                 raise RuntimeError("Failed to load VLM model")
 
         if backend == "vllm":
-            from vllm import SamplingParams  # noqa: F401
-
-            sp = SamplingParams(temperature=0.0, max_tokens=max_tokens)
-            chat_template = self.vlm_config.chat_template
-            formatted_prompt = chat_template.format(prompt=prompt)
-            outputs = self._model.generate(
-                [
-                    {
-                        "prompt": formatted_prompt,
-                        "multi_modal_data": {"image": image_path},
-                    }
-                ],
-                sp,
+            return run_vllm_inference(
+                self._model,
+                self.vlm_config.chat_template,
+                image_paths,
+                prompt,
+                max_tokens,
             )
-            return outputs[0].outputs[0].text.strip()
+        if backend == "transformers":
+            return run_transformers_family(
+                self.vlm_config,
+                self._model,
+                self._processor,
+                image_paths,
+                prompt,
+                max_tokens,
+                self.device,
+            )
+        raise RuntimeError(f"Unknown backend: {backend}")
 
-        elif backend == "transformers":
-            import torch
-
-            if self.vlm_config.family == "internlm_xc":
-                query = f"<ImageHere>\n{prompt}"
-                if self.vlm_config.short_name == "InternLM-Xcomposer2.5":
-                    chat_image = [image_path]
-                else:
-                    chat_image = image_path
-                with torch.no_grad():
-                    response_text, _history = self._model.chat(
-                        self._processor,
-                        query=query,
-                        image=chat_image,
-                        max_new_tokens=max_tokens,
-                        do_sample=False,
-                    )
-                return response_text
-            elif self.vlm_config.family == "internvl":
-                from PIL import Image
-                from torchvision import transforms
-
-                force_size = getattr(self._model.config, "force_image_size", 448)
-                transform = transforms.Compose(
-                    [
-                        transforms.Resize((force_size, force_size)),
-                        transforms.ToTensor(),
-                        transforms.Normalize(
-                            mean=[0.485, 0.456, 0.406],
-                            std=[0.229, 0.224, 0.225],
-                        ),
-                    ]
-                )
-                image = Image.open(image_path).convert("RGB")
-                pixel_values = (
-                    transform(image)
-                    .unsqueeze(0)
-                    .to(device=self.device, dtype=torch.float16)
-                )
-                gen_config = {
-                    "max_new_tokens": max_tokens,
-                    "do_sample": False,
-                }
-                with torch.no_grad():
-                    response_text = self._model.chat(
-                        self._processor,
-                        pixel_values=pixel_values,
-                        question=prompt,
-                        generation_config=gen_config,
-                        num_patches_list=[1],
-                    )
-                return response_text
-            elif self.vlm_config.family == "phi":
-                prompt_with_image = (
-                    f"<|user|>\n<|image_1|>\n{prompt}<|end|>\n<|assistant|>\n"
-                )
-                from PIL import Image
-
-                image = Image.open(image_path).convert("RGB")
-                inputs = self._processor(
-                    text=prompt_with_image,
-                    images=image,
-                    return_tensors="pt",
-                ).to(self.device)
-                if self.vlm_config.short_name == "Phi4-Multimodal":
-                    _orig_pifg = self._model.prepare_inputs_for_generation
-
-                    def _patched_pifg(
-                        input_ids,
-                        past_key_values=None,
-                        attention_mask=None,
-                        inputs_embeds=None,
-                        cache_position=None,
-                        num_logits_to_keep=None,
-                        **kwargs,
-                    ):
-                        return _orig_pifg(
-                            input_ids=input_ids,
-                            past_key_values=past_key_values,
-                            attention_mask=attention_mask,
-                            inputs_embeds=inputs_embeds,
-                            cache_position=cache_position,
-                            num_logits_to_keep=1,
-                            **kwargs,
-                        )
-
-                    self._model.prepare_inputs_for_generation = _patched_pifg
-                with torch.no_grad():
-                    outputs = self._model.generate(**inputs, max_new_tokens=max_tokens)
-                try:
-                    return self._processor.decode(
-                        outputs[0], skip_special_tokens=True
-                    ).strip()
-                except OverflowError:
-                    safe_ids = torch.clamp(
-                        outputs[0], 0, self._model.config.vocab_size - 1
-                    )
-                    return self._processor.decode(
-                        safe_ids, skip_special_tokens=True
-                    ).strip()
-            elif self.vlm_config.family == "qwen":
-                from PIL import Image
-
-                messages = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "image", "image": image_path},
-                            {"type": "text", "text": prompt},
-                        ],
-                    }
-                ]
-                text = self._processor.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
-                )
-                image = Image.open(image_path).convert("RGB")
-                inputs = self._processor(
-                    text=[text],
-                    images=[image],
-                    return_tensors="pt",
-                ).to(self.device)
-                with torch.no_grad():
-                    outputs = self._model.generate(
-                        **inputs,
-                        max_new_tokens=max_tokens,
-                        do_sample=False,
-                    )
-                return self._processor.decode(
-                    outputs[0], skip_special_tokens=True
-                ).strip()
-            elif self.vlm_config.family == "mplug":
-                if not hasattr(self, "_mplug_processor"):
-                    self._mplug_processor = self._model.init_processor(self._processor)
-                from PIL import Image as _PILImage
-
-                messages = [{"role": "user", "content": f"<|image|>\n{prompt}"}]
-                img = _PILImage.open(image_path).convert("RGB")
-                inputs = self._mplug_processor(
-                    messages, images=[img], return_tensors="pt"
-                )
-                input_ids = inputs.pop("input_ids").to(self.device)
-                model_kwargs = {"input_ids": input_ids, "max_new_tokens": max_tokens}
-                for k, v in inputs.items():
-                    if hasattr(v, "to"):
-                        model_kwargs[k] = v.to(self.device)
-                model_kwargs["tokenizer"] = self._processor
-                with torch.no_grad():
-                    outputs = self._model.generate(**model_kwargs)
-                return self._processor.decode(
-                    outputs[0], skip_special_tokens=True
-                ).strip()
-            elif self.vlm_config.family == "ovis":
-                from PIL import Image
-
-                chat_template = self.vlm_config.chat_template
-                formatted_prompt = chat_template.format(prompt=prompt)
-                image = Image.open(image_path).convert("RGB")
-                pv_result = self._model.get_visual_tokenizer().preprocess_image(image)
-                if isinstance(pv_result, tuple):
-                    pixel_values = pv_result[0]
-                else:
-                    pixel_values = pv_result
-                pixel_values = pixel_values.to(device=self.device)
-                _vt = self._model.get_visual_tokenizer()
-                _vt_param_dtype = next(_vt.parameters()).dtype
-                pixel_values = pixel_values.to(dtype=_vt_param_dtype)
-                text_inputs = self._processor(
-                    text=formatted_prompt,
-                    return_tensors="pt",
-                )
-                input_ids = text_inputs["input_ids"].to(self.device)
-                attention_mask = text_inputs.get(
-                    "attention_mask",
-                    torch.ones_like(input_ids),
-                ).to(self.device)
-                with torch.no_grad():
-                    outputs = self._model.generate(
-                        inputs=input_ids,
-                        attention_mask=attention_mask,
-                        pixel_values=[pixel_values],
-                        max_new_tokens=max_tokens,
-                    )
-                return self._processor.decode(
-                    outputs[0], skip_special_tokens=True
-                ).strip()
-            else:
-                from PIL import Image
-
-                chat_template = self.vlm_config.chat_template
-                formatted_prompt = chat_template.format(prompt=prompt)
-                image = Image.open(image_path).convert("RGB")
-                inputs = self._processor(
-                    text=formatted_prompt,
-                    images=image,
-                    return_tensors="pt",
-                ).to(self.device)
-                with torch.no_grad():
-                    outputs = self._model.generate(**inputs, max_new_tokens=max_tokens)
-                return self._processor.decode(
-                    outputs[0], skip_special_tokens=True
-                ).strip()
-        else:
-            raise RuntimeError(f"Unknown backend: {backend}")
-
-    def _generate_vqa_answer(
-        self, image_path: str, question: str, max_tokens: int = 100
+    def _generate_answer_multi(
+        self, image_paths: List[str], task: str, prompt: str, max_tokens: int = 200
     ) -> str:
+        """Call the VLM with multiple images in a single forward pass.
+
+        All 13 models in the current registry support native multi-image input.
+        This method sends all images at once, allowing the VLM to perform
+        cross-view reasoning across UAV perspectives.
+
+        Args:
+            image_paths: List of paths to image files (2-6 for AirCopBench UAVs).
+            task: Task type (e.g. 'vqa', or arbitrary task label).
+            prompt: The raw prompt text (not chat template formatted).
+            max_tokens: Maximum new tokens for generation.
+
+        Returns:
+            Raw text response from the VLM.
+        """
+        if len(image_paths) == 0:
+            raise RuntimeError("No image paths provided for multi-image generation")
+
+        for p in image_paths:
+            if not Path(p).is_file():
+                raise FileNotFoundError(f"Image not found: {p}")
+
+        return self._run_inference(image_paths, task, prompt, max_tokens)
+
+    def _generate_vqa_answer(self, image_path: str, question: str, max_tokens: int = 100) -> str:
         """Call the VLM to answer a VQA question about an image.
 
-        Thin wrapper around _generate_description that passes the question
+        Thin wrapper around _generate_answer that passes the question
         directly as the prompt and uses a shorter default max_tokens.
         """
-        return self._generate_description(
-            image_path, "vqa", question, max_tokens=max_tokens
-        )
+        return self._generate_answer(image_path, "vqa", question, max_tokens=max_tokens)
 
     def score_vqa_with_gt(
         self,
@@ -1130,12 +863,8 @@ class VLMScorer:
         eps = 1e-6
 
         # Stage 1: VLM inference
-        answer_ref = self._generate_vqa_answer(
-            str(ref_image_path), question, max_tokens
-        )
-        answer_dist = self._generate_vqa_answer(
-            str(dist_image_path), question, max_tokens
-        )
+        answer_ref = self._generate_vqa_answer(str(ref_image_path), question, max_tokens)
+        answer_dist = self._generate_vqa_answer(str(dist_image_path), question, max_tokens)
 
         # Stage 2: Compute raw metric values
         # ---- vs Ground Truth ----
@@ -1165,9 +894,7 @@ class VLMScorer:
         ) / weight_sum
 
         # Stage 4: Compute Ref-vs-Dist cognitive score (指标2)
-        cognitive_rd = (
-            w_bleu * bleu_rd + w_rouge * rouge_rd + w_cider * cider_rd
-        ) / weight_sum
+        cognitive_rd = (w_bleu * bleu_rd + w_rouge * rouge_rd + w_cider * cider_rd) / weight_sum
 
         return {
             "metadata": {
@@ -1224,7 +951,7 @@ class VLMScorer:
         Args:
             ref_image_path: Path to the clean reference image.
             dist_image_path: Path to the distorted image.
-            task: Task type (tracking, inspection, delivery, sar).
+            task: Task type (e.g. 'vqa', any subtask, or arbitrary task label).
             weights: (bleu_weight, rouge_weight, cider_weight).
 
         Returns:
@@ -1241,22 +968,16 @@ class VLMScorer:
             prompts = self._get_description_prompts(task)
             if not prompts:
                 raise ValueError(f"No prompts available for {ref_path}, task={task}")
-            _log.info(
-                "No VQA questions for %s, using %d task prompts", ref_path, len(prompts)
-            )
+            _log.info("No VQA questions for %s, using %d task prompts", ref_path, len(prompts))
 
         ref_descriptions = []
         dist_descriptions = []
 
         for i, desc_prompt in enumerate(prompts):
-            ref_desc = self._generate_description(
-                str(ref_image_path), task, desc_prompt
-            )
+            ref_desc = self._generate_answer(str(ref_image_path), task, desc_prompt)
             ref_descriptions.append(ref_desc)
 
-            dist_desc = self._generate_description(
-                str(dist_image_path), task, desc_prompt
-            )
+            dist_desc = self._generate_answer(str(dist_image_path), task, desc_prompt)
             dist_descriptions.append(dist_desc)
 
         metric_results = compute_cognitive_score(
@@ -1336,9 +1057,7 @@ class VLMScorer:
         ):
             prompts = self.vqa_index.get_prompts(ref_path)
             if prompts:
-                descriptions = [
-                    self._generate_description(ref_path, "vqa", p) for p in prompts
-                ]
+                descriptions = [self._generate_answer(ref_path, "vqa", p) for p in prompts]
                 ref_desc_cache[ref_path] = descriptions
 
         # Score each distorted image
@@ -1358,9 +1077,7 @@ class VLMScorer:
                     prompts = self._get_description_prompts(task)
                 if not prompts:
                     raise ValueError(f"No prompts available for ref={ref}, task={task}")
-                ref_desc_cache[cache_key] = [
-                    self._generate_description(ref, "vqa", p) for p in prompts
-                ]
+                ref_desc_cache[cache_key] = [self._generate_answer(ref, "vqa", p) for p in prompts]
 
             ref_descriptions = ref_desc_cache[cache_key]
 
@@ -1369,9 +1086,7 @@ class VLMScorer:
                 prompts = self._get_description_prompts(task)
             if not prompts:
                 raise ValueError(f"No prompts available for ref={ref}, task={task}")
-            dist_descriptions = [
-                self._generate_description(dist, task, p) for p in prompts
-            ]
+            dist_descriptions = [self._generate_answer(dist, task, p) for p in prompts]
 
             metric_results = compute_cognitive_score(
                 ref_texts=ref_descriptions,
@@ -1418,13 +1133,12 @@ class VLMScorer:
         dist_image_paths: List[str],
         question: str,
         subtask_type: str = "",
-    ) -> float:
-        """Score a multi-UAV scene+frame group via description comparison.
+    ) -> Dict[str, Union[float, str]]:
+        """Score a multi-UAV scene+frame group via native multi-image VLM inference.
 
-        Generates VLM descriptions for each UAV image individually (using the
-        same VQA question as prompt), concatenates them with UAV index labels,
-        then computes text similarity between the concatenated reference and
-        distorted descriptions.  Returns the cognitive quality score.
+        Sends all UAV images to the VLM in a single forward pass (native
+        multi-image), which allows cross-view reasoning.  Computes text
+        similarity between the reference and distorted descriptions.
 
         Args:
             ref_image_paths: Clean reference image paths (one per UAV).
@@ -1434,10 +1148,19 @@ class VLMScorer:
                 scoring but reserved for future task-conditioned weighting.
 
         Returns:
-            Float cognitive quality score in approximately [0, 1].
+            Dict with ``cognitive_score``, ``bleu``, ``rouge_l``, ``cider``.  All
+            floats in approximately [0, 1].
         """
         if not ref_image_paths or not dist_image_paths:
-            return 0.0
+            return {
+                "cognitive_score": 0.0,
+                "bleu": 0.0,
+                "rouge_l": 0.0,
+                "cider": 0.0,
+                "ref_description": "",
+                "dist_description": "",
+                "prompt": "",
+            }
         if len(ref_image_paths) != len(dist_image_paths):
             _log.warning(
                 "Mismatched UAV counts: %d ref vs %d dist, using min",
@@ -1449,36 +1172,62 @@ class VLMScorer:
             dist_image_paths = dist_image_paths[:n]
 
         prompt = question.strip()
+
         if not prompt:
-            return 0.0
+            return {
+                "cognitive_score": 0.0,
+                "bleu": 0.0,
+                "rouge_l": 0.0,
+                "cider": 0.0,
+                "ref_description": "",
+                "dist_description": "",
+                "prompt": "",
+            }
 
-        ref_parts: List[str] = []
-        for i, path in enumerate(ref_image_paths):
-            try:
-                desc = self._generate_description(path, "vqa", prompt)
-                ref_parts.append(f"[UAV{i}] {desc}")
-            except Exception:
-                _log.warning(
-                    "Failed to generate reference description for %s", path, exc_info=True
-                )
-                return 0.0
+        try:
+            ref_description = self._generate_answer_multi(ref_image_paths, "vqa", prompt)
+        except Exception:
+            _log.warning(
+                "Failed to generate reference description for multi-image group",
+                exc_info=True,
+            )
+            return {
+                "cognitive_score": 0.0,
+                "bleu": 0.0,
+                "rouge_l": 0.0,
+                "cider": 0.0,
+                "ref_description": "",
+                "dist_description": "",
+                "prompt": prompt,
+            }
 
-        dist_parts: List[str] = []
-        for i, path in enumerate(dist_image_paths):
-            try:
-                desc = self._generate_description(path, "vqa", prompt)
-                dist_parts.append(f"[UAV{i}] {desc}")
-            except Exception:
-                _log.warning(
-                    "Failed to generate distorted description for %s", path, exc_info=True
-                )
-                return 0.0
-
-        ref_description = "\n".join(ref_parts)
-        dist_description = "\n".join(dist_parts)
+        try:
+            dist_description = self._generate_answer_multi(dist_image_paths, "vqa", prompt)
+        except Exception:
+            _log.warning(
+                "Failed to generate distorted description for multi-image group",
+                exc_info=True,
+            )
+            return {
+                "cognitive_score": 0.0,
+                "bleu": 0.0,
+                "rouge_l": 0.0,
+                "cider": 0.0,
+                "ref_description": ref_description,
+                "dist_description": "",
+                "prompt": prompt,
+            }
 
         result = compute_cognitive_score(
             ref_texts=[ref_description],
             dist_texts=[dist_description],
         )
-        return result["cognitive_score"]
+        return {
+            "cognitive_score": round(result["cognitive_score"], 6),
+            "bleu": round(result["bleu"], 6),
+            "rouge_l": round(result["rouge_l"], 6),
+            "cider": round(result["cider"], 6),
+            "ref_description": ref_description,
+            "dist_description": dist_description,
+            "prompt": prompt,
+        }

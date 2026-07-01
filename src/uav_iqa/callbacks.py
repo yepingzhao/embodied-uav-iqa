@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import subprocess
+import warnings
 from pathlib import Path
 
 import lightning as L
@@ -13,7 +14,10 @@ _log = logging.getLogger(__name__)
 
 
 class CurriculumStageCallback(L.Callback):
-    """Sets model.curriculum_stage based on current epoch for 3-stage curriculum."""
+    """DEPRECATED: The 3-stage curriculum system (VLM→VLA→Execution) has been
+    superseded by direct cognitive_score aggregation. This callback is kept for
+    backward compatibility but is now a no-op.
+    """
 
     def __init__(
         self,
@@ -22,29 +26,16 @@ class CurriculumStageCallback(L.Callback):
         execution_epochs: int = 10,
     ):
         super().__init__()
-        self.stage_boundaries = {
-            "vlm": (0, vlm_epochs),
-            "vla": (vlm_epochs, vlm_epochs + vla_epochs),
-            "execution": (
-                vlm_epochs + vla_epochs,
-                vlm_epochs + vla_epochs + execution_epochs,
-            ),
-        }
 
-    def on_train_epoch_start(
-        self, trainer: L.Trainer, pl_module: L.LightningModule
-    ) -> None:
-        epoch = trainer.current_epoch
-        for stage, (start, end) in self.stage_boundaries.items():
-            if start <= epoch < end:
-                prev = getattr(pl_module, "curriculum_stage", None)
-                if prev != stage:
-                    pl_module.curriculum_stage = stage
-                    if trainer.is_global_zero:
-                        print(
-                            f"\n[Curriculum] Stage: {stage.upper()} (epochs {start+1}-{end})"
-                        )
-                break
+    def on_train_epoch_start(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
+        if not getattr(self, "_warned_deprecation", False):
+            self._warned_deprecation = True
+            warnings.warn(
+                "CurriculumStageCallback is deprecated and all parameters "
+                "(vlm_epochs, vla_epochs, execution_epochs) are ignored.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
 
 class SetupRunCallback(L.Callback):
@@ -57,13 +48,13 @@ class SetupRunCallback(L.Callback):
     def on_fit_start(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
         dataset_hash = self._compute_dataset_hash(trainer)
         if dataset_hash and trainer.is_global_zero:
-            print(f"Dataset hash: {dataset_hash}")
+            _log.info("Dataset hash: %s", dataset_hash)
 
         pl_module.dataset_hash = dataset_hash
 
         n_params = count_parameters(pl_module.model)[0]
         if trainer.is_global_zero:
-            print(f"Model params: {n_params:,}")
+            _log.info("Model params: %s", f"{n_params:,}")
 
     @staticmethod
     def _compute_dataset_hash(trainer: L.Trainer) -> str:
@@ -93,9 +84,7 @@ class MetricsHistoryCallback(L.Callback):
         self.history = {}
         self.best_val_srcc = -1.0
 
-    def on_validation_epoch_end(
-        self, trainer: L.Trainer, pl_module: L.LightningModule
-    ) -> None:
+    def on_validation_epoch_end(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
         logs = trainer.callback_metrics
         for key in ("train/loss_epoch", "val/loss", "val/srcc", "val/plcc", "val/rmse"):
             value = float(logs.get(key, 0.0))
@@ -135,7 +124,7 @@ class ResultsSavingCallback(L.Callback):
                     break
 
         if best_path:
-            print(f"Best checkpoint: {best_path}")
+            _log.info("Best checkpoint: %s", best_path)
             trainer.test(pl_module, datamodule=trainer.datamodule, ckpt_path=best_path)
         else:
             trainer.test(pl_module, datamodule=trainer.datamodule)
@@ -158,9 +147,10 @@ class ResultsSavingCallback(L.Callback):
                 task_name = key.replace("test/srcc_", "")
                 per_task[task_name] = {"srcc": float(cb_metrics[key])}
 
-        print(
-            f"\n  Test: SRCC={test_metrics.get('srcc', 0):.4f} | "
-            f"PLCC={test_metrics.get('plcc', 0):.4f}"
+        _log.info(
+            "\n  Test: SRCC=%s | PLCC=%s",
+            f"{test_metrics.get('srcc', 0):.4f}",
+            f"{test_metrics.get('plcc', 0):.4f}",
         )
 
         best_val_srcc = getattr(pl_module, "best_val_srcc", -1.0)
@@ -176,9 +166,7 @@ class ResultsSavingCallback(L.Callback):
             "data_config": {
                 k: str(v)
                 for k, v in (
-                    trainer.datamodule.hparams.items()
-                    if trainer.datamodule is not None
-                    else []
+                    trainer.datamodule.hparams.items() if trainer.datamodule is not None else []
                 )
             },
             "dataset_hash": getattr(pl_module, "dataset_hash", ""),
