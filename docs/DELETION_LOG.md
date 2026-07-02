@@ -635,3 +635,19 @@ Ruff auto-fix applied to 14 occurrences across:
 - Lines of code removed: 1
 - All ruff F-check: passing across entire codebase
 - Tests: confirmed passing
+
+## [2026-07-02] Batch 15: Unused Variable Cleanup
+
+### Unused Variable Removed
+
+| File | Removed | Reason |
+|------|---------|--------|
+| `src/uav_iqa/data_synthesis.py:548` | `resolved_input = input_root.resolve()` | Assigned but never referenced in method body (ruff F841). Introduced in uncommitted path-traversal hardening code. |
+
+### Impact
+
+- Files modified: 1
+- Lines of code removed: 1
+- Ruff: 0 violations (was 1 F841)
+- Tests: 16/16 data_synthesis tests passing
+- No functional changes — only unused variable removal

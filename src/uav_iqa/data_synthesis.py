@@ -490,7 +490,13 @@ class DataSynthesisPipeline:
         model_name = getattr(scorer, "model_name", "unknown")
 
         if files:
-            fpaths = [output_dir / f for f in files]
+            fpaths = []
+            resolved_output = output_dir.resolve()
+            for f in files:
+                resolved = (output_dir / f).resolve()
+                if not str(resolved).startswith(str(resolved_output)):
+                    raise ValueError(f"Path traversal blocked: {f}")
+                fpaths.append(resolved)
         else:
             fpaths = sorted(output_dir.glob("train/*_VQA_*.json")) + sorted(
                 output_dir.glob("test/*_VQA_*.json")
@@ -539,7 +545,13 @@ class DataSynthesisPipeline:
                 continue
 
             uav_keys = sorted(uav_paths.keys())
-            ref_image_paths = [str(input_root / uav_paths.get(k, "").lstrip("/")) for k in uav_keys]
+            ref_image_paths = []
+            for k in uav_keys:
+                uav_abs = DataSynthesisPipeline._validate_uav_path(uav_paths[k], input_root)
+                if uav_abs is not None:
+                    ref_image_paths.append(str(uav_abs))
+                else:
+                    ref_image_paths.append("")
             dist_image_paths = [
                 str(output_dir / distorted_uav_paths.get(k, "").lstrip("/")) for k in uav_keys
             ]
