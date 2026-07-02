@@ -54,7 +54,7 @@ class UAVIQATextEncoder(nn.Module):
         for text in texts:
             row = [self.char_to_idx.get(ch, self.UNK_IDX) for ch in text[: self.max_len]]
             batch_rows.append(row)
-        max_actual = max(len(r) for r in batch_rows) if batch_rows else 0
+        max_actual = max((max(len(r) for r in batch_rows), 1)) if batch_rows else 1
         padded = [r + [self.PAD_IDX] * (max_actual - len(r)) for r in batch_rows]
         return torch.tensor(padded, dtype=torch.long)
 
