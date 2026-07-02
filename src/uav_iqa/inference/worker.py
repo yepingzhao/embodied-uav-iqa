@@ -57,7 +57,7 @@ def worker_main(
     Returns:
         Number of tasks processed.
     """
-    os.environ.setdefault("CUDA_VISIBLE_DEVICES", str(gpu_id))
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     _log.info("Worker %d started on GPU %d", worker_id, gpu_id)
 
     executor.prepare()

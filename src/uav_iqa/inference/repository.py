@@ -125,9 +125,7 @@ class TaskRepository:
 
     def _count_success_for_file(self, file_path: str) -> int:
         """Direct SQLite query for per-file success count."""
-        import sqlite3
-
-        conn = sqlite3.connect(self._store.db_path)
+        conn = self._store._connect()
         try:
             row = conn.execute(
                 "SELECT COUNT(*) AS c FROM tasks WHERE file_path = ? AND status = ?",
