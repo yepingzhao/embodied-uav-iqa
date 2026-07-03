@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 _log = logging.getLogger(__name__)
@@ -55,12 +56,16 @@ class VLMExecutor(BaseExecutor):
         backend: str = "auto",
         device: str = "",
         seed: int = 42,
+        raw_data_dir: str | None = None,
+        distorted_data_dir: str | None = None,
         **scorer_kwargs: Any,
     ) -> None:
         self.model_name = model_name
         self.backend = backend
         self.device = device
         self.seed = seed
+        self.raw_data_dir = Path(raw_data_dir) if raw_data_dir else None
+        self.distorted_data_dir = Path(distorted_data_dir) if distorted_data_dir else None
         self.scorer_kwargs = scorer_kwargs
         self._scorer: Any = None
 
@@ -96,8 +101,8 @@ class VLMExecutor(BaseExecutor):
         uav_paths = entry.get("uav_paths") or {}
         dist_paths = entry.get("distorted_uav_paths") or {}
         uav_keys = sorted(uav_paths.keys())
-        ref_list = [uav_paths[k] for k in uav_keys]
-        dist_list = [dist_paths.get(k, "") for k in uav_keys]
+        ref_list = [str(self._resolve_ref(p)) for p in (uav_paths[k] for k in uav_keys)]
+        dist_list = [str(self._resolve_dist(p)) for p in (dist_paths.get(k, "") for k in uav_keys)]
         question = entry.get("question", "")
         subtask = entry.get("subtask_type", "")
 
@@ -127,6 +132,18 @@ class VLMExecutor(BaseExecutor):
             "vlm_scores": vlm_scores,
             "cognitive_score": score,
         }
+
+    def _resolve_ref(self, rel_path: str) -> Path:
+        """Resolve a clean reference image path against ``raw_data_dir``."""
+        if self.raw_data_dir is not None:
+            return self.raw_data_dir / rel_path
+        return Path(rel_path)
+
+    def _resolve_dist(self, rel_path: str) -> Path:
+        """Resolve a distorted image path against ``distorted_data_dir``."""
+        if self.distorted_data_dir is not None:
+            return self.distorted_data_dir / rel_path
+        return Path(rel_path)
 
 
 class DummyExecutor(BaseExecutor):

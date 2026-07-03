@@ -64,11 +64,17 @@ class CheckpointStore:
 
     # -- write operations ---------------------------------------------------
 
-    def insert_task(self, task: Task) -> None:
+    def insert_task(self, task: Task) -> bool:
+        """Insert *task* into the database, replacing any existing row.
+
+        Returns:
+            Always ``True`` — the task always ends up in the DB with
+            ``PENDING`` status (whether inserted fresh or replaced).
+        """
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT OR IGNORE INTO tasks
+                INSERT OR REPLACE INTO tasks
                     (task_id, file_path, chunk_id, start, end, status, retry_count, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, 0, ?)
                 """,
@@ -83,6 +89,7 @@ class CheckpointStore:
                 ),
             )
             conn.commit()
+            return True
 
     def set_status(
         self,

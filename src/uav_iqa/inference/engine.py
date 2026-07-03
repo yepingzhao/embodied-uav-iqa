@@ -63,9 +63,9 @@ class InferenceEngine:
         self._executor_factory = executor_factory or self._default_executor_factory
         self.metrics = Metrics()
 
-    def _default_executor_factory(self, gpu_id: int) -> BaseExecutor:
-        """Create a VLMExecutor for the given GPU."""
-        return DummyExecutor(model_name=self.config.model_name)
+    def _default_executor_factory(self, gpu_id: int) -> tuple[BaseExecutor, int]:
+        """Create an executor and return it with the actual GPU device index."""
+        return DummyExecutor(model_name=self.config.model_name), gpu_id
 
     def run(self, *, resume: bool = False) -> dict[str, Any]:
         """Execute the full pipeline.
@@ -107,46 +107,48 @@ class InferenceEngine:
         # -- 3. Launch workers (child processes) -----------------------------
         workers: list[mp.Process] = []
         for i in range(self.config.num_gpus):
-            gpu_id = i
-            executor = self._executor_factory(gpu_id)
+            executor, actual_gpu_id = self._executor_factory(i)
             p = mp.Process(
                 target=worker_main,
                 args=(
                     i,
-                    gpu_id,
+                    actual_gpu_id,
                     task_queue,
                     result_queue,
                     storage,
                     executor,
                     self.config.batch_size,
                 ),
-                daemon=True,
+                daemon=False,
             )
             p.start()
             workers.append(p)
-            _log.info("Launched worker %d (pid=%d, gpu=%d)", i, p.pid, gpu_id)
+            _log.info("Launched worker %d (pid=%d, gpu=%d)", i, p.pid, actual_gpu_id)
 
         # -- 4. Collector + worker-supervisor (concurrent) -------------------
-        # The collector runs in the main thread, consuming results.
-        # A supervisor thread watches for worker exits and sends sentinels
-        # to the result queue so the collector can terminate.
         import threading
 
         def _supervisor() -> None:
             for p in workers:
                 p.join()
-            # All workers exited → send sentinels to unblock the collector
             for _ in workers:
                 result_queue.put_sentinel()
 
         sup = threading.Thread(target=_supervisor, daemon=True)
         sup.start()
 
-        collector = Collector(
-            result_queue, repo, storage, writer,
-            num_workers=self.config.num_gpus,
-        )
-        files_written = collector.run()
+        try:
+            collector = Collector(
+                result_queue, repo, storage, writer,
+                num_workers=self.config.num_gpus,
+            )
+            files_written = collector.run()
+        finally:
+            # Ensure workers are terminated even if collector crashes
+            for p in workers:
+                if p.is_alive():
+                    p.terminate()
+                    p.join(timeout=5)
 
         # -- 5. Wait for supervisor to finish --------------------------------
         sup.join(timeout=10)

@@ -24,6 +24,10 @@ class InferenceConfig:
         seed: Random seed for reproducibility.
         glob_pattern: Glob pattern for scanning input files.
         max_entries: Optional cap on total entries (for testing). ``0`` = no limit.
+        raw_data_dir: Base directory for resolving ``uav_paths`` (clean reference images).
+            If ``None``, paths are used as-is. Defaults to ``input_dir.parent / "raw" / "AirCopBench"``.
+        distorted_data_dir: Base directory for resolving ``distorted_uav_paths``.
+            If ``None``, falls back to ``input_dir``.
         scorer_kwargs: Extra keyword arguments forwarded to the VLM scorer.
     """
 
@@ -39,4 +43,6 @@ class InferenceConfig:
     seed: int = 42
     glob_pattern: str = "*_VQA_*.json"
     max_entries: int = 0
+    raw_data_dir: Path | None = None
+    distorted_data_dir: Path | None = None
     scorer_kwargs: dict[str, Any] = field(default_factory=dict)

@@ -45,18 +45,20 @@ class Scheduler:
         Args:
             resume: If True, only enqueue tasks that are pending/failed/running
                 (i.e. not yet successfully completed). If False, create fresh
-                tasks (existing tasks in the DB are ignored via INSERT OR IGNORE).
+                tasks (existing tasks in the DB are ignored via INSERT OR IGNORE)
+                and ONLY enqueue the newly created ones.
 
         Returns:
             Number of tasks enqueued.
         """
-        if not resume:
+        if resume:
+            tasks = self.repo.pending_or_running()
+        else:
             files = self.storage.scan_files()
             _log.info("Scanned %d files from input dir", len(files))
-            created = self.repo.create_tasks(files, self.chunk_size, max_entries=self.max_entries)
-            _log.info("Created %d tasks (chunk_size=%d)", created, self.chunk_size)
+            tasks = self.repo.create_tasks(files, self.chunk_size, max_entries=self.max_entries)
+            _log.info("Created %d tasks (chunk_size=%d)", len(tasks), self.chunk_size)
 
-        tasks = self.repo.pending() if not resume else self.repo.pending_or_running()
         _log.info("Enqueuing %d tasks (resume=%s)", len(tasks), resume)
 
         for task in tasks:

@@ -36,7 +36,7 @@ class TaskRepository:
         chunk_size: int,
         *,
         max_entries: int = 0,
-    ) -> int:
+    ) -> list[Task]:
         """Generate and persist tasks for *files*.
 
         Args:
@@ -46,9 +46,9 @@ class TaskRepository:
                 (for testing). Records beyond the cap are dropped.
 
         Returns:
-            Number of tasks created.
+            List of created tasks (only newly created, not pre-existing).
         """
-        tasks_created = 0
+        tasks: list[Task] = []
         budget = max_entries if max_entries > 0 else None
 
         for frec in files:
@@ -68,12 +68,12 @@ class TaskRepository:
                     start=start,
                     end=end,
                 )
-                self._store.insert_task(task)
-                tasks_created += 1
+                if self._store.insert_task(task):
+                    tasks.append(task)
             if budget is not None and budget <= 0:
                 break
-        _log.info("Created %d tasks across %d files", tasks_created, len(files))
-        return tasks_created
+        _log.info("Created %d tasks across %d files", len(tasks), len(files))
+        return tasks
 
     # -- task queries -------------------------------------------------------
 

@@ -54,7 +54,7 @@ class JsonStorage(BaseStorage):
     # -- public API ---------------------------------------------------------
 
     def scan_files(self) -> list[FileRecord]:
-        files = sorted(self.input_dir.glob(self.glob_pattern))
+        files = sorted(self.input_dir.rglob(self.glob_pattern))
         records: list[FileRecord] = []
         for fpath in files:
             records.append(

@@ -35,6 +35,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--input-dir", required=True, type=Path, help="Input directory with *_VQA_*.json")
     p.add_argument("--output-dir", required=True, type=Path, help="Output directory for annotated JSONs")
     p.add_argument("--checkpoint-path", required=True, type=Path, help="SQLite checkpoint database path")
+    p.add_argument("--raw-data-dir", type=Path, default=None,
+                   help="Base directory for clean reference images (default: data/raw/AirCopBench)")
+    p.add_argument("--distorted-data-dir", type=Path, default=None,
+                   help="Base directory for distorted images (default: same as --input-dir)")
 
     # Scheduling
     p.add_argument("--chunk-size", type=int, default=256, help="Records per task (scheduling unit)")
@@ -80,19 +84,33 @@ def main(argv: list[str] | None = None) -> int:
     else:
         gpu_ids = list(range(args.num_gpus))
 
+    # Compute sensible defaults for base directories
+    raw_data_dir = args.raw_data_dir or args.input_dir.parent / "raw" / "AirCopBench"
+    distorted_data_dir = args.distorted_data_dir or args.input_dir
+    if not raw_data_dir.exists():
+        _log.warning("raw_data_dir does not exist: %s — uav_paths will be used as-is", raw_data_dir)
+        raw_data_dir = None
+    if not distorted_data_dir.exists():
+        _log.warning("distorted_data_dir does not exist: %s — distorted_uav_paths will be used as-is", distorted_data_dir)
+        distorted_data_dir = None
+
     # Build executor factory
     if args.dry_run:
-        def factory(_gpu_idx: int) -> DummyExecutor:
-            return DummyExecutor(model_name="dry_run", score=0.5)
-    else:
-        def factory(gpu_idx: int) -> VLMExecutor:
+        def factory(gpu_idx: int) -> tuple[DummyExecutor, int]:
             gpu_id = gpu_ids[gpu_idx] if gpu_idx < len(gpu_ids) else gpu_idx
-            return VLMExecutor(
+            return DummyExecutor(model_name="dry_run", score=0.5), gpu_id
+    else:
+        def factory(gpu_idx: int) -> tuple[VLMExecutor, int]:
+            gpu_id = gpu_ids[gpu_idx] if gpu_idx < len(gpu_ids) else gpu_idx
+            executor = VLMExecutor(
                 model_name=args.model,
                 backend=args.backend,
                 device=args.device or f"cuda:{gpu_id}",
                 seed=args.seed,
+                raw_data_dir=str(raw_data_dir) if raw_data_dir else None,
+                distorted_data_dir=str(distorted_data_dir) if distorted_data_dir else None,
             )
+            return executor, gpu_id
 
     cfg = InferenceConfig(
         input_dir=args.input_dir,
@@ -106,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
         device=args.device,
         seed=args.seed,
         max_entries=args.max_entries,
+        raw_data_dir=raw_data_dir,
+        distorted_data_dir=distorted_data_dir,
     )
 
     engine = InferenceEngine(cfg, executor_factory=factory)
