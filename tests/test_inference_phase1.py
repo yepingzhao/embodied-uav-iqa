@@ -275,7 +275,7 @@ class TestCheckpointStore:
         assert checkpoint.total_tasks() == 0
 
     def test_idempotent_insert(self, checkpoint: CheckpointStore) -> None:
-        """INSERT OR IGNORE should not duplicate."""
+        """INSERT OR REPLACE should not duplicate."""
         t = Task(task_id="dup", file_path=Path("/x.json"), chunk_id=0, start=0, end=1)
         checkpoint.insert_task(t)
         checkpoint.insert_task(t)
@@ -290,23 +290,23 @@ class TestCheckpointStore:
 class TestTaskRepository:
     def test_create_tasks(self, repo: TaskRepository, store: JsonStorage) -> None:
         files = store.scan_files()
-        n = repo.create_tasks(files, chunk_size=10)
+        tasks = repo.create_tasks(files, chunk_size=10)
         # fileA: 10 records / 10 = 1 chunk
         # fileB: 25 records / 10 = 3 chunks
-        assert n == 4
+        assert len(tasks) == 4
 
     def test_create_tasks_small_chunk(self, repo: TaskRepository, store: JsonStorage) -> None:
         files = store.scan_files()
-        n = repo.create_tasks(files, chunk_size=5)
+        tasks = repo.create_tasks(files, chunk_size=5)
         # fileA: 10 / 5 = 2, fileB: 25 / 5 = 5
-        assert n == 7
+        assert len(tasks) == 7
 
     def test_create_tasks_max_entries(self, repo: TaskRepository, store: JsonStorage) -> None:
         files = store.scan_files()
-        n = repo.create_tasks(files, chunk_size=10, max_entries=15)
+        tasks = repo.create_tasks(files, chunk_size=10, max_entries=15)
         # fileA: 10 records → 1 chunk (budget left: 5)
         # fileB: min(25, 5) = 5 → 1 chunk
-        assert n == 2
+        assert len(tasks) == 2
 
     def test_pending_returns_new_tasks(self, repo: TaskRepository, store: JsonStorage) -> None:
         files = store.scan_files()

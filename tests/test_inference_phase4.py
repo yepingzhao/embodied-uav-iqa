@@ -226,8 +226,8 @@ class TestInferenceEngine:
             model_name="dummy",
         )
 
-        def factory(gpu_id: int) -> DummyExecutor:
-            return DummyExecutor(model_name="test", score=0.5)
+        def factory(gpu_id: int) -> tuple[DummyExecutor, int]:
+            return DummyExecutor(model_name="test", score=0.5), gpu_id
 
         engine = InferenceEngine(cfg, executor_factory=factory)
         result = engine.run()
@@ -282,8 +282,8 @@ class TestInferenceEngine:
             num_gpus=1,
         )
 
-        def factory(gpu_id: int) -> DummyExecutor:
-            return DummyExecutor(model_name="order", score=0.1)
+        def factory(gpu_id: int) -> tuple[DummyExecutor, int]:
+            return DummyExecutor(model_name="order", score=0.1), gpu_id
 
         engine = InferenceEngine(cfg, executor_factory=factory)
         engine.run()
@@ -311,18 +311,75 @@ class TestInferenceEngine:
             num_gpus=1,
         )
 
-        def factory(gpu_id: int) -> DummyExecutor:
-            return DummyExecutor(model_name="r1", score=0.3)
+        def factory(gpu_id: int) -> tuple[DummyExecutor, int]:
+            return DummyExecutor(model_name="r1", score=0.3), gpu_id
 
         engine1 = InferenceEngine(cfg, executor_factory=factory)
         result1 = engine1.run()
         assert result1["validation"]["valid"] is True
 
         # Second run with resume=True — all tasks already SUCCESS
-        def factory2(gpu_id: int) -> DummyExecutor:
-            return DummyExecutor(model_name="r2", score=0.9)
+        def factory2(gpu_id: int) -> tuple[DummyExecutor, int]:
+            return DummyExecutor(model_name="r2", score=0.9), gpu_id
 
         engine2 = InferenceEngine(cfg, executor_factory=factory2)
         result2 = engine2.run(resume=True)
         # Should have 0 tasks to process
         assert len(result2["files_written"]) == 0  # nothing new to write
+
+    def test_gpu_id_passthrough_from_factory(
+        self,
+        input_dir: Path,
+        output_dir: Path,
+        checkpoint_path: Path,
+    ) -> None:
+        """Factory returns gpu_id != loop index — engine must use factory's GPU ID.
+
+        Regression test: before the fix, the engine passed the loop index ``i``
+        as ``gpu_id`` to ``worker_main``, ignoring the factory's GPU mapping.
+        When ``--gpu-ids 6,7`` was used with ``--num-gpus 2``, workers ended
+        up setting ``CUDA_VISIBLE_DEVICES=0`` or ``1`` instead of ``6`` or ``7``,
+        causing vLLM to load on the wrong (occupied) GPU.
+        """
+        from unittest.mock import patch
+
+        cfg = InferenceConfig(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            checkpoint_path=checkpoint_path,
+            chunk_size=10,
+            num_gpus=2,
+            model_name="dummy",
+        )
+
+        # Simulate --gpu-ids 6,7: factory maps index→physical GPU
+        gpu_ids = [6, 7]
+        gpu_ids_received: list[int] = []
+
+        def factory(gpu_idx: int) -> tuple[DummyExecutor, int]:
+            gpu_ids_received.append(gpu_idx)
+            gpu_id = gpu_ids[gpu_idx] if gpu_idx < len(gpu_ids) else gpu_idx
+            return DummyExecutor(model_name="test", score=0.5), gpu_id
+
+        # Intercept mp.Process to capture the args passed to worker_main
+        with patch("uav_iqa.inference.engine.mp.Process") as mock_process:
+            engine = InferenceEngine(cfg, executor_factory=factory)
+            engine.run()
+
+        # Should have launched 2 workers
+        assert mock_process.call_count == 2
+
+        # Extract gpu_id (args[1]) from each Process call
+        gpu_ids_passed: list[int] = []
+        for call_args in mock_process.call_args_list:
+            _, kwargs = call_args
+            args = kwargs.get("args", [])
+            # args = (worker_id, gpu_id, task_queue, result_queue, storage, executor, batch_size)
+            gpu_ids_passed.append(args[1])
+
+        # Factory received indices 0, 1
+        assert gpu_ids_received == [0, 1]
+        # Engine passed factory-returned GPU IDs (6,7), NOT loop indices (0,1)
+        assert gpu_ids_passed == [6, 7], (
+            f"Expected GPU IDs [6, 7] from factory, got {gpu_ids_passed}"
+        )
