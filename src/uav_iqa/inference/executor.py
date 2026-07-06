@@ -37,6 +37,17 @@ class BaseExecutor(ABC):
     def finalize(self) -> None:
         """Release resources. Called once when the worker exits."""
 
+    @staticmethod
+    def _empty_model_details() -> dict[str, float | str]:
+        return {
+            "prompt": "",
+            "ref_answer": "",
+            "dist_answer": "",
+            "bleu": 0.0,
+            "rouge_l": 0.0,
+            "cider": 0.0,
+        }
+
 
 class VLMExecutor(BaseExecutor):
     """Wraps :class:`uav_iqa.vlm.VLMScorer` for multi-image scoring.
@@ -111,6 +122,7 @@ class VLMExecutor(BaseExecutor):
                 **entry,
                 "vlm_scores": {self.model_name: 0.0},
                 "cognitive_score": 0.0,
+                "_model_details": {self.model_name: self._empty_model_details()},
             }
 
         try:
@@ -121,9 +133,21 @@ class VLMExecutor(BaseExecutor):
                 subtask_type=subtask,
             )
             score = float(result.get("cognitive_score", 0.0))
+            # Map scorer output fields → model detail record.
+            # Expected scorer return: cognitive_score, prompt, ref_description,
+            # dist_description, bleu, rouge_l, cider.
+            model_details = {
+                "prompt": result.get("prompt", ""),
+                "ref_answer": result.get("ref_description", ""),
+                "dist_answer": result.get("dist_description", ""),
+                "bleu": result.get("bleu", 0.0),
+                "rouge_l": result.get("rouge_l", 0.0),
+                "cider": result.get("cider", 0.0),
+            }
         except Exception:
             _log.warning("score_multi_image failed for %s", entry.get("sample_id", "?"), exc_info=True)
             score = 0.0
+            model_details = self._empty_model_details()
 
         vlm_scores = dict(entry.get("vlm_scores") or {})
         vlm_scores[self.model_name] = score
@@ -131,6 +155,7 @@ class VLMExecutor(BaseExecutor):
             **entry,
             "vlm_scores": vlm_scores,
             "cognitive_score": score,
+            "_model_details": {self.model_name: model_details},
         }
 
     def _resolve_ref(self, rel_path: str) -> Path:
@@ -172,6 +197,9 @@ class DummyExecutor(BaseExecutor):
                 **entry,
                 "vlm_scores": vlm_scores,
                 "cognitive_score": self._score,
+                "_model_details": {
+                    self.model_name: self._empty_model_details(),
+                },
             })
         return results
 
