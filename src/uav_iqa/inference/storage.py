@@ -48,7 +48,7 @@ class JsonStorage(BaseStorage):
     """JSON-list storage. Each file is a top-level JSON array of objects."""
 
     def __init__(self, input_dir: Path, glob_pattern: str = "*_VQA_*.json") -> None:
-        self.input_dir = Path(input_dir)
+        self.input_dir = Path(input_dir).resolve()
         self.glob_pattern = glob_pattern
 
     # -- public API ---------------------------------------------------------

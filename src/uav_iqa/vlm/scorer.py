@@ -55,12 +55,14 @@ class VLMScorer:
         cache_dir: Optional[str] = None,
         local_files_only: bool = True,
         vqa_dir: str = "data/processed",
+        gpu_memory_utilization: float = 0.5,
     ):
         self.backend = backend
         self.device = device
         self.seed = seed
         self.cache_dir = cache_dir
         self.local_files_only = local_files_only
+        self.gpu_memory_utilization = gpu_memory_utilization
         self._model = None
         self.vqa_index = VQAIndex(vqa_dir)
 
@@ -284,6 +286,8 @@ class VLMScorer:
                 model=self.model_name,
                 trust_remote_code=self.vlm_config.trust_remote_code,
                 max_num_seqs=8,
+                gpu_memory_utilization=self.gpu_memory_utilization,
+                disable_log_stats=True,
             )
             if self.cache_dir:
                 llm_kwargs["download_dir"] = self.cache_dir

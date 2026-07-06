@@ -93,6 +93,8 @@ class InferenceEngine:
             chunk_size=self.config.chunk_size,
             max_entries=self.config.max_entries,
         )
+        if not resume:
+            writer.clean_chunks()
         n_tasks = scheduler.run(resume=resume)
         self.metrics.set_totals(total_tasks=n_tasks, total_samples=0)
 
