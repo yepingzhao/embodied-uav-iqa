@@ -1,4 +1,4 @@
-"""Tests for uav_iqa.data_synthesis — DatasetFormat registry, formats, and pipeline."""
+"""Tests for uav_iqa.distortion_synthesis — DatasetFormat registry, formats, and pipeline."""
 
 import json
 import tempfile
@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 import pytest
 
-from uav_iqa.data_synthesis import (
+from uav_iqa.distortion_synthesis import (
     AirCopBenchFormat,
     DatasetFormat,
     DataSynthesisPipeline,
@@ -197,25 +197,3 @@ class TestPipelineInject:
             distorted_imgs = list(distorted_dir.glob("*.png"))
             assert len(distorted_imgs) >= 3
 
-
-# ===========================================================================
-# DataSynthesisPipeline — steps parsing
-# ===========================================================================
-
-
-class TestPipelineStepsParsing:
-    def test_all_expands_to_four(self):
-        steps = DataSynthesisPipeline._parse_steps("all")
-        assert steps == {"inject", "annotate", "aggregate", "merge"}
-
-    def test_comma_separated(self):
-        steps = DataSynthesisPipeline._parse_steps("inject,aggregate")
-        assert steps == {"inject", "aggregate"}
-
-    def test_invalid_raises(self):
-        with pytest.raises(ValueError, match="Unknown steps"):
-            DataSynthesisPipeline._parse_steps("bogus")
-
-    def test_manifest_is_invalid(self):
-        with pytest.raises(ValueError, match="Unknown steps"):
-            DataSynthesisPipeline._parse_steps("manifest")

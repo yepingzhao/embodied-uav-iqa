@@ -19,7 +19,7 @@ from .annotations import (
     seed_for_distortion,
 )
 from .data_module import UAVIQADataModule
-from .data_synthesis import (
+from .distortion_synthesis import (
     DatasetFormat,
     DataSynthesisPipeline,
     create_pipeline,
