@@ -47,7 +47,8 @@ def run_vllm_inference(
     except KeyError:
         # Backward compat: templates without {image_tags} placeholder
         formatted_prompt = image_tags + "\n" + chat_template.format(prompt=prompt)
-    image_data = image_paths[0] if len(image_paths) == 1 else image_paths
+    images = _load_images(image_paths)
+    image_data = images[0] if len(images) == 1 else images
     outputs = model.generate(
         [{"prompt": formatted_prompt, "multi_modal_data": {"image": image_data}}],
         sp,
