@@ -625,6 +625,156 @@ class DataSynthesisPipeline:
                     self._atomic_json_write(entries, fpath)
                 _log.info("Aggregated %d entries in %s", updated, fpath.name)
 
+    # ---- Step 4b: Merge sidecar scores ----
+
+    def merge_sidecar_scores(
+        self,
+        output_dir: str | Path,
+        *,
+        weights: tuple[float, float, float] = (1.0, 1.0, 0.1),
+        strategy: str = "mean",
+        model_names: list[str] | None = None,
+    ) -> None:
+        """Merge VLM sidecar detail files back into main annotated JSONs.
+
+        Reads per-sample ``bleu`` / ``rouge_l`` / ``cider`` from
+        ``vlm/{model_name}/{split}/*.json`` sidecar files, computes a
+        ``cognitive_score`` for each model, and updates ``vlm_scores``
+        and ``cognitive_score`` in the corresponding main annotated files.
+
+        This is the post-inference merge step: the inference framework writes
+        placeholder ``vlm_scores`` (0.0) in the main files and detailed scores
+        in the sidecar; this method reconciles them.
+
+        Args:
+            output_dir: Processed output directory (contains train/, test/,
+                and vlm/ subdirectories).
+            weights: (bleu, rouge_l, cider) weights for computing per-model
+                cognitive_score. Default ``(1.0, 1.0, 0.1)``, matching
+                :func:`compute_cognitive_score`.
+            strategy: Aggregation strategy for final ``cognitive_score``
+                across models: ``"mean"`` (default).
+            model_names: Specific model names to merge. If None, merges all
+                models found under ``vlm/``.
+        """
+        output_dir = Path(output_dir)
+        vlm_root = output_dir / "vlm"
+
+        if not vlm_root.is_dir():
+            _log.warning("No vlm/ sidecar directory at %s, nothing to merge", vlm_root)
+            return
+
+        available_models = {
+            p.name for p in vlm_root.iterdir() if p.is_dir()
+        }
+        if model_names:
+            models_to_merge = [m for m in model_names if m in available_models]
+            missing = set(model_names) - set(available_models)
+            if missing:
+                _log.warning("Models not found in vlm/: %s", ", ".join(sorted(missing)))
+        else:
+            models_to_merge = sorted(available_models)
+
+        if not models_to_merge:
+            _log.warning("No models to merge")
+            return
+
+        _log.info("Merging sidecar scores for models: %s", ", ".join(models_to_merge))
+
+        w_bleu, w_rouge, w_cider = weights
+        w_sum = w_bleu + w_rouge + w_cider
+
+        for model_name in models_to_merge:
+            model_vlm_dir = vlm_root / model_name
+            _log.info("  Model: %s", model_name)
+
+            for split_name in ("train", "test"):
+                split_vlm_dir = model_vlm_dir / split_name
+                if not split_vlm_dir.is_dir():
+                    continue
+
+                for sidecar_path in sorted(split_vlm_dir.glob("*_VQA_*.json")):
+                    self._merge_one_sidecar(
+                        sidecar_path=sidecar_path,
+                        output_dir=output_dir,
+                        split_name=split_name,
+                        model_name=model_name,
+                        w_bleu=w_bleu,
+                        w_rouge=w_rouge,
+                        w_cider=w_cider,
+                        w_sum=w_sum,
+                        strategy=strategy,
+                    )
+
+    def _merge_one_sidecar(
+        self,
+        sidecar_path: Path,
+        output_dir: Path,
+        split_name: str,
+        model_name: str,
+        w_bleu: float,
+        w_rouge: float,
+        w_cider: float,
+        w_sum: float,
+        strategy: str,
+    ) -> None:
+        """Merge one sidecar file into its corresponding main JSON."""
+        with open(sidecar_path) as f:
+            sidecar_entries = json.load(f)
+
+        if not isinstance(sidecar_entries, list) or not sidecar_entries:
+            return
+
+        sidecar_scores: dict[str, float] = {}
+        for se in sidecar_entries:
+            sid = se.get("sample_id", "")
+            if not sid:
+                continue
+            bleu = float(se.get("bleu", 0.0))
+            rouge = float(se.get("rouge_l", 0.0))
+            cider = float(se.get("cider", 0.0))
+            cognitive = (w_bleu * bleu + w_rouge * rouge + w_cider * cider) / w_sum
+            sidecar_scores[sid] = round(cognitive, 6)
+
+        main_path = output_dir / split_name / sidecar_path.name
+        if not main_path.is_file():
+            _log.warning(
+                "Main file not found for sidecar %s (expected %s), skipping",
+                sidecar_path.name, main_path,
+            )
+            return
+
+        with open(main_path) as f:
+            main_entries = json.load(f)
+
+        if not isinstance(main_entries, list):
+            return
+
+        updated = 0
+        for entry in main_entries:
+            sid = entry.get("sample_id", "")
+            score = sidecar_scores.get(sid)
+            if score is None:
+                continue
+
+            entry.setdefault("vlm_scores", {})[model_name] = score
+            updated += 1
+
+        for entry in main_entries:
+            scores = entry.get("vlm_scores", {})
+            if scores:
+                if strategy == "mean":
+                    entry["cognitive_score"] = round(
+                        float(sum(scores.values()) / len(scores)), 6
+                    )
+
+        if updated:
+            self._atomic_json_write(main_entries, main_path)
+        _log.info(
+            "  Merged %d/%d entries: %s/%s [%s]",
+            updated, len(main_entries), split_name, sidecar_path.name, model_name,
+        )
+
     # ---- Full pipeline ----
 
     def run_full(
@@ -685,13 +835,17 @@ class DataSynthesisPipeline:
             _log.info("=== Step 3: Aggregate scores ===")
             self.aggregate_scores(output_dir=output_dir)
 
+        if "merge" in step_set:
+            _log.info("=== Step 4: Merge sidecar scores ===")
+            self.merge_sidecar_scores(output_dir=output_dir)
+
         _log.info("Pipeline complete. Output: %s", output_dir)
 
     @staticmethod
     def _parse_steps(steps: str) -> set[str]:
         if steps == "all":
-            return {"inject", "annotate", "aggregate"}
-        valid = {"inject", "annotate", "aggregate"}
+            return {"inject", "annotate", "aggregate", "merge"}
+        valid = {"inject", "annotate", "aggregate", "merge"}
         selected = {s.strip() for s in steps.split(",")}
         invalid = selected - valid
         if invalid:

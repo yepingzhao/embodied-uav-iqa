@@ -110,6 +110,7 @@ class TestMpQueue:
         q = MpQueue[int]()
         q.put(42)
         q.close()
+        q.put_sentinel()
         assert q.get() == 42
         assert q.get() is None
 

@@ -79,7 +79,8 @@ class TestScheduler:
         n = sched.run(resume=False)
         # 10/10 = 1 chunk + 25/10 = 3 chunks = 4 total
         assert n == 4
-        # Queue should be closed (get returns None after draining)
+        # Signal sentinel then drain
+        tq.put_sentinel()
         tasks = []
         while True:
             t = tq.get()
@@ -117,6 +118,7 @@ class TestScheduler:
     def test_task_ids_unique(self, storage: JsonStorage, repo: TaskRepository) -> None:
         tq = make_task_queue()
         Scheduler(storage, repo, tq, chunk_size=10).run(resume=False)
+        tq.put_sentinel()
         tasks = []
         while True:
             t = tq.get()
@@ -198,12 +200,13 @@ class TestCollector:
         # Schedule
         Scheduler(storage, repo, tq, chunk_size=10).run(resume=False)
 
-        # Run worker (DummyExecutor)
+        # Run worker (DummyExecutor) — put sentinel to signal exit
+        tq.put_sentinel()
         ex = DummyExecutor(model_name="test", score=0.5)
         worker_main(0, 0, tq, rq, storage, ex, batch_size=4)
 
         # Close result queue with 1 sentinel (1 worker)
-        rq.close()
+        rq.put_sentinel()
 
         # Run collector
         collector = Collector(rq, repo, storage, writer, num_workers=1)
@@ -237,9 +240,10 @@ class TestCollector:
         # Small chunk size to force multiple chunks
         Scheduler(storage, repo, tq, chunk_size=5).run(resume=False)
 
+        tq.put_sentinel()
         ex = DummyExecutor(model_name="order_test", score=0.1)
         worker_main(0, 0, tq, rq, storage, ex, batch_size=2)
-        rq.close()
+        rq.put_sentinel()
 
         collector = Collector(rq, repo, storage, writer, num_workers=1)
         collector.run()
@@ -261,8 +265,9 @@ class TestCollector:
         tq = make_task_queue()
         rq = make_result_queue()
         Scheduler(storage, repo, tq, chunk_size=10).run(resume=False)
+        tq.put_sentinel()
         worker_main(0, 0, tq, rq, storage, DummyExecutor(), batch_size=4)
-        rq.close()
+        rq.put_sentinel()
         Collector(rq, repo, storage, writer, num_workers=1).run()
 
         assert repo.count_success() == 4
@@ -280,7 +285,7 @@ class TestCollector:
         tq = make_task_queue()
         rq = make_result_queue()
         Scheduler(s, repo, tq, chunk_size=10).run(resume=False)
-        rq.close()
+        rq.put_sentinel()
         collector = Collector(rq, repo, s, writer, num_workers=1)
         result = collector.run()
         assert result == {}
@@ -297,16 +302,18 @@ class TestCollector:
         Scheduler(storage, repo, tq, chunk_size=10).run(resume=False)
 
         # Complete first 2 tasks (file A's 1 chunk + file B's first chunk)
+        tq.put_sentinel()
         worker_main(0, 0, tq, rq, storage, DummyExecutor(), batch_size=4)
-        rq.close()
+        rq.put_sentinel()
         Collector(rq, repo, storage, writer, num_workers=1).run()
 
         # Now simulate a fresh run with remaining tasks
         tq2 = make_task_queue()
         rq2 = make_result_queue()
         Scheduler(storage, repo, tq2, chunk_size=10).run(resume=True)
+        tq2.put_sentinel()
         worker_main(0, 0, tq2, rq2, storage, DummyExecutor(model_name="m2", score=0.2), batch_size=4)
-        rq2.close()
+        rq2.put_sentinel()
         Collector(rq2, repo, storage, writer, num_workers=1).run()
 
         # All tasks should be success now

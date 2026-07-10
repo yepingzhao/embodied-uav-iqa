@@ -59,6 +59,7 @@ MODEL_REGISTRY: Dict[str, VLMConfig] = {
         ),
         model_class_name="AutoModel",
         processor_class_name="AutoTokenizer",
+        trust_remote_code=True,
     ),
     "InternVL2": VLMConfig(
         short_name="InternVL2",
@@ -71,6 +72,7 @@ MODEL_REGISTRY: Dict[str, VLMConfig] = {
         ),
         model_class_name="AutoModel",
         processor_class_name="AutoTokenizer",
+        trust_remote_code=True,
     ),
     "InternVL2.5": VLMConfig(
         short_name="InternVL2.5",
@@ -83,6 +85,7 @@ MODEL_REGISTRY: Dict[str, VLMConfig] = {
         ),
         model_class_name="AutoModel",
         processor_class_name="AutoTokenizer",
+        trust_remote_code=True,
     ),
     "InternVL3": VLMConfig(
         short_name="InternVL3",
@@ -95,6 +98,7 @@ MODEL_REGISTRY: Dict[str, VLMConfig] = {
         ),
         model_class_name="AutoModel",
         processor_class_name="AutoTokenizer",
+        trust_remote_code=True,
     ),
     # --- InternLM-Xcomposer family ---
     "InternLM-Xcomposer2.5": VLMConfig(

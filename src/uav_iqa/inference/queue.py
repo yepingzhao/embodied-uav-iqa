@@ -71,7 +71,6 @@ class MpQueue(BaseQueue[T]):
         if self._closed:
             return
         self._closed = True
-        self.put_sentinel()
 
     def qsize(self) -> int:
         return self._q.qsize()

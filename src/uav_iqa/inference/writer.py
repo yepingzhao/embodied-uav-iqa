@@ -27,15 +27,18 @@ _log = logging.getLogger(__name__)
 class Writer:
     """Merges chunks and writes the final output file."""
 
-    def __init__(self, storage: BaseStorage, output_dir: Path) -> None:
+    def __init__(self, storage: BaseStorage, output_dir: Path, *, model_name: str = "") -> None:
         self.storage = storage
         self.output_dir = Path(output_dir)
+        self.model_name = model_name
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     # -- chunk staging -------------------------------------------------------
 
     @property
     def _chunks_dir(self) -> Path:
+        if self.model_name:
+            return self.output_dir / "vlm" / self.model_name / ".chunks"
         return self.output_dir / ".chunks"
 
     def _chunk_subdir(self, source_file_path: Path) -> Path:

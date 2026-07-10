@@ -8,7 +8,7 @@
 | R003 | M0 | Annotation pipeline check | VLM/VLA/Execution annotation | 100-image subset | Score range validity | MUST | TODO | Requires VLM/VLA models; synthetic scores used for pipeline testing |
 | R004 | M0 | Overfit test | UAV-IQANet (full) | 100 random images, 50 epochs | Training loss → 0 | MUST | DONE | min_loss=0.000099 < 0.001 → PASSED |
 | **M1: Database Construction** |
-| R005 | M1 | Distorted dataset generation | 33 distortion types × 1 random level × 261 refs | Full reference set (8,613 pairs) | Coverage | MUST | DONE | 6,889/861/863 train/val/test; manifests with scores |
+| R005 | M1 | Distorted dataset generation | 36 distortion types × 1 random level × full AirCopBench | Full reference set (494,352 pairs) | Coverage | MUST | DONE | 6 UAV + 30 generic; VLM scoring complete (R006) |
 | R006 | M1 | VLM annotation | Qwen2.5-VL-7B, InternVL2-8B, LLaVA-NeXT-13B | — | Cognitive score | MUST | TODO | Requires VLM models + GPU servers |
 | R007 | M1 | VLA annotation | VLA ensemble (3 models) | — | Decision score | MUST | TODO | Requires VLA models + CARLA-Air |
 | R008 | M1 | Execution annotation | CARLA-Air SITL | — | Execution success rate | MUST | TODO | Requires CARLA-Air deployment |

@@ -9,9 +9,9 @@
 - R004 (overfit test): DONE — loss → 0.000099 < 0.001 threshold
 
 ## M1: Database Construction — PARTIALLY DONE
-- R005 (distorted dataset): DONE — 8,613 pairs generated (261 ref images × 33 distortions × 1 random level)
+- R005 (distorted dataset): DONE — 494,352 pairs generated (36 distortions × 1 random level × full AirCopBench)
   - Train: 6,889 / Val: 861 / Test: 863
-  - 33 distortion types, 4 task categories
+  - 36 distortion types, 4 task categories
   - Scores: synthetic
 - R006-R008 (VLM/VLA/Execution annotation): TODO — requires external models
 

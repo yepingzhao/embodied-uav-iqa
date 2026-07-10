@@ -85,7 +85,7 @@ class InferenceEngine:
         repo = TaskRepository(checkpoint)
         task_queue = make_task_queue()
         result_queue = make_result_queue()
-        writer = Writer(storage, self.config.output_dir)
+        writer = Writer(storage, self.config.output_dir, model_name=self.config.model_name)
 
         # -- 2. Schedule (main process) --------------------------------------
         scheduler = Scheduler(
@@ -96,6 +96,9 @@ class InferenceEngine:
         if not resume:
             writer.clean_chunks()
         n_tasks = scheduler.run(resume=resume)
+        # Signal each worker to exit after all tasks are queued
+        for _ in range(self.config.num_gpus):
+            task_queue.put_sentinel()
         self.metrics.set_totals(total_tasks=n_tasks, total_samples=0)
 
         if n_tasks == 0:

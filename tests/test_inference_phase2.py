@@ -189,7 +189,7 @@ class TestWorkerMain:
                 end=20,
             )
         )
-        tq.close()  # puts sentinel
+        tq.put_sentinel()  # signal worker to exit
 
         n = worker_main(
             worker_id=0,
@@ -218,7 +218,7 @@ class TestWorkerMain:
         tq = make_task_queue()
         rq = make_result_queue()
         ex = DummyExecutor(model_name="e", score=0.0)
-        tq.close()  # immediately close → only sentinel
+        tq.put_sentinel()  # immediately signal → only sentinel, no tasks
 
         n = worker_main(0, 0, tq, rq, storage, ex, batch_size=4)
         assert n == 0
@@ -229,7 +229,7 @@ class TestWorkerMain:
         rq = make_result_queue()
         ex = DummyExecutor(model_name="order", score=0.1)
         tq.put(task)
-        tq.close()
+        tq.put_sentinel()
 
         worker_main(0, 0, tq, rq, storage, ex, batch_size=3)
 

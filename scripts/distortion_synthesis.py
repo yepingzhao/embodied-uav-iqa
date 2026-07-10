@@ -126,6 +126,15 @@ def cmd_aggregate(args):
     )
 
 
+def cmd_merge(args):
+    pipeline = create_pipeline(args.dataset, seed=args.seed)
+    pipeline.merge_sidecar_scores(
+        output_dir=args.output_dir,
+        strategy=args.strategy,
+        model_names=args.models,
+    )
+
+
 def cmd_all(args):
     pipeline = create_pipeline(args.dataset, seed=args.seed)
     scorer = _make_scorer(args)
@@ -193,6 +202,23 @@ def main():
     )
     _add_seed_arg(p_aggregate)
     p_aggregate.set_defaults(func=cmd_aggregate)
+
+    # ---- merge ----
+    p_merge = sub.add_parser(
+        "merge", help="Merge sidecar VLM scores back into main annotated JSONs",
+    )
+    _add_dataset_arg(p_merge)
+    p_merge.add_argument("--output-dir", default="data/processed", help="Processed output directory")
+    p_merge.add_argument(
+        "--strategy", default="mean", choices=["mean"],
+        help="Aggregation strategy (default: mean)",
+    )
+    p_merge.add_argument(
+        "--models", nargs="+", default=None,
+        help="Specific model names to merge (default: all models under vlm/)",
+    )
+    _add_seed_arg(p_merge)
+    p_merge.set_defaults(func=cmd_merge)
 
     # ---- all ----
     p_all = sub.add_parser("all", help="Run full pipeline end-to-end")

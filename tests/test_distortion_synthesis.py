@@ -204,9 +204,9 @@ class TestPipelineInject:
 
 
 class TestPipelineStepsParsing:
-    def test_all_expands_to_three(self):
+    def test_all_expands_to_four(self):
         steps = DataSynthesisPipeline._parse_steps("all")
-        assert steps == {"inject", "annotate", "aggregate"}
+        assert steps == {"inject", "annotate", "aggregate", "merge"}
 
     def test_comma_separated(self):
         steps = DataSynthesisPipeline._parse_steps("inject,aggregate")
