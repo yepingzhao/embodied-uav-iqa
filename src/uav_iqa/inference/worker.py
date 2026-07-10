@@ -103,7 +103,8 @@ def _process_task(
             batch_outputs = executor.infer(batch)
         except Exception:
             _log.error(
-                "Inference failed for task %s batch %d", task.task_id, batch_start
+                "Inference failed for task %s batch %d", task.task_id, batch_start,
+                exc_info=True,
             )
             # Mark entire batch as failed, keep originals
             batch_outputs = batch

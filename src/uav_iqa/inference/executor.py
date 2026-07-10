@@ -125,29 +125,21 @@ class VLMExecutor(BaseExecutor):
                 "_model_details": {self.model_name: self._empty_model_details()},
             }
 
-        try:
-            result = self._scorer.score_multi_image(
-                ref_image_paths=ref_list,
-                dist_image_paths=dist_list,
-                question=question,
-                subtask_type=subtask,
-            )
-            score = float(result.get("cognitive_score", 0.0))
-            # Map scorer output fields → model detail record.
-            # Expected scorer return: cognitive_score, prompt, ref_description,
-            # dist_description, bleu, rouge_l, cider.
-            model_details = {
-                "prompt": result.get("prompt", ""),
-                "ref_answer": result.get("ref_description", ""),
-                "dist_answer": result.get("dist_description", ""),
-                "bleu": result.get("bleu", 0.0),
-                "rouge_l": result.get("rouge_l", 0.0),
-                "cider": result.get("cider", 0.0),
-            }
-        except Exception:
-            _log.warning("score_multi_image failed for %s", entry.get("sample_id", "?"), exc_info=True)
-            score = 0.0
-            model_details = self._empty_model_details()
+        result = self._scorer.score_multi_image(
+            ref_image_paths=ref_list,
+            dist_image_paths=dist_list,
+            question=question,
+            subtask_type=subtask,
+        )
+        score = float(result.get("cognitive_score", 0.0))
+        model_details = {
+            "prompt": result.get("prompt", ""),
+            "ref_answer": result.get("ref_description", ""),
+            "dist_answer": result.get("dist_description", ""),
+            "bleu": result.get("bleu", 0.0),
+            "rouge_l": result.get("rouge_l", 0.0),
+            "cider": result.get("cider", 0.0),
+        }
 
         vlm_scores = dict(entry.get("vlm_scores") or {})
         vlm_scores[self.model_name] = score
