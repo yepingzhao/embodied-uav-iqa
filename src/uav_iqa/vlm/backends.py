@@ -37,14 +37,31 @@ def run_vllm_inference(
     # vLLM 0.19+ requires explicit image placeholder tokens in the prompt
     # for each multi-modal input. Without them, prompt replacement fails
     # with "Failed to apply prompt replacement for mm_items['image'][0]".
+    # Placeholders must be embedded INSIDE the user message for models
+    # that use conversation templates (Qwen2-VL, Qwen2.5-VL); prepending
+    # outside the chat format causes the model to ignore the images and
+    # generate only EOS.
     image_tags = "".join([image_placeholder] * len(image_paths))
-    formatted_prompt = image_tags + "\n" + chat_template.format(prompt=prompt)
+    try:
+        formatted_prompt = chat_template.format(prompt=prompt, image_tags=image_tags)
+    except KeyError:
+        # Backward compat: templates without {image_tags} placeholder
+        formatted_prompt = image_tags + "\n" + chat_template.format(prompt=prompt)
     image_data = image_paths[0] if len(image_paths) == 1 else image_paths
     outputs = model.generate(
         [{"prompt": formatted_prompt, "multi_modal_data": {"image": image_data}}],
         sp,
     )
-    return outputs[0].outputs[0].text.strip()
+    text = outputs[0].outputs[0].text.strip()
+    if not text:
+        _log.warning(
+            "vLLM returned empty text. "
+            "token_ids=%s, finish_reason=%s, text_raw=%r",
+            len(getattr(outputs[0].outputs[0], "token_ids", []) or []),
+            getattr(outputs[0].outputs[0], "finish_reason", "?"),
+            outputs[0].outputs[0].text,
+        )
+    return text
 
 
 # -- backend: transformers, per-family ---------------------------------------

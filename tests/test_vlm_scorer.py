@@ -463,13 +463,14 @@ class TestChatTemplateFormatting:
     """Tests for per-family chat template formatting via _build_description_prompt."""
 
     def test_qwen_family_build_description_prompt(self):
-        """Qwen family template is {prompt} — returns raw description text."""
+        """Qwen family wraps prompt in <|im_start|> chat format."""
         scorer = VLMScorer(model_name="Qwen2-VL")
         formatted = scorer._build_description_prompt("tracking", 0)
+        assert "<|im_start|>system" in formatted
+        assert "<|im_start|>user" in formatted
+        assert "<|im_start|>assistant" in formatted
         assert "aerial" in formatted.lower()
         assert "Describe the key objects" in formatted
-        assert "<|im_start|>" not in formatted
-        assert "<|user|>" not in formatted
 
     def test_internvl_family_build_description_prompt(self):
         """InternVL family wraps prompt in <|im_start|> chat format."""
@@ -478,7 +479,6 @@ class TestChatTemplateFormatting:
         assert "<|im_start|>system" in formatted
         assert "<|im_start|>user" in formatted
         assert "<|im_start|>assistant" in formatted
-        assert "<image>" in formatted
         assert "infrastructure" in formatted.lower()
 
     def test_internlm_xc_family_build_description_prompt(self):

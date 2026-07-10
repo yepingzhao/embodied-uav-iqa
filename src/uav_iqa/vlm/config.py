@@ -23,10 +23,11 @@ class VLMConfig:
     short_name: str
     hf_model_id: str
     family: str  # "qwen", "internvl", "internlm_xc", "ovis", "phi", "mplug"
-    chat_template: str  # Python format string with {prompt} placeholder
+    chat_template: str  # Python format string with {prompt} and {image_tags}
     model_class_name: str  # "AutoModelForVision2Seq", "AutoModel", etc.
     processor_class_name: str  # "AutoProcessor", "AutoTokenizer", etc.
     trust_remote_code: bool = False
+    image_placeholder: str = "<|vision_start|><|image_pad|><|vision_end|>"
 
 
 MODEL_REGISTRY: Dict[str, VLMConfig] = {
@@ -35,7 +36,11 @@ MODEL_REGISTRY: Dict[str, VLMConfig] = {
         short_name="Qwen2-VL",
         hf_model_id="Qwen/Qwen2-VL-7B-Instruct",
         family="qwen",
-        chat_template="{prompt}",
+        chat_template=(
+            "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
+            "<|im_start|>user\n{image_tags}{prompt}<|im_end|>\n"
+            "<|im_start|>assistant\n"
+        ),
         model_class_name="AutoModelForVision2Seq",
         processor_class_name="AutoProcessor",
     ),
@@ -43,7 +48,11 @@ MODEL_REGISTRY: Dict[str, VLMConfig] = {
         short_name="Qwen2.5-VL",
         hf_model_id="Qwen/Qwen2.5-VL-7B-Instruct",
         family="qwen",
-        chat_template="{prompt}",
+        chat_template=(
+            "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
+            "<|im_start|>user\n{image_tags}{prompt}<|im_end|>\n"
+            "<|im_start|>assistant\n"
+        ),
         model_class_name="AutoModelForVision2Seq",
         processor_class_name="AutoProcessor",
     ),
@@ -54,12 +63,13 @@ MODEL_REGISTRY: Dict[str, VLMConfig] = {
         family="internvl",
         chat_template=(
             "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
-            "<|im_start|>user\n<image>\n{prompt}<|im_end|>\n"
+            "<|im_start|>user\n{image_tags}\n{prompt}<|im_end|>\n"
             "<|im_start|>assistant\n"
         ),
         model_class_name="AutoModel",
         processor_class_name="AutoTokenizer",
         trust_remote_code=True,
+        image_placeholder="<image>",
     ),
     "InternVL2": VLMConfig(
         short_name="InternVL2",
@@ -67,12 +77,13 @@ MODEL_REGISTRY: Dict[str, VLMConfig] = {
         family="internvl",
         chat_template=(
             "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
-            "<|im_start|>user\n<image>\n{prompt}<|im_end|>\n"
+            "<|im_start|>user\n{image_tags}\n{prompt}<|im_end|>\n"
             "<|im_start|>assistant\n"
         ),
         model_class_name="AutoModel",
         processor_class_name="AutoTokenizer",
         trust_remote_code=True,
+        image_placeholder="<image>",
     ),
     "InternVL2.5": VLMConfig(
         short_name="InternVL2.5",
@@ -80,12 +91,13 @@ MODEL_REGISTRY: Dict[str, VLMConfig] = {
         family="internvl",
         chat_template=(
             "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
-            "<|im_start|>user\n<image>\n{prompt}<|im_end|>\n"
+            "<|im_start|>user\n{image_tags}\n{prompt}<|im_end|>\n"
             "<|im_start|>assistant\n"
         ),
         model_class_name="AutoModel",
         processor_class_name="AutoTokenizer",
         trust_remote_code=True,
+        image_placeholder="<image>",
     ),
     "InternVL3": VLMConfig(
         short_name="InternVL3",
@@ -93,12 +105,13 @@ MODEL_REGISTRY: Dict[str, VLMConfig] = {
         family="internvl",
         chat_template=(
             "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
-            "<|im_start|>user\n<image>\n{prompt}<|im_end|>\n"
+            "<|im_start|>user\n{image_tags}\n{prompt}<|im_end|>\n"
             "<|im_start|>assistant\n"
         ),
         model_class_name="AutoModel",
         processor_class_name="AutoTokenizer",
         trust_remote_code=True,
+        image_placeholder="<image>",
     ),
     # --- InternLM-Xcomposer family ---
     "InternLM-Xcomposer2.5": VLMConfig(
@@ -114,25 +127,28 @@ MODEL_REGISTRY: Dict[str, VLMConfig] = {
         short_name="Ovis1.5-Gemma",
         hf_model_id="AIDC-AI/Ovis1.5-Gemma2-9B",
         family="ovis",
-        chat_template="{prompt}",
+        chat_template="USER: {image_tags}\n{prompt}\nASSISTANT:",
         model_class_name="AutoModelForCausalLM",
         processor_class_name="AutoProcessor",
+        image_placeholder="<image>",
     ),
     "Ovis1.6-Llama": VLMConfig(
         short_name="Ovis1.6-Llama",
         hf_model_id="AIDC-AI/Ovis1.6-Llama3.2-3B",
         family="ovis",
-        chat_template="{prompt}",
+        chat_template="USER: {image_tags}\n{prompt}\nASSISTANT:",
         model_class_name="AutoModelForCausalLM",
         processor_class_name="AutoProcessor",
+        image_placeholder="<image>",
     ),
     "Ovis2": VLMConfig(
         short_name="Ovis2",
         hf_model_id="AIDC-AI/Ovis2-8B",
         family="ovis",
-        chat_template="{prompt}",
+        chat_template="USER: {image_tags}\n{prompt}\nASSISTANT:",
         model_class_name="AutoModelForCausalLM",
         processor_class_name="AutoProcessor",
+        image_placeholder="<image>",
     ),
     # --- Phi family ---
     "Phi3.5-Vision": VLMConfig(

@@ -109,7 +109,11 @@ class VLMScorer:
                 short_name=name.split("/")[-1],
                 hf_model_id=name,
                 family="qwen",
-                chat_template="{prompt}",
+                chat_template=(
+                    "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
+                    "<|im_start|>user\n{image_tags}{prompt}<|im_end|>\n"
+                    "<|im_start|>assistant\n"
+                ),
                 model_class_name="AutoModelForCausalLM",
                 processor_class_name="AutoProcessor",
             )
@@ -274,11 +278,38 @@ class VLMScorer:
                 _llm_cls = getattr(tf_mod, _llm_name)
                 _llm_cls.generate = getattr(tf_mod, "GenerationMixin").generate
 
+    @staticmethod
+    def _patch_vllm_rope_config():
+        """Fix vLLM bug: propagate original_max_position_embeddings into rope_parameters.
+
+        When original_max_position_embeddings is at the top-level config but
+        NOT inside rope_scaling (standard Phi-3 layout), vLLM 0.19.1 fails to
+        propagate it. This monkey-patches patch_rope_parameters to inject it.
+        """
+        import vllm.transformers_utils.config as _vllm_cfg
+
+        if getattr(_vllm_cfg.patch_rope_parameters, "_uav_iqa_patched", False):
+            return
+
+        _original = _vllm_cfg.patch_rope_parameters
+
+        def _patched_patch_rope_parameters(config):
+            _original(config)
+            ompe = getattr(config, "original_max_position_embeddings", None)
+            rope_params = getattr(config, "rope_parameters", None)
+            if ompe is not None and isinstance(rope_params, dict):
+                if "original_max_position_embeddings" not in rope_params:
+                    rope_params["original_max_position_embeddings"] = ompe
+
+        _patched_patch_rope_parameters._uav_iqa_patched = True  # type: ignore[attr-defined]
+        _vllm_cfg.patch_rope_parameters = _patched_patch_rope_parameters
+
     def _load_model(self):
         """Load the VLM model (lazy initialization)."""
         backend = self._resolve_backend()
 
         if backend == "vllm":
+            self._patch_vllm_rope_config()
             from vllm import LLM
 
             _log.info("Loading model %s via vLLM on %s...", self.model_name, self.device)
@@ -748,7 +779,7 @@ class VLMScorer:
             return None
         desc_text = prompts[prompt_idx]
         chat_template = self.vlm_config.chat_template
-        return chat_template.format(prompt=desc_text)
+        return chat_template.format(prompt=desc_text, image_tags="")
 
     def _generate_answer(
         self, image_path: str, task: str, prompt: str, max_tokens: int = 200
@@ -767,8 +798,15 @@ class VLMScorer:
             raise RuntimeError("No VLM backend available for description generation")
 
         if self._model is None:
-            self._load_model()
+            if getattr(self, "_load_failed", False):
+                raise RuntimeError("VLM model previously failed to load")
+            try:
+                self._load_model()
+            except Exception:
+                self._load_failed = True
+                raise
             if self._model is None:
+                self._load_failed = True
                 raise RuntimeError("Failed to load VLM model")
 
         if backend == "vllm":
@@ -778,6 +816,7 @@ class VLMScorer:
                 image_paths,
                 prompt,
                 max_tokens,
+                image_placeholder=self.vlm_config.image_placeholder,
             )
         if backend == "transformers":
             return run_transformers_family(
@@ -816,7 +855,14 @@ class VLMScorer:
             if not Path(p).is_file():
                 raise FileNotFoundError(f"Image not found: {p}")
 
-        return self._run_inference(image_paths, task, prompt, max_tokens)
+        result = self._run_inference(image_paths, task, prompt, max_tokens)
+        if not result.strip():
+            raise RuntimeError(
+                f"VLM returned empty output for {len(image_paths)} images, "
+                f"first image: {Path(image_paths[0]).name}, "
+                f"prompt: {prompt[:100]}..."
+            )
+        return result
 
     def _generate_vqa_answer(self, image_path: str, question: str, max_tokens: int = 100) -> str:
         """Call the VLM to answer a VQA question about an image.
@@ -1188,39 +1234,8 @@ class VLMScorer:
                 "prompt": "",
             }
 
-        try:
-            ref_description = self._generate_answer_multi(ref_image_paths, "vqa", prompt)
-        except Exception:
-            _log.warning(
-                "Failed to generate reference description for multi-image group",
-                exc_info=True,
-            )
-            return {
-                "cognitive_score": 0.0,
-                "bleu": 0.0,
-                "rouge_l": 0.0,
-                "cider": 0.0,
-                "ref_description": "",
-                "dist_description": "",
-                "prompt": prompt,
-            }
-
-        try:
-            dist_description = self._generate_answer_multi(dist_image_paths, "vqa", prompt)
-        except Exception:
-            _log.warning(
-                "Failed to generate distorted description for multi-image group",
-                exc_info=True,
-            )
-            return {
-                "cognitive_score": 0.0,
-                "bleu": 0.0,
-                "rouge_l": 0.0,
-                "cider": 0.0,
-                "ref_description": ref_description,
-                "dist_description": "",
-                "prompt": prompt,
-            }
+        ref_description = self._generate_answer_multi(ref_image_paths, "vqa", prompt)
+        dist_description = self._generate_answer_multi(dist_image_paths, "vqa", prompt)
 
         result = compute_cognitive_score(
             ref_texts=[ref_description],
