@@ -92,6 +92,10 @@ class VLMExecutor(BaseExecutor):
             kwargs["device"] = self.device
         kwargs.update(self.scorer_kwargs)
         self._scorer = VLMScorer(**kwargs)
+        # Fail fast: load the model now so a GPU-OOM / config error kills this
+        # worker at startup instead of cascading a per-batch "previously failed
+        # to load" error across every task on this GPU.
+        self._scorer.ensure_loaded()
         _log.info("VLMExecutor ready: model=%s backend=%s", self.model_name, self.backend)
 
     def infer(self, batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -125,12 +129,24 @@ class VLMExecutor(BaseExecutor):
                 "_model_details": {self.model_name: self._empty_model_details()},
             }
 
-        result = self._scorer.score_multi_image(
-            ref_image_paths=ref_list,
-            dist_image_paths=dist_list,
-            question=question,
-            subtask_type=subtask,
-        )
+        try:
+            result = self._scorer.score_multi_image(
+                ref_image_paths=ref_list,
+                dist_image_paths=dist_list,
+                question=question,
+                subtask_type=subtask,
+            )
+        except Exception:
+            _log.warning(
+                "score_multi_image failed for %s", entry.get("sample_id", "?"),
+                exc_info=True,
+            )
+            return {
+                **entry,
+                "vlm_scores": {self.model_name: 0.0},
+                "cognitive_score": 0.0,
+                "_model_details": {self.model_name: self._empty_model_details()},
+            }
         score = float(result.get("cognitive_score", 0.0))
         model_details = {
             "prompt": result.get("prompt", ""),

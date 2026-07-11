@@ -56,6 +56,7 @@ class VLMScorer:
         local_files_only: bool = True,
         vqa_dir: str = "data/processed",
         gpu_memory_utilization: float = 0.5,
+        max_model_len: Optional[int] = None,
     ):
         self.backend = backend
         self.device = device
@@ -63,7 +64,9 @@ class VLMScorer:
         self.cache_dir = cache_dir
         self.local_files_only = local_files_only
         self.gpu_memory_utilization = gpu_memory_utilization
+        self.max_model_len = max_model_len
         self._model = None
+        self._load_failed = False
         self.vqa_index = VQAIndex(vqa_dir)
 
         self.vlm_config = self._resolve_model_name(model_name)
@@ -322,6 +325,8 @@ class VLMScorer:
             )
             if self.cache_dir:
                 llm_kwargs["download_dir"] = self.cache_dir
+            if self.max_model_len is not None:
+                llm_kwargs["max_model_len"] = self.max_model_len
             self._model = LLM(**llm_kwargs)
 
         elif backend == "transformers":
@@ -789,6 +794,26 @@ class VLMScorer:
         Delegates to ``_generate_answer_multi`` with a single-element list.
         """
         return self._generate_answer_multi([image_path], task, prompt, max_tokens=max_tokens)
+
+    def ensure_loaded(self) -> None:
+        """Eagerly load the model so load failures surface immediately.
+
+        Called by executors at worker startup for fail-fast behavior: a GPU
+        OOM or misconfiguration raises here instead of degrading into a
+        per-batch "model previously failed to load" cascade across every task.
+        """
+        if self._model is not None:
+            return
+        if self._resolve_backend() == "none":
+            return
+        try:
+            self._load_model()
+        except Exception:
+            self._load_failed = True
+            raise
+        if self._model is None:
+            self._load_failed = True
+            raise RuntimeError(f"Failed to load VLM model {self.model_name}")
 
     def _run_inference(
         self, image_paths: List[str], task: str, prompt: str, max_tokens: int

@@ -54,6 +54,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--backend", type=str, default="auto", choices=["auto", "vllm", "transformers", "none"])
     p.add_argument("--device", type=str, default="", help="Device override (e.g. cuda:0)")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--gpu-memory-utilization", type=float, default=0.4,
+                   help="Fraction of GPU memory per vLLM worker (lower to co-run jobs)")
+    p.add_argument("--max-model-len", type=int, default=8192,
+                   help="vLLM max_model_len (0 = model default; raise for multi-image prompts)")
 
     # Misc
     p.add_argument("--resume", action="store_true", help="Resume from checkpoint")
@@ -109,6 +113,8 @@ def main(argv: list[str] | None = None) -> int:
                 seed=args.seed,
                 raw_data_dir=str(raw_data_dir) if raw_data_dir else None,
                 distorted_data_dir=str(distorted_data_dir) if distorted_data_dir else None,
+                gpu_memory_utilization=args.gpu_memory_utilization,
+                max_model_len=args.max_model_len or None,
             )
             return executor, gpu_id
 
