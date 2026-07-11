@@ -243,8 +243,13 @@ def _ovis_gen(
     max_tokens: int,
     device: torch.device,
     chat_template: str,
+    image_placeholder: str = "<image>",
 ) -> str:
-    formatted_prompt = chat_template.format(prompt=prompt)
+    image_tags = "".join([image_placeholder] * len(image_paths))
+    try:
+        formatted_prompt = chat_template.format(prompt=prompt, image_tags=image_tags)
+    except KeyError:
+        formatted_prompt = image_tags + "\n" + chat_template.format(prompt=prompt)
     pixel_values_list = []
     for img_path in image_paths:
         image = Image.open(img_path).convert("RGB")
@@ -281,8 +286,13 @@ def _generic_gen(
     max_tokens: int,
     device: torch.device,
     chat_template: str,
+    image_placeholder: str = "<|vision_start|><|image_pad|><|vision_end|>",
 ) -> str:
-    formatted_prompt = chat_template.format(prompt=prompt)
+    image_tags = "".join([image_placeholder] * len(image_paths))
+    try:
+        formatted_prompt = chat_template.format(prompt=prompt, image_tags=image_tags)
+    except KeyError:
+        formatted_prompt = image_tags + "\n" + chat_template.format(prompt=prompt)
     images = _load_images(image_paths)
     inputs = processor(
         text=formatted_prompt,
@@ -362,4 +372,5 @@ def run_transformers_family(
             max_tokens,
             device,
             chat_template=vlm_config.chat_template,
+            image_placeholder=vlm_config.image_placeholder,
         )
