@@ -20,7 +20,11 @@ from uav_iqa.text_metrics import (
     compute_cognitive_score,
     compute_rouge_l,
 )
-from uav_iqa.vlm.backends import run_transformers_family, run_vllm_inference
+from uav_iqa.vlm.backends import (
+    run_transformers_family,
+    run_vllm_inference,
+    run_vllm_inference_batch,
+)
 from uav_iqa.vlm.config import DEPRECATED_MODELS, MODEL_REGISTRY, VLMConfig
 from uav_iqa.vlm.vqa_index import VQAIndex
 
@@ -57,6 +61,7 @@ class VLMScorer:
         vqa_dir: str = "data/processed",
         gpu_memory_utilization: float = 0.5,
         max_model_len: Optional[int] = None,
+        max_num_seqs: int = 16,
     ):
         self.backend = backend
         self.device = device
@@ -65,6 +70,7 @@ class VLMScorer:
         self.local_files_only = local_files_only
         self.gpu_memory_utilization = gpu_memory_utilization
         self.max_model_len = max_model_len
+        self.max_num_seqs = max_num_seqs
         self._model = None
         self._load_failed = False
         self.vqa_index = VQAIndex(vqa_dir)
@@ -316,10 +322,15 @@ class VLMScorer:
             from vllm import LLM
 
             _log.info("Loading model %s via vLLM on %s...", self.model_name, self.device)
+            # Fix vLLM v0.19 CUDA graph memory profiling (can over-estimate
+            # by 5000%+, starving the KV cache).  See vLLM issue tracker.
+            os.environ.setdefault(
+                "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS", "1",
+            )
             llm_kwargs: dict = dict(
                 model=self.model_name,
                 trust_remote_code=self.vlm_config.trust_remote_code,
-                max_num_seqs=8,
+                max_num_seqs=self.max_num_seqs,
                 gpu_memory_utilization=self.gpu_memory_utilization,
                 disable_log_stats=True,
             )
@@ -1275,3 +1286,187 @@ class VLMScorer:
             "dist_description": dist_description,
             "prompt": prompt,
         }
+
+    # ------------------------------------------------------------------
+    # Batch inference — sends multiple prompts in one model.generate()
+    # call so vLLM continuous batching (max_num_seqs) can interleave them.
+    # ------------------------------------------------------------------
+
+    def _generate_answers_batch(
+        self,
+        prompts: list[tuple[list[str], str]],
+        max_tokens: int = 200,
+    ) -> list[str]:
+        """Generate answers for multiple (image_paths, prompt_text) pairs.
+
+        For the vLLM backend this is a single ``model.generate()`` call;
+        for transformers it falls back to sequential :meth:`_generate_answer_multi`.
+
+        Args:
+            prompts: List of ``(image_paths, prompt_text)`` tuples.
+            max_tokens: Maximum new tokens per generated answer.
+
+        Returns:
+            List of generated text strings, same length and order as *prompts*.
+        """
+        backend = self._resolve_backend()
+
+        if backend == "vllm":
+            if self._model is None:
+                if getattr(self, "_load_failed", False):
+                    raise RuntimeError("VLM model previously failed to load")
+                self._load_model()
+                if self._model is None:
+                    self._load_failed = True
+                    raise RuntimeError("Failed to load VLM model")
+
+            return run_vllm_inference_batch(
+                self._model,
+                self.vlm_config.chat_template,
+                prompts,
+                max_tokens,
+                image_placeholder=self.vlm_config.image_placeholder,
+            )
+
+        # transformers / other: fall back to sequential calls
+        results: list[str] = []
+        for image_paths, prompt_text in prompts:
+            results.append(
+                self._generate_answer_multi(image_paths, "vqa", prompt_text, max_tokens),
+            )
+        return results
+
+    def score_batch_multi_image(
+        self,
+        batch_ref_paths: list[list[str]],
+        batch_dist_paths: list[list[str]],
+        batch_questions: list[str],
+        max_tokens: int = 200,
+    ) -> list[dict[str, float | str]]:
+        """Batch version of :meth:`score_multi_image` for throughput.
+
+        Groups all reference and distorted generations across *N* entries
+        into one (vLLM) or two (transformers) ``model.generate()`` calls,
+        then computes text-similarity scores per pair.
+
+        Args:
+            batch_ref_paths: Clean reference image paths per entry.
+            batch_dist_paths: Distorted image paths per entry (same order).
+            batch_questions: VQA question per entry.
+            max_tokens: Maximum new tokens per answer.
+
+        Returns:
+            List of result dicts with ``cognitive_score``, ``bleu``,
+            ``rouge_l``, ``cider``, ``ref_description``, ``dist_description``,
+            ``prompt`` — one dict per entry, same order as input.
+        """
+        if not batch_ref_paths:
+            return []
+
+        N = len(batch_ref_paths)
+        empty_result: dict[str, float | str] = {
+            "cognitive_score": 0.0,
+            "bleu": 0.0,
+            "rouge_l": 0.0,
+            "cider": 0.0,
+            "ref_description": "",
+            "dist_description": "",
+            "prompt": "",
+        }
+
+        # Build (image_paths, prompt) pairs for every valid entry.
+        # Combine ref + dist into one flat list for a single generate() call
+        # when using vLLM; two calls otherwise (ref batch, then dist batch).
+        all_prompts: list[tuple[list[str], str]] = []
+        valid_indices: list[int] = []
+        default_indices: dict[int, dict[str, float | str]] = {}
+
+        for i in range(N):
+            ref_paths = batch_ref_paths[i]
+            dist_paths = batch_dist_paths[i]
+            question = batch_questions[i].strip() if batch_questions[i] else ""
+
+            if not ref_paths or not dist_paths or not question:
+                default_indices[i] = dict(empty_result)
+                default_indices[i]["prompt"] = question
+                continue
+
+            all_prompts.append((list(ref_paths), question))
+            all_prompts.append((list(dist_paths), question))
+            valid_indices.append(i)
+
+        if not all_prompts:
+            return [
+                default_indices.get(i, dict(empty_result))
+                for i in range(N)
+            ]
+
+        # Single batched generate() for all ref + dist prompts
+        try:
+            all_outputs = self._generate_answers_batch(all_prompts, max_tokens)
+        except Exception:
+            _log.warning(
+                "Batch inference failed (%d prompts), falling back to sequential",
+                len(all_prompts),
+                exc_info=True,
+            )
+            # Fall back to per-entry sequential scoring
+            results: list[dict[str, float | str]] = []
+            for i in range(N):
+                if i in default_indices:
+                    results.append(default_indices[i])
+                else:
+                    try:
+                        results.append(
+                            self.score_multi_image(
+                                batch_ref_paths[i],
+                                batch_dist_paths[i],
+                                batch_questions[i],
+                            ),
+                        )
+                    except Exception:
+                        _log.error(
+                            "Sequential fallback failed for entry %d (sample_id=%s)",
+                            i, batch_ref_paths[i] if i < len(batch_ref_paths) else "?",
+                        )
+                        raise
+            return results
+
+        # all_prompts layout: [ref_0, dist_0, ref_1, dist_1, ...]
+        # Pair them up and compute scores.
+        results = []
+        valid_idx = 0
+        for i in range(N):
+            if i in default_indices:
+                results.append(default_indices[i])
+                continue
+
+            ref_idx = valid_idx * 2
+            dist_idx = ref_idx + 1
+            ref_text = all_outputs[ref_idx] if ref_idx < len(all_outputs) else ""
+            dist_text = all_outputs[dist_idx] if dist_idx < len(all_outputs) else ""
+
+            if not ref_text or not dist_text:
+                raise RuntimeError(
+                    f"Empty VLM output for entry {i}: "
+                    f"ref_text={ref_text!r}, dist_text={dist_text!r}, "
+                    f"question={batch_questions[i][:100]!r}"
+                )
+
+            metric_result = compute_cognitive_score(
+                ref_texts=[ref_text],
+                dist_texts=[dist_text],
+            )
+            results.append({
+                "cognitive_score": round(metric_result["cognitive_score"], 6),
+                "bleu": round(metric_result["bleu"], 6),
+                "rouge_l": round(metric_result["rouge_l"], 6),
+                "cider": round(metric_result["cider"], 6),
+                "ref_description": ref_text,
+                "dist_description": dist_text,
+                "prompt": batch_questions[i].strip(),
+            })
+
+            valid_idx += 1
+
+        return results

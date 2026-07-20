@@ -65,6 +65,72 @@ def run_vllm_inference(
     return text
 
 
+def run_vllm_inference_batch(
+    model: Any,
+    chat_template: str,
+    prompts: list[tuple[list[str], str]],
+    max_tokens: int,
+    *,
+    image_placeholder: str = "<|vision_start|><|image_pad|><|vision_end|>",
+) -> list[str]:
+    """Run batched vLLM inference — all prompts in a single ``model.generate()``.
+
+    Unlike :func:`run_vllm_inference` which sends one prompt per call, this
+    function packs *prompts* into one ``model.generate()`` call so that
+    vLLM's continuous batching (``max_num_seqs``) can interleave them on the
+    GPU.
+
+    Args:
+        model: vLLM ``LLM`` instance.
+        chat_template: Chat template string with ``{image_tags}`` and
+            ``{prompt}`` placeholders.
+        prompts: List of ``(image_paths, prompt_text)`` tuples — each
+            element becomes one sequence in the batch.
+        max_tokens: Maximum new tokens for each sequence.
+        image_placeholder: Token string used for each image placeholder.
+
+    Returns:
+        List of generated text strings, one per element in *prompts*.
+    """
+    from vllm import SamplingParams
+
+    sp = SamplingParams(temperature=0.0, max_tokens=max_tokens)
+    batch_data: list[dict[str, Any]] = []
+
+    for image_paths, prompt_text in prompts:
+        image_tags = "".join([image_placeholder] * len(image_paths))
+        try:
+            formatted_prompt = chat_template.format(
+                prompt=prompt_text, image_tags=image_tags,
+            )
+        except KeyError:
+            formatted_prompt = (
+                image_tags + "\n" + chat_template.format(prompt=prompt_text)
+            )
+        images = _load_images(image_paths)
+        image_data = images[0] if len(images) == 1 else images
+        batch_data.append({
+            "prompt": formatted_prompt,
+            "multi_modal_data": {"image": image_data},
+        })
+
+    outputs = model.generate(batch_data, sp)
+
+    results: list[str] = []
+    for i, output in enumerate(outputs):
+        text = output.outputs[0].text.strip()
+        if not text:
+            raise RuntimeError(
+                f"vLLM batch[{i}] returned empty text. "
+                f"token_ids={len(getattr(output.outputs[0], 'token_ids', []) or [])}, "
+                f"finish_reason={getattr(output.outputs[0], 'finish_reason', '?')}, "
+                f"text_raw={output.outputs[0].text!r}"
+            )
+        results.append(text)
+
+    return results
+
+
 # -- backend: transformers, per-family ---------------------------------------
 
 def _internlm_xc_gen(
