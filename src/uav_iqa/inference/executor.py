@@ -102,10 +102,78 @@ class VLMExecutor(BaseExecutor):
         if self._scorer is None:
             raise RuntimeError("VLMExecutor.infer called before prepare()")
 
+        # --- batch path for vLLM (single model.generate() call for all
+        #     ref + dist prompts → continuous batching) ---
+        if self.backend != "transformers":
+            try:
+                return self._infer_batch_vllm(batch)
+            except Exception:
+                _log.warning(
+                    "Batch inference failed, falling back to per-entry scoring",
+                    exc_info=True,
+                )
+
+        # --- per-entry path (transformers backend / batch fallback) ---
         results: list[dict[str, Any]] = []
         for entry in batch:
             output = self._score_entry(entry)
             results.append(output)
+        return results
+
+    def _infer_batch_vllm(
+        self, batch: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Batch all entries into a single :meth:`VLMScorer.score_batch_multi_image` call.
+
+        Resolves paths for every entry, collects ref/dist/question lists,
+        and dispatches to the scorer's batch method so that all
+        ``model.generate()`` work happens in one or two calls instead of
+        ``2 × batch_size`` calls.
+        """
+        batch_ref_paths: list[list[str]] = []
+        batch_dist_paths: list[list[str]] = []
+        batch_questions: list[str] = []
+
+        for entry in batch:
+            uav_paths = entry.get("uav_paths") or {}
+            dist_paths = entry.get("distorted_uav_paths") or {}
+            uav_keys = sorted(uav_paths.keys())
+            ref_list = [
+                str(self._resolve_ref(p))
+                for p in (uav_paths[k] for k in uav_keys)
+            ]
+            dist_list = [
+                str(self._resolve_dist(p))
+                for p in (dist_paths.get(k, "") for k in uav_keys)
+            ]
+            batch_ref_paths.append(ref_list)
+            batch_dist_paths.append(dist_list)
+            batch_questions.append(entry.get("question", ""))
+
+        batch_scores = self._scorer.score_batch_multi_image(
+            batch_ref_paths, batch_dist_paths, batch_questions,
+        )
+
+        # Distribute scores back to entries
+        results: list[dict[str, Any]] = []
+        for entry, score in zip(batch, batch_scores):
+            score_val = float(score.get("cognitive_score", 0.0))
+            model_details = {
+                "prompt": score.get("prompt", ""),
+                "ref_answer": score.get("ref_description", ""),
+                "dist_answer": score.get("dist_description", ""),
+                "bleu": float(score.get("bleu", 0.0)),
+                "rouge_l": float(score.get("rouge_l", 0.0)),
+                "cider": float(score.get("cider", 0.0)),
+            }
+            vlm_scores = dict(entry.get("vlm_scores") or {})
+            vlm_scores[self.model_name] = score_val
+            results.append({
+                **entry,
+                "vlm_scores": vlm_scores,
+                "cognitive_score": score_val,
+                "_model_details": {self.model_name: model_details},
+            })
         return results
 
     def finalize(self) -> None:
@@ -137,16 +205,12 @@ class VLMExecutor(BaseExecutor):
                 subtask_type=subtask,
             )
         except Exception:
-            _log.warning(
-                "score_multi_image failed for %s", entry.get("sample_id", "?"),
+            _log.error(
+                "score_multi_image failed for %s",
+                entry.get("sample_id", "?"),
                 exc_info=True,
             )
-            return {
-                **entry,
-                "vlm_scores": {self.model_name: 0.0},
-                "cognitive_score": 0.0,
-                "_model_details": {self.model_name: self._empty_model_details()},
-            }
+            raise
         score = float(result.get("cognitive_score", 0.0))
         model_details = {
             "prompt": result.get("prompt", ""),
