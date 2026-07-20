@@ -43,6 +43,9 @@ def _build_parser() -> argparse.ArgumentParser:
     # Scheduling
     p.add_argument("--chunk-size", type=int, default=256, help="Records per task (scheduling unit)")
     p.add_argument("--batch-size", type=int, default=16, help="Samples per GPU forward pass")
+    p.add_argument("--file-glob", type=str, default="*_VQA_*.json",
+                   help="Glob pattern to filter input files (default: *_VQA_*.json). "
+                        "Use \"Sim6_VQA_*.json\" to target only 6-view scenes.")
     p.add_argument("--max-entries", type=int, default=0, help="Cap total entries (0 = no limit, for testing)")
 
     # GPU
@@ -54,10 +57,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--backend", type=str, default="auto", choices=["auto", "vllm", "transformers", "none"])
     p.add_argument("--device", type=str, default="", help="Device override (e.g. cuda:0)")
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--gpu-memory-utilization", type=float, default=0.4,
-                   help="Fraction of GPU memory per vLLM worker (lower to co-run jobs)")
-    p.add_argument("--max-model-len", type=int, default=8192,
-                   help="vLLM max_model_len (0 = model default; raise for multi-image prompts)")
+    p.add_argument("--gpu-memory-utilization", type=float, default=0.75,
+                   help="Fraction of GPU memory per vLLM worker (A100 80GB: 0.75 ≈ 60GiB)")
+    p.add_argument("--max-model-len", type=int, default=16384,
+                   help="vLLM max_model_len (0 = model default; 16K covers multi-image VLM prompts)")
+    p.add_argument("--max-num-seqs", type=int, default=16,
+                   help="vLLM max_num_seqs (concurrent sequences per GPU; raise above 2xbatch-size for full continuous batching)")
 
     # Misc
     p.add_argument("--resume", action="store_true", help="Resume from checkpoint")
@@ -106,15 +111,19 @@ def main(argv: list[str] | None = None) -> int:
     else:
         def factory(gpu_idx: int) -> tuple[VLMExecutor, int]:
             gpu_id = gpu_ids[gpu_idx] if gpu_idx < len(gpu_ids) else gpu_idx
+            # Offset seed per worker so concurrent vLLM instances don't
+            # collide on TCP ports during distributed initialization.
+            worker_seed = args.seed + gpu_idx * 100
             executor = VLMExecutor(
                 model_name=args.model,
                 backend=args.backend,
                 device=args.device or f"cuda:{gpu_id}",
-                seed=args.seed,
+                seed=worker_seed,
                 raw_data_dir=str(raw_data_dir) if raw_data_dir else None,
                 distorted_data_dir=str(distorted_data_dir) if distorted_data_dir else None,
                 gpu_memory_utilization=args.gpu_memory_utilization,
                 max_model_len=args.max_model_len or None,
+                max_num_seqs=args.max_num_seqs,
             )
             return executor, gpu_id
 
@@ -124,6 +133,7 @@ def main(argv: list[str] | None = None) -> int:
         checkpoint_path=args.checkpoint_path,
         chunk_size=args.chunk_size,
         batch_size=args.batch_size,
+        glob_pattern=args.file_glob,
         num_gpus=args.num_gpus,
         model_name=args.model,
         backend=args.backend,
