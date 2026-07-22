@@ -1,0 +1,117 @@
+\begin{table*}[t]
+\centering
+\caption{Results on AirCopBench for existing various MLLMs on 14 task types across 4 evaluation dimensions. The best-performing model in each category is highlighted \textbf{in-bold}, while the second-best is \underline{underlined}. 24 out of 40 models and 3 out of 4 fine-tuned models for demonstration in the main text; additional results are provided in the \textit{Appendix}.}
+\label{mllms_accuracy}
+\renewcommand{\arraystretch}{1.2} 
+\resizebox{\textwidth}{!}{
+\begin{tabular}{%
+  c|cc|% 前面三列保持不变
+  *{3}{>{\centering\arraybackslash}p{0.8cm}}|% 场景理解三列
+  *{4}{>{\centering\arraybackslash}p{0.8cm}}|% 物体理解四列
+  *{3}{>{\centering\arraybackslash}p{0.8cm}}|% 感知评估三列
+  *{4}{>{\centering\arraybackslash}p{0.8cm}}  % 协作决策四列
+}
+
+\hline
+& & & 
+\multicolumn{3}{c|}{\cellcolor{blue!10}\textbf{Scene Understanding}} 
+& \multicolumn{4}{c|}{\cellcolor{yellow!10}\textbf{Object Undstanding}} 
+& \multicolumn{3}{c|}{\cellcolor{green!10}\textbf{Perception Assessment}} 
+& \multicolumn{4}{c}{\cellcolor{red!10}\textbf{Collaborative Decision}} \\
+\multicolumn{1}{r|}{Method} 
+& Rank 
+& \multicolumn{1}{c|}{Avg.} 
+& \rotatebox{90}{\textit{Scene Desc.}} 
+& \rotatebox{90}{\textit{Scene Comp.}} 
+& \rotatebox{90}{\textit{Obs. Post.}} 
+& \rotatebox{90}{\textit{Obj. Rec.}} 
+& \rotatebox{90}{\textit{Obj. Cnt.}} 
+& \rotatebox{90}{\textit{Obj. Grnd.}} 
+& \rotatebox{90}{\textit{Obj. Mtch.}} 
+& \rotatebox{90}{\textit{Qual. Ass.}} 
+& \rotatebox{90}{\textit{Usab. Ass.}} 
+& \rotatebox{90}{\textit{Caus. Ass.}} 
+& \rotatebox{90}{\textit{When Coll.}} 
+& \rotatebox{90}{\textit{What Coll.}} 
+& \rotatebox{90}{\textit{Who Coll.}} 
+& \rotatebox{90}{\textit{Why Coll.}} \\
+\hline
+\rowcolor{cyan!8}
+% \rowcolor{gray!20}
+\multicolumn{1}{l|}{\textbf{\textit{Baseline}}} & \multicolumn{2}{l|}{} & \multicolumn{3}{l|}{} & \multicolumn{4}{l|}{} & \multicolumn{3}{l|}{} & \multicolumn{4}{l}{} \\
+% \multicolumn{17}{l}{\textbf{\textit{Baseline}}} \\
+\multicolumn{1}{r|}{Random} & - & 23.47 & 19.30 & 44.19 & 18.52 & 16.67 & 23.46 & 27.68 & 17.14 & 19.51 & 19.51 & 28.57 & 41.38 & 18.52 & 24.69 & 24.69 \\
+\multicolumn{1}{r|}{Human} & - & 78.25 & 71.43 & 75.86 & 42.86 & 85.71 & 88.89 & 83.04 & 87.62 & 90.48 & 91.46 & 85.71 & 51.72 & 82.72 & 82.72 & 75.31 \\
+\hline
+% \rowcolor{gray!20}
+\rowcolor{cyan!8}
+\multicolumn{1}{l|}{\textbf{\textit{Proprietary Models (API)}}} & \multicolumn{2}{l|}{} & \multicolumn{3}{l|}{} & \multicolumn{4}{l|}{} & \multicolumn{3}{l|}{} & \multicolumn{4}{l}{} \\
+\multicolumn{1}{r|}{GPT-4o-2024-11-20} 
+  & \cellcolor{red!50}2 & \underline{51.79} 
+  & 64.91 & 55.81 & \textbf{44.44} 
+  & 65.48 & \textbf{44.44} & 50.89 & \textbf{67.62} 
+  & 29.76 & 48.78 & 70.24 & 34.48 & 58.02 & 14.81 & \underline{60.49} \\
+\multicolumn{1}{r|}{Gemini-2.5-Pro} 
+  & 5 & 49.08 
+  & \underline{70.18} & 62.79 & \underline{37.04} 
+  & \textbf{67.86} & 27.16 & 47.32 & 47.62 
+  & 15.48 & 36.59 & \textbf{72.62} & \underline{41.38} & \underline{61.73} & \underline{34.57} & \textbf{65.43} \\
+\multicolumn{1}{r|}{Claude-Sonnet-4-20250514} 
+  & \cellcolor{red!10}3 & 50.73 
+  & 59.65 & 55.81 & 33.33 
+  & 61.90 & 33.33 & 52.68 & 56.19 
+  & 35.71 & \textbf{57.32} & 71.43 & 20.69 & 60.49 & 30.86 & 51.85 \\
+\multicolumn{1}{r|}{Qwen-Max-VL-latest} 
+  & 4 & 50.53 
+  & 52.63 & \underline{65.12} & 29.63 
+  & 61.90 & \underline{41.98} & \underline{54.46} & 61.90 
+  & \textbf{44.05} & 46.34 & 66.67 & 17.24 & 53.09 & \textbf{39.51} & 39.51 \\
+\multicolumn{1}{r|}{Step-1o-turbo} 
+  & \cellcolor{red!90}1 & \textbf{52.87} 
+  & \textbf{75.00} & \textbf{70.83} & 21.05 
+  & \underline{66.10} & 33.33 & \textbf{61.54} & 59.26 
+  & 27.42 & \underline{55.93} & \underline{71.67} & \underline{41.38} & \textbf{67.27} & 18.52 & 56.60 \\
+\multicolumn{1}{r|}{Doubao-seed-1-6-flash-250615} 
+  & 2 & \underline{51.79} 
+  & 59.65 & 48.84 & \underline{37.04} 
+  & 54.76 & \textbf{44.44} & 53.57 & \underline{63.81} 
+  & \underline{41.67} & 52.44 & 67.86 & \textbf{48.28} & 54.32 & \underline{34.57} & 48.10 \\
+\hline
+% \rowcolor{gray!20}
+\rowcolor{cyan!8}
+\multicolumn{1}{l|}{\textbf{\textit{Open-source Models}}} & \multicolumn{2}{l|}{} & \multicolumn{3}{l|}{} & \multicolumn{4}{l|}{} & \multicolumn{3}{l|}{} & \multicolumn{4}{l}{} \\
+\multicolumn{1}{r|}{Phi-4-multimodal-instruct}                & 5  & 52.76    & 63.16    & 60.47    & 33.33    & 51.19    & 25.93    & 52.68    & \underline{65.71} & 26.19    & 40.24    & 70.24    & 24.14    & \textbf{66.67} & \underline{70.37} & 60.40    \\
+\multicolumn{1}{r|}{Qwen2.5-VL-7B-Instruct}                   & 10 & 47.33    & \underline{66.67} & 60.47    & 25.93    & 63.10    & 25.93    & 50.89    & 51.43    & 47.56    & 47.56    & 66.67    & 13.79    & 34.57    & 25.93    & 43.21    \\
+\multicolumn{1}{r|}{Qwen2.5-VL-72B-Instruct}                  & 4  & 54.90    & 59.65    & \underline{65.12} & 33.33    & 58.33    & \textbf{41.98} & \underline{63.39} & \textbf{67.62} & 48.78    & 48.78    & 73.81    & 17.24    & 59.26    & 37.04    & 48.15    \\
+\multicolumn{1}{r|}{InternVL3-8B}                             & 6  & 52.18    & 56.14    & 60.47    & 25.93    & 59.52    & 30.86    & 58.04    & 56.19    & 56.10    & 51.22    & 71.43    & 20.69    & 54.32    & 53.09    & 50.62    \\
+\multicolumn{1}{r|}{InternVL3-78B}                            & \cellcolor{red!10}3 & 55.38    & \underline{66.67} & \textbf{67.44} & \underline{44.44} & \underline{64.29} & 24.69    & \textbf{67.86} & 62.86    & \textbf{58.54} & \textbf{58.37} & \textbf{76.19} & 13.79    & 55.56    & 50.62    & 41.98    \\
+\multicolumn{1}{r|}{Janus-Pro-7B}                             & 12 & 44.91    & 52.63    & 48.84    & 22.22    & 51.19    & 18.52    & 58.04    & 51.43    & 28.57    & 46.34    & 61.90    & 31.03    & \underline{60.49} & 33.33    & 37.00    \\
+\multicolumn{1}{r|}{Chameleon-7B}                            & 15 & 38.22    & 36.84    & 37.21    & \underline{44.44} & 25.00    & 24.69    & 29.46    & 46.67    & 16.67    & 20.73    & 53.57    & 27.59    & 45.68    & \textbf{75.31} & 49.30    \\
+\multicolumn{1}{r|}{PaliGemma-3B}                             & 17 & 24.25    & 19.30    & 37.21    & 22.22    & 30.95    & 35.80    & 18.75    & 13.33    & 11.90    & 21.95    & 47.62    & \textbf{65.52} & 17.28    & 16.05    & 16.05    \\
+\multicolumn{1}{r|}{MiniCPM-V2.6}                             & 7  & 51.99    & 63.16    & 62.79    & 33.33    & \textbf{65.48} & \underline{40.74} & 49.11    & 49.52    & 46.43    & 48.78    & 66.67    & 41.38    & 58.02    & 46.91    & 45.68    \\
+\multicolumn{1}{r|}{Ovis2-16B}                                & \cellcolor{red!90}1 & \textbf{59.17} & \textbf{68.42} & \textbf{67.44} & 29.63    & \underline{64.29} & 28.40    & 56.25    & \textbf{67.62} & \underline{58.33} & \underline{57.32} & 66.67    & \underline{51.72} & \underline{60.49} & 60.49    & \textbf{71.60} \\
+\multicolumn{1}{r|}{Ovis-U1-3B}                              & 16 & 37.34    & 57.89    & 46.51    & 22.22    & 41.67    & 29.63    & 36.61    & 39.05    & 27.38    & 45.12    & 63.10    & 24.14    & 24.69    & 29.63    & 25.93    \\
+\multicolumn{1}{r|}{Kimi-VL-A3B-Thinking}                     & \cellcolor{red!50}2 & \underline{56.84} & 59.65    & 60.47    & 25.93    & 61.90    & 38.27    & 58.04    & 63.81    & 45.24    & 50.00    & \textbf{76.19} & 48.28    & \textbf{66.67} & 51.85    & \underline{62.96} \\
+\multicolumn{1}{r|}{Mimo-VL-7B-RL}                            & 9  & 48.59    & 61.40    & 58.14    & 29.63    & \underline{64.29} & 34.57    & 53.57    & 57.14    & 46.43    & 53.66    & \underline{75.00} & 10.34    & 50.62    & 17.28    & 33.33    \\
+\multicolumn{1}{r|}{LLaVA-NeXT-7B-hf}                        & 14 & 38.31    & 28.07    & 46.51    & 18.52    & 35.71    & 25.93    & 39.29    & 52.38    & 29.76    & 37.80    & 59.52    & 27.59    & 55.56    & 25.93    & 29.63    \\
+\multicolumn{1}{r|}{LLaVA-NeXT-13B-hf}                       & 13 & 39.28    & 31.58    & 44.19    & 33.33    & 42.86    & 30.86    & 40.18    & 46.67    & 40.48    & 41.46    & 50.00    & 34.48    & 44.44    & 34.57    & 24.69    \\
+\multicolumn{1}{r|}{Skywork-R1V3}                             & 8  & 48.94    & 46.15    & 43.33    & \textbf{46.67} & 41.51    & 40.00    & 50.00    & 46.99    & 40.74    & 56.60    & 67.27    & 33.33    & 52.94    & 48.08    & 51.92    \\
+\multicolumn{1}{r|}{mPLUG-OWL3}                              & 11 & 47.14    & 57.89    & 60.47    & 22.22    & 50.00    & 25.93    & 56.25    & 41.90    & 27.38    & 47.56    & 55.95    & 44.83    & 54.32    & 50.62    & 54.32    \\
+\multicolumn{1}{r|}{XComposer-VL-7B}                         & 18 & 23.26    & 14.81    & 20.00    & 18.75    & 25.45    & 26.42    & 18.82    & 22.62    & 27.78    & 13.79    & 13.79    & 12.50    & 24.07    & 39.62    & 33.96    \\
+\hline
+% \rowcolor{gray!20}
+\rowcolor{cyan!8}
+\multicolumn{1}{l|}{\textbf{\textit{Fine-tuned Models}}} & \multicolumn{2}{l|}{} & \multicolumn{3}{l|}{} & \multicolumn{4}{l|}{} & \multicolumn{3}{l|}{} & \multicolumn{4}{l}{} \\
+\multicolumn{1}{r|}{LLaVA-NeXT-13B} & \cellcolor{red!10}3  & 57.61        & 40.35        & \underline{60.47} & \underline{25.93} & 52.38        & \underline{45.68} & \underline{59.82} & 60.95        & 57.14        & 62.20        & 69.05        & \underline{37.93} & \underline{58.02} & 70.37        & 66.67        \\
+\multicolumn{1}{r|}{Qwen-2.5-VL-7B} & \cellcolor{red!90}1          & \textbf{74.30} & \underline{63.16} & \textbf{65.12}  & \textbf{33.33}    & \textbf{69.05} & \textbf{75.31}    & \textbf{66.07}    & \textbf{72.38} & \textbf{76.19} & \textbf{82.93} & \textbf{83.33} & \textbf{55.17}    & \textbf{77.78} & \textbf{91.36} & \textbf{85.10} \\
+\multicolumn{1}{r|}{Qwen-2.5-VL-3B} & \cellcolor{red!50}2 & \underline{66.44} & \textbf{73.68} & 55.81           & \textbf{33.33}    & \underline{59.52} & 34.57             & 57.14             & \underline{62.86} & \underline{66.67} & \underline{73.17} & \underline{82.14} & \textbf{55.17}    & \textbf{77.78} & \underline{90.12} & \underline{80.20}  \\
+\hline
+\rowcolor{cyan!8}
+\multicolumn{1}{l|}{\textbf{\textit{Sim-to-Real Experiments}}} & \multicolumn{2}{l|}{} & \multicolumn{3}{l|}{} & \multicolumn{4}{l|}{} & \multicolumn{3}{l|}{} & \multicolumn{4}{l}{} \\
+\multicolumn{1}{r|}{Qwen2.5-VL-7B}  
+  & - & 47.77 & 50.00 & 55.56 & 11.11 & 83.33 & 50.00 & 27.78 & 55.56 & 61.11 & 44.44 & 82.35 & 10.53 & 38.89 & 64.71 & 27.70 \\
+\multicolumn{1}{r|}{AirCop-7B} & -  & 67.41 & 50.00 & 77.78 & 11.11 & 83.33 & 88.89 & 77.78 & 77.78 & 77.78 & 94.44 & 82.35 & 31.58 & 50.00 & 76.47 & 50.00 \\
+\hline
+\end{tabular}
+}
+\end{table*}
