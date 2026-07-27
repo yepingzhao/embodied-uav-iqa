@@ -283,48 +283,100 @@
 
 ## Reviewer Feedback
 
-**Note**: LLM cross-review (Step 6) requires Codex MCP which is not available in this session. Below is a self-assessment against the ICLR venue checklist from `venue-checklists.md`.
+**Source**: GPT-5.6-Sol (xhigh reasoning effort) via Codex MCP — 2026-07-22T (supersedes self-assessment from 2026-07-13)
 
-### Self-Assessment (ICLR-specific)
+### Scores
 
-| Criterion | Status | Notes |
-|-----------|--------|-------|
-| Story front-loaded | ✅ | One-sentence contribution clear in title, abstract, intro, Fig 1 |
-| Contribution clear by end of §1 | ✅ | 4 numbered, falsifiable contribution bullets |
-| Reproducibility | ⚠️ | Database construction pipeline documented; code at `src/uav_iqa/`; need to add data release statement |
-| Ethics statement | ⚠️ | Not yet planned; should discuss UAV surveillance dual-use concerns |
-| Limitations discussed | ✅ | §6 includes honest limitations |
-| LLM disclosure | ⚠️ | VLM/VLA used as annotation oracles — this needs disclosure in §3.3 |
-| Page budget | ✅ | 7 sections, 9 pages, fits ICLR limit |
-| References outside page budget | ✅ | Standard ICLR practice |
+| Criterion | Score | Key Finding |
+|-----------|------:|-------------|
+| 1. Logical flow | 7/10 | Skeleton natural; C2 has no §5.x home; C5 has no section; §4 model oversized vs. benchmark evidence |
+| 2. Claim-evidence alignment | 4/10 | C1/C2/C3 all pending; C1 statistical design insufficient; C2 not structured as held-out validation |
+| 3. Experimental completeness | 4/10 | Missing: label validity check, leakage-safe split, fair supervised baseline, clustered uncertainty, synthetic-to-real model transfer |
+| 4. Positioning | 5/10 | Direction correct; overlap with Embodied-IQA/EPD/AirCopBench deeper than acknowledged; "first benchmark" must be narrowed |
+| 5. Page budget feasibility | 3/10 | §4 too large (1.5p → 0.75p needed); §5 too small (2.5p → 3.3p needed); no room for captions/statistics |
+| 6. Front matter strength | 6/10 | Title/problem clear; hero figure has potential; abstract writes pending thresholds as facts |
 
-### Potential Reviewer Concerns (pre-emptive)
+**Overall submission readiness: 2-3/10 with all claims pending; 7.5-8/10 if P0 fixes are applied and results support the story.**
 
-1. **"Why not collect real distorted data instead of synthesizing?"** → Address in §3.2: real-UAV flights at scale (3,000 scenes × 36 distortions × all intensities = infeasible). 50-flight validation establishes synthetic fidelity. The choice is pragmatic, not lazy.
+### P0 Blockers (must fix before submission)
 
-2. **"Are VLA labels reliable enough as ground truth?"** → Address in §3.3: report ICC(3,k) per task/distortion; ensemble calibration via SITL execution on 5% subset; compare VLM-only vs. VLA-only vs. full curriculum; acknowledge noise and discuss its impact.
+1. **Freeze dataset before evaluating.** Abstract and contribution sentence write `SRCC < 0.5` / `SRCC > 0.65` / `SRCC > 0.6` as established facts. These are success criteria, not results. Freeze distortion parameters, split manifests, and primary metrics before running any baselines. If a baseline exceeds 0.5, update the claim — not the test set. Replace "fundamentally fail" with "show limited zero-shot alignment with task utility."
 
-3. **"How is this different from Embodied-IQA?"** → Address in §1, §2, §3: (a) UAV-specific distortions with physical models vs. generic distortions only, (b) aerial embodied tasks vs. fixed-base manipulation, (c) 6 novel mathematically-modeled distortion types, (d) frequency-domain analysis for UAV ego-motion, (e) cross-database validation establishing domain specificity.
+2. **Define the single primary ground truth.** Clarify: (a) one primary label or three separate leaderboards? (b) for the 95% without SITL execution labels, what is the training target? (c) if training target is `cognitive_score` (VLM-derived), the claim "predict UAV task performance" overstates — say "predict a VLM/VLA-derived task-utility proxy."
 
-4. **"The model architecture is incremental."** → Address in §4.1: explicitly position UAV-IQANet as a strong baseline, not a novel contribution. "No architectural novelty is claimed. The purpose of UAV-IQANet is to demonstrate that the database enables training effective UAV-specific IQA models that no prior method achieves."
+3. **Fix information asymmetry.** UAV-IQANet receives task ID + question text; most baselines do not. Either (a) provide same inputs to all supervised baselines, or (b) report the IQA-only variant (no task ID) as the primary comparable row.
 
-5. **"Database scale is small (3K reference images)."** → Address in §6 limitations: acknowledge scale, but argue that (a) 36 distortion types × 1 intensity = 108K annotated pairs provides statistical power, (b) the 6 UAV-specific types are the differentiator, not dataset volume, (c) assembly approach is reproducible and extensible.
+4. **Define source/scene-disjoint split explicitly.** Confirm no reference image appears in multiple splits; describe how scenes are assigned to train/val/test. Benchmark papers require scene-disjoint test splits.
+
+5. **Restructure page allocation** (recommended reallocation):
+
+   | Section | Recommended |
+   |---------|------------:|
+   | Title + Abstract | 0.45p |
+   | §1 Introduction + hero figure | 1.15p |
+   | §2 Related Work | 0.65p |
+   | §3 Database (sources + distortions + labels + splits) | 2.10p |
+   | §4 Baseline + evaluation protocol | **0.75p** (was 1.5p) |
+   | §5 Experiments | **3.35p** (was 2.5p) |
+   | §6+§7 Discussion + Conclusion (merged) | 0.55p |
+
+### Structural Revisions Required
+
+- **Add §5.2 "Synthetic-to-Real Validation" (C2).** C2 currently has no corresponding §5.x. It belongs before the ablation section.
+- **Remove C5 (Moravec paradox) from main paper.** Human MOS collection blocks timeline and has zero evidence. Move to future work or appendix.
+- **Narrow C4 to supplementary.** Per-task SRCC matrix and leave-one-out results in appendix; one paragraph summary in §5.
+- **Split C3 into two questions**: C3a = zero-shot transfer gap (off-the-shelf IQA); C3b = supervised learnability (trained on UAV labels).
+- **Revise hero figure Panel C.** Replace params-vs-SRCC Pareto (model paper framing) with zero-shot vs. supervised leaderboard, split clearly, with 95% CI bars.
+
+### Revised One-Sentence Contribution (template — fill actual numbers after results)
+
+> We introduce UAV-Embodied-IQA, a source-disjoint benchmark for predicting aerial task utility under six UAV-relevant degradation operators and 30 generic distortions, with tiered VLM/VLA annotations and a held-out execution audit; representative off-the-shelf IQA methods achieve [actual range], while equally supervised task-aware baselines achieve [actual range].
+
+### Potential Reviewer Concerns (updated)
+
+1. **"Why not collect real distorted data instead of synthesizing?"** → Address in §3.2: real-UAV flights at scale infeasible; 50-flight validation (§5.2) establishes synthetic fidelity. The choice is pragmatic, not lazy.
+
+2. **"Are VLA labels reliable enough as ground truth?"** → Address in §3.3: report ICC(3,k) per task/distortion; ensemble calibration via SITL on 5% subset; compare VLM-only vs. VLA-only curriculum; acknowledge noise.
+
+3. **"How is this different from Embodied-IQA?"** → Address in §1/§2/§3: (a) UAV-specific distortions with physical models, (b) aerial tasks vs. fixed-base manipulation, (c) 6 novel distortion operators, (d) frequency-domain signatures for UAV ego-motion, (e) cross-database domain specificity validation.
+
+4. **"The model architecture is incremental."** → Address in §4: UAV-IQANet is a strong baseline, not a contribution. Purpose: demonstrate benchmark learnability. No architectural novelty claimed.
+
+5. **"Database scale is small (3K reference images)."** → Address in §6: 36 distortions × ~3K = 108K annotated pairs; 6 UAV distortion types are the differentiator, not scale; assembly approach is reproducible.
 
 ---
 
 ## Next Steps
 
-- [ ] **Immediate**: Wait for deployed experiments (R013-R024c) to complete → collect SRCC/PLCC/RMSE metrics
-- [ ] **Critical path**: Run VLM annotation (R006), VLA annotation (R007), Execution annotation (R008) — these are pre-requisites for all C1/C3 evidence
-- [ ] **Pre-submission**: Run baseline benchmark (R009-R012) to confirm "existing methods fail" claim
-- [ ] **Validation**: Real-UAV flights (R025-R028) to validate C2 — this is the make-or-break claim
-- [ ] **Polish**: Human MOS collection (R038-R039) for C5 Moravec paradox — can be dropped to appendix if timeline compressed
-- [ ] `/paper-figure` to generate all figures from experiment outputs
-- [ ] `/paper-write` to draft LaTeX from this plan
-- [ ] `/paper-compile` to build PDF
-- [ ] `/auto-paper-improvement-loop` for iterative polishing
-- [ ] `/citation-audit` to verify all references before submission
-- [ ] `/paper-claim-audit` to verify claims against final results
+### P0 — Before any further writing (blockers)
+- [ ] **Freeze split manifests** — confirm scene-disjoint train/val/test; no reference image in multiple splits
+- [ ] **Freeze distortion parameters** — do not tune after seeing baseline numbers
+- [ ] **Define single primary label** — decide: one leaderboard (cognitive_score) or three? document the target
+- [ ] **Add task-ID-aware supervised baseline** for fair apples-to-apples comparison with UAV-IQANet
+
+### P1 — Critical path experiments (must complete for submission)
+- [ ] **R006 VLM annotation** — pre-requisite for all C1/C3 evidence
+- [ ] **R007 VLA annotation** — pre-requisite for C1 ΔVLA curves and C3
+- [ ] **R008 Execution annotation** (CARLA-Air SITL, 5% subset) — ICC calibration
+- [ ] **R009-R012 baseline benchmark** — confirms C3a zero-shot transfer gap
+- [ ] **R013 UAV-IQANet full training** — confirms C3b supervised learnability
+- [ ] **R025-R028 real-UAV flights** (50 flights) — C2 synthetic-to-real; do not commit to `SRCC > 0.6` before running
+
+### P2 — Structure fixes to apply before /paper-write
+- [ ] **Add §5.2 Synthetic-to-Real** subsection for C2 evidence
+- [ ] **Remove C5 (Moravec paradox)** from main claims; move to future work
+- [ ] **Narrow C4** to one supplementary paragraph + appendix tables
+- [ ] **Revise hero figure Panel C** — zero-shot vs. supervised leaderboard with 95% CI, not params-vs-SRCC
+- [ ] **Rebalance page allocation** — §4 → 0.75p; §5 → 3.35p; §6+§7 merge → 0.55p
+- [ ] **Revise one-sentence contribution** — use template from Reviewer Feedback section (fill numbers after results)
+
+### P3 — Polish (after P1 experiments complete)
+- [ ] `/paper-figure` — regenerate figures with final experiment outputs
+- [ ] `/paper-write` — draft LaTeX from this plan
+- [ ] `/paper-compile` — build PDF
+- [ ] `/auto-paper-improvement-loop` — iterative polishing
+- [ ] `/citation-audit` — verify all references before submission
+- [ ] `/paper-claim-audit` — verify claims against final results
 
 ---
 
