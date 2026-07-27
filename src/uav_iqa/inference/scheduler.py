@@ -53,7 +53,13 @@ class Scheduler:
         """
         if resume:
             tasks = self.repo.pending_or_running()
-        else:
+            if not tasks and self.repo.total() == 0:
+                _log.warning(
+                    "Resume requested but checkpoint DB is empty — "
+                    "treating as fresh run"
+                )
+                resume = False
+        if not resume:
             files = self.storage.scan_files()
             _log.info("Scanned %d files from input dir", len(files))
             tasks = self.repo.create_tasks(files, self.chunk_size, max_entries=self.max_entries)
