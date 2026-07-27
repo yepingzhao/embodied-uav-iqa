@@ -3,14 +3,14 @@
 **Title**: UAV-Embodied-IQA: A Benchmark for Visual Quality Assessment in Aerial Embodied Intelligence
 **Working short title**: UAV-Embodied-IQA
 **One-sentence contribution**: We introduce UAV-Embodied-IQA, the first benchmark and database for visual quality assessment in aerial embodied intelligence, featuring 6 physically-motivated UAV-specific distortion models, 36-distortion database with VLM/VLA/Execution annotations, and evidence that 15+ existing IQA methods fundamentally fail to predict UAV task performance (SRCC < 0.5), while our database enables training effective UAV-IQA models (SRCC > 0.65).
-**Venue**: NeurIPS Datasets & Benchmarks Track (primary); CVPR (backup)
+**Venue**: ICLR
 **Type**: Benchmark / Empirical
 **Date**: 2026-07-13
 **Page budget**: 9 pages (main body to Conclusion end, excluding references & appendix)
 **Section count**: 7
 **Status**: IN PROGRESS — experiments deployed, results pending
 
-> **Competitive landscape update (2026-07-27)**: Embodied-IQA (arXiv 2505.16815, SJTU/Shanghai AI Lab) accepted to **ICLR 2026** — this is the direct predecessor. Venue target adjusted to NeurIPS D&B (primary) / CVPR (backup). Differentiation strategy: UAV platform (6DoF outdoor) vs. ground manipulators (indoor); 6 physically-derived UAV distortion models vs. generic catalog; 4 aerial task categories; ~108K vs. 36.9K annotated pairs. See §2 Related Work for full positioning.
+> **Competitive landscape update (2026-07-27)**: Embodied-IQA (arXiv 2505.16815, SJTU/Shanghai AI Lab) accepted to **ICLR 2026** — validates that ICLR accepts this direction. This is the direct predecessor. Differentiation strategy: UAV platform (6DoF outdoor) vs. ground manipulators (indoor); 6 physically-derived UAV distortion models vs. generic catalog; 4 aerial task categories; ~108K vs. 36.9K annotated pairs. See §2 Related Work for full positioning.
 
 ---
 
