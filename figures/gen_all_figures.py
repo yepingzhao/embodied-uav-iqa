@@ -1,515 +1,463 @@
-"""Generate all dataset analysis figures for UAV-Embodied-IQA paper.
-Replicates Embodied-IQA Section 4 (Database Analysis) methodology:
-  1. Distribution of cognitive scores across 36 distortion types
-  2. UAV vs Generic distortion comparison bar chart
-  3. 3-dimensional score breakdown (BLEU/ROUGE-L/CIDEr)
-  4. JND-based sensitivity classification heatmap
-  5. Per-intensity distortion degradation curves
-  6. Source comparison (Sim vs Real)
+"""UAV-Embodied-IQA paper figures — 4-VLM aggregated data.
 
-All output saved to figures/ directory.
+Design references:
+  Embodied-IQA  Fig 5  -> fig_distribution  (5-level color coding per distortion)
+  Embodied-IQA  Fig 7  -> fig_intensity_curves (6-panel intensity × mean, ±SEM)
+  Embodied-IQA  Fig 4  -> fig_intensity_fingerprint (Spearman rho heatmap + avg label)
+  AirCopBench   Fig 5  -> fig_task_distortion (4-group separator, mean per cell)
+
+Run:  uv run python figures/gen_all_figures.py
 """
+import sys
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
 
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import numpy as np
 import json
 from pathlib import Path
-from collections import defaultdict
+from collections import defaultdict, Counter
+from scipy.stats import spearmanr
 
-# ── Configuration ────────────────────────────────────────────────
-FIG_DIR = Path(__file__).resolve().parent
-DATA_DIR = FIG_DIR.parent / "data" / "annotated" / "vlm" / "Qwen2-VL"
-FONT_SIZE = 9
-DPI = 300
+from paper_plot_style import FIG_DIR, DATA_DIR, CB_PALETTE, COLORS, save_fig, FONT_SIZE
 
-matplotlib.rcParams.update({
-    'font.size': FONT_SIZE,
-    'font.family': 'serif',
-    'font.serif': ['Times New Roman', 'Times', 'DejaVu Serif'],
-    'axes.labelsize': FONT_SIZE,
-    'xtick.labelsize': FONT_SIZE - 1,
-    'ytick.labelsize': FONT_SIZE - 1,
-    'legend.fontsize': FONT_SIZE - 1,
-    'figure.dpi': DPI,
-    'savefig.dpi': DPI,
-    'savefig.bbox': 'tight',
-    'savefig.pad_inches': 0.05,
-    'axes.grid': False,
-    'axes.spines.top': False,
-    'axes.spines.right': False,
-    'text.usetex': False,
-})
+# ── Load ──────────────────────────────────────────────────────────
+data_dir = DATA_DIR / "annotated" / "test"
+all_data = []
+for f in sorted(data_dir.glob("*.json")):
+    with open(f, encoding="utf-8") as fp:
+        all_data.extend(json.load(fp))
+print("Loaded %d test entries" % len(all_data))
 
-# Color palette (colorblind-safe)
-C_UAV     = '#E69F00'  # orange
-C_GENERIC = '#56B4E9'  # sky blue
-C_REAL    = '#009E73'  # green
-C_SIM     = '#CC79A7'  # purple
-C_DIAMOND = '#000000'
-CB6 = ['#E69F00', '#56B4E9', '#009E73', '#CC79A7', '#D55E00', '#0072B2']
-
+# ── Constants ─────────────────────────────────────────────────────
 UAV_DISTS = [
-    'propeller_vibration_blur', 'atmospheric_scattering_haze',
-    'six_dof_viewpoint_blur', 'communication_packet_loss',
-    'low_res_super_resolution', 'propeller_shadow',
+    "propeller_vibration_blur", "atmospheric_scattering_haze",
+    "six_dof_viewpoint_blur",   "communication_packet_loss",
+    "low_res_super_resolution", "propeller_shadow",
 ]
-
-UAV_DISPLAY = {
-    'propeller_vibration_blur':    'Propeller Vibration',
-    'atmospheric_scattering_haze': 'Atmospheric Scattering',
-    'six_dof_viewpoint_blur':      '6DoF Viewpoint Blur',
-    'communication_packet_loss':   'Packet-Loss Blocks',
-    'low_res_super_resolution':    'Low-Res + SR',
-    'propeller_shadow':            'Propeller Shadow',
+UAV_FULL = {
+    "propeller_vibration_blur":    "Prop. Vibration",
+    "atmospheric_scattering_haze": "Atm. Scattering",
+    "six_dof_viewpoint_blur":      "6DoF Blur",
+    "communication_packet_loss":   "Pkt-Loss",
+    "low_res_super_resolution":    "LR+SR",
+    "propeller_shadow":            "Prop. Shadow",
 }
-
-DIST_CATEGORY = {
-    'propeller_vibration_blur':    'UAV',
-    'atmospheric_scattering_haze': 'UAV',
-    'six_dof_viewpoint_blur':     'UAV',
-    'communication_packet_loss':  'UAV',
-    'low_res_super_resolution':   'UAV',
-    'propeller_shadow':           'UAV',
-    'gaussian_blur':     'Blur',  'lens_blur':         'Blur',
-    'motion_blur':       'Blur',
-    'brighten_max':      'Luminance', 'brighten_avg':  'Luminance',
-    'darken_max':        'Luminance', 'darken_min':    'Luminance',
-    'darken_avg':        'Luminance',
-    'color_diffusion':   'Chrominance', 'color_shift': 'Chrominance',
-    'color_quantize':    'Chrominance',
-    'white_noise':       'Noise',       'color_noise': 'Noise',
-    'impulse_noise':     'Noise',       'multiplicative_noise': 'Noise',
-    'gaussian_denoise':  'Noise',       'cnn_denoise': 'Noise',
-    'jpeg_compression':  'Compression', 'jp2k_compression': 'Compression',
-    'webp_compression':  'Compression',
-    'spatial_warp':      'Spatial',     'spatial_scale': 'Spatial',
-    'clock_jittering':   'Spatial',     'resolution_limit': 'Spatial',
-    'grayscale':         'Other',       'sharpness':     'Other',
-    'contrast':          'Other',
-    'block_lost':        'Other',       'block_interpolation': 'Other',
-    'block_exchange':    'Other',
+# Embodied-IQA GroupA–E level palette
+LEVEL_COLORS = {
+    2:  "#92ca2c",
+    4:  "#3c7daa",
+    6:  "#e64f04",
+    8:  "#f2c400",
+    10: "#a757a7",
 }
+LEVELS     = [2, 4, 6, 8, 10]
+VLM_ORDER  = ["Qwen2.5-VL", "Qwen2-VL", "InternVL2", "Mini-InternVL"]
+VLM_SHORT  = ["Q2.5", "Q2", "IV2", "Mini"]
 
-CATEGORY_COLORS = {
-    'UAV': '#E69F00', 'Blur': '#56B4E9', 'Luminance': '#F0E442',
-    'Chrominance': '#009E73', 'Noise': '#CC79A7',
-    'Compression': '#D55E00', 'Spatial': '#0072B2', 'Other': '#888888',
+# AirCopBench task-dimension grouping
+TASK_GROUPS = {
+    "Scene\nUnderstanding":   ["Scene Description", "Scene Comparison", "Observing Posture"],
+    "Object\nUnderstanding":  ["Object Recognition", "Object Grounding",
+                               "Object Matching",    "Object Counting"],
+    "Perception\nAssessment": ["Quality Assessment", "Usability Assessment", "Causal Assessment"],
+    "Collaboration":          ["Who to Collaborate", "What to Collaborate",
+                               "Why to Collaborate", "When to Collaborate"],
 }
+QTYPE_ORDER = []
+for _members in TASK_GROUPS.values():
+    QTYPE_ORDER.extend(_members)
+
+# ── Pre-index ─────────────────────────────────────────────────────
+dist_data  = defaultdict(list)
+level_data = defaultdict(lambda: defaultdict(list))
+for e in all_data:
+    d  = e["distortion_info"]["type"]
+    lv = e["distortion_info"]["level"]
+    dist_data[d].append(e)
+    level_data[d][lv].append(e["cognitive_score"])
+
+all_dists_sorted = sorted(
+    dist_data.keys(),
+    key=lambda d: np.mean([e["cognitive_score"] for e in dist_data[d]])
+)
+
+# ─────────────────────────────────────────────────────────────────
+# Fig 1  fig_distribution
+# Embodied-IQA Fig 5 style:
+#   x = 36 distortion types sorted by mean cognitive score
+#   y = cognitive score
+#   color = distortion level (L2/4/6/8/10), 5 scatter dots per distortion
+#   UAV distortions: orange x-tick labels; dashed vertical separators
+# ─────────────────────────────────────────────────────────────────
+def fig_distribution():
+    fig, ax = plt.subplots(figsize=(12, 3.6))
+
+    for xi, d in enumerate(all_dists_sorted):
+        for lv in LEVELS:
+            scores = level_data[d][lv]
+            if not scores:
+                continue
+            mean_v = np.mean(scores)
+            ax.scatter(xi, mean_v, color=LEVEL_COLORS[lv],
+                       s=18, alpha=0.85, linewidths=0, zorder=3)
+        # overall mean marker
+        all_scores = [e["cognitive_score"] for e in dist_data[d]]
+        ax.scatter(xi, np.mean(all_scores), color="black",
+                   s=10, marker="D", zorder=5)
+
+    # x-axis labels — UAV orange, generic gray
+    short_labels = [UAV_FULL.get(d, d.replace("_", " ")) for d in all_dists_sorted]
+    ax.set_xticks(range(len(all_dists_sorted)))
+    ax.set_xticklabels(short_labels, rotation=55, ha="right", fontsize=5.5)
+    for i, (tick, d) in enumerate(zip(ax.get_xticklabels(), all_dists_sorted)):
+        tick.set_color(COLORS["uav"] if d in UAV_DISTS else "#444444")
+
+    # UAV group background shading
+    uav_idxs = [i for i, d in enumerate(all_dists_sorted) if d in UAV_DISTS]
+    for xi in uav_idxs:
+        ax.axvspan(xi - 0.45, xi + 0.45, color=COLORS["uav"], alpha=0.08, zorder=0)
+
+    ax.set_ylabel("Cognitive Score", fontsize=FONT_SIZE)
+    ax.set_xlim(-0.6, len(all_dists_sorted) - 0.4)
+    ax.axhline(np.mean([e["cognitive_score"] for e in all_data]),
+               color="#888888", lw=0.8, ls="--", label="Grand mean")
+
+    # Level legend (Embodied-IQA style)
+    handles = [mpatches.Patch(color=LEVEL_COLORS[lv], label="Level %d" % lv) for lv in LEVELS]
+    handles.append(plt.Line2D([0], [0], marker="D", color="black", ls="none",
+                               markersize=4, label="Overall mean"))
+    ax.legend(handles=handles, frameon=False, fontsize=7.5,
+              ncol=3, loc="upper left", handlelength=1.2)
+
+    plt.tight_layout(pad=0.5)
+    save_fig(fig, "fig_distribution")
 
 
-def save_fig(fig, name):
-    path = FIG_DIR / f"{name}.pdf"
-    fig.savefig(str(path))
-    print(f"  -> {path}")
-    plt.close(fig)
-
-
-# ── Data Loading ─────────────────────────────────────────────────
-def load_data():
-    data = []
-    for split in ['train', 'test']:
-        sd = DATA_DIR / split
-        if sd.exists():
-            for fpath in sorted(sd.glob('*.json')):
-                with open(fpath) as f:
-                    data.extend(json.load(f))
-    return data
-
-
-def parse_sid(sid):
-    parts = sid.split('__')
-    dist_str = parts[4] if len(parts) > 4 else ''
-    dist_name, intensity = dist_str, None
-    if '_L' in dist_str:
-        idx = dist_str.rfind('_L')
-        dist_name = dist_str[:idx]
-        try:
-            intensity = int(dist_str[idx+2:]) / 10.0
-        except ValueError:
-            intensity = None
-    return {
-        'source': parts[0] if len(parts) > 0 else '',
-        'split':  parts[1] if len(parts) > 1 else '',
-        'task':   parts[3] if len(parts) > 3 else '',
-        'distortion': dist_name,
-        'intensity': intensity,
-    }
-
-
-def cognitive(item):
-    return item['bleu'] + item['rouge_l'] + 0.1 * item['cider']
-
-
-# ── Figure 1: Distribution Box Plot ──────────────────────────────
-def fig1_distribution(data):
-    print("Figure 1: Cognitive score distribution across 36 distortion types")
-    dist_scores = defaultdict(list)
-    for item in data:
-        info = parse_sid(item['sample_id'])
-        dist_scores[info['distortion']].append(cognitive(item))
-
-    all_dists = sorted(dist_scores.keys(),
-                       key=lambda d: (0 if d in UAV_DISTS else 1, d))
-    uav_count = sum(1 for d in all_dists if d in UAV_DISTS)
-
-    labels = [UAV_DISPLAY.get(d, d.replace('_', ' ').title()) for d in all_dists]
-    box_data = [dist_scores[d] for d in all_dists]
-    colors = [C_UAV if d in UAV_DISTS else C_GENERIC for d in all_dists]
-    means = [np.mean(v) for v in box_data]
-
-    fig, ax = plt.subplots(figsize=(15, 4.5))
-    bp = ax.boxplot(box_data, patch_artist=True, showfliers=False,
-                     widths=0.7, medianprops={'color': 'black', 'linewidth': 0.8})
-    for patch, c in zip(bp['boxes'], colors):
-        patch.set_facecolor(c); patch.set_alpha(0.75)
-    ax.scatter(range(1, len(means)+1), means, marker='D', color=C_DIAMOND,
-               s=10, zorder=10)
-
-    ax.set_xticks(range(1, len(all_dists)+1))
-    ax.set_xticklabels(labels, rotation=50, ha='right', fontsize=6)
-    ax.set_ylabel('Cognitive Score (BLEU + ROUGE-L + 0.1·CIDEr)')
-    ax.set_xlim(0.3, len(all_dists) + 0.7)
-    if uav_count > 0:
-        ax.axvline(x=uav_count + 0.5, color='black', linestyle='--', linewidth=0.6, alpha=0.4)
-    from matplotlib.patches import Patch
-    ax.legend(handles=[
-        Patch(facecolor=C_UAV, alpha=0.75, label=f'UAV-Specific ({uav_count})'),
-        Patch(facecolor=C_GENERIC, alpha=0.75, label=f'Generic ({len(all_dists)-uav_count})'),
-    ], loc='upper right', frameon=True)
-    save_fig(fig, 'fig1_distribution')
-
-
-# ── Figure 2: UAV vs Generic Bar Chart ───────────────────────────
-def fig2_uav_vs_generic(data):
-    print("Figure 2: UAV vs Generic distortion comparison")
-    dist_scores = defaultdict(list)
-    for item in data:
-        info = parse_sid(item['sample_id'])
-        dist_scores[info['distortion']].append(cognitive(item))
-
-    all_dists = sorted(dist_scores.keys(),
-                       key=lambda d: (0 if d in UAV_DISTS else 1, d))
-    labels = [UAV_DISPLAY.get(d, d.replace('_', ' ').title()) for d in all_dists]
-    means = [np.mean(dist_scores[d]) for d in all_dists]
-    stds  = [np.std(dist_scores[d]) for d in all_dists]
-    colors = [C_UAV if d in UAV_DISTS else C_GENERIC for d in all_dists]
-    uav_count = sum(1 for d in all_dists if d in UAV_DISTS)
-
-    fig, ax = plt.subplots(figsize=(14, 4))
-    xs = range(len(all_dists))
-    bars = ax.bar(xs, means, color=colors, alpha=0.8, width=0.7,
-                  edgecolor='white', linewidth=0.3)
-    ax.errorbar(xs, means, yerr=stds, fmt='none', ecolor='gray',
-                capsize=2, linewidth=0.6)
-    # Mean reference line
-    grand_mean = np.mean(means)
-    ax.axhline(y=grand_mean, color='gray', linestyle='--', linewidth=0.7, alpha=0.6)
-
-    ax.set_xticks(xs)
-    ax.set_xticklabels(labels, rotation=50, ha='right', fontsize=6)
-    ax.set_ylabel('Mean Cognitive Score')
-    ax.set_xlim(-0.5, len(all_dists) - 0.5)
-    if uav_count > 0:
-        ax.axvline(x=uav_count - 0.5, color='black', linestyle='--', linewidth=0.6, alpha=0.4)
-    from matplotlib.patches import Patch
-    ax.legend(handles=[
-        Patch(facecolor=C_UAV, alpha=0.8, label='UAV-Specific'),
-        Patch(facecolor=C_GENERIC, alpha=0.8, label='Generic'),
-    ], loc='upper right', frameon=True)
-    save_fig(fig, 'fig2_uav_vs_generic')
-
-
-# ── Figure 3: 3D Score Breakdown (BLEU / ROUGE-L / CIDEr) ───────
-def fig3_three_dimensions(data):
-    print("Figure 3: 3-D score breakdown per distortion category")
-    # Aggregate by category
-    cat_bleu  = defaultdict(list)
-    cat_rouge = defaultdict(list)
-    cat_cider = defaultdict(list)
-    for item in data:
-        info = parse_sid(item['sample_id'])
-        cat = DIST_CATEGORY.get(info['distortion'], 'Other')
-        cat_bleu[cat].append(item['bleu'])
-        cat_rouge[cat].append(item['rouge_l'])
-        cat_cider[cat].append(item['cider'])
-
-    cat_order = ['UAV', 'Blur', 'Luminance', 'Chrominance', 'Noise',
-                 'Compression', 'Spatial', 'Other']
-    cats = [c for c in cat_order if c in cat_bleu]
-
-    fig, axes = plt.subplots(1, 3, figsize=(13, 4))
-    for ax, metric_name, metric_data, ylabel in [
-        (axes[0], 'BLEU (Precision)', cat_bleu, 'Mean BLEU Score'),
-        (axes[1], 'ROUGE-L (Recall)', cat_rouge, 'Mean ROUGE-L Score'),
-        (axes[2], 'CIDEr (Semantic)', cat_cider, 'Mean CIDEr Score'),
-    ]:
-        means = [np.mean(metric_data[c]) for c in cats]
-        stds  = [np.std(metric_data[c]) for c in cats]
-        bar_colors = [CATEGORY_COLORS.get(c, '#888888') for c in cats]
-        bars = ax.bar(range(len(cats)), means, color=bar_colors, alpha=0.85,
-                      width=0.65, edgecolor='white', linewidth=0.3)
-        ax.errorbar(range(len(cats)), means, yerr=stds, fmt='none',
-                     ecolor='gray', capsize=3, linewidth=0.6)
-        ax.set_xticks(range(len(cats)))
-        ax.set_xticklabels(cats, rotation=30, ha='right', fontsize=7)
-        ax.set_ylabel(ylabel)
-        ax.set_title(metric_name, fontsize=FONT_SIZE, fontweight='bold')
-
-    plt.tight_layout()
-    save_fig(fig, 'fig3_three_dimensions')
-
-
-# ── Figure 4: JND Sensitivity Classification ─────────────────────
-def fig4_jnd_sensitivity(data):
-    print("Figure 4: JND-based distortion sensitivity")
-    # Group cognitive scores by distortion
-    dist_scores = defaultdict(list)
-    for item in data:
-        info = parse_sid(item['sample_id'])
-        dist_scores[info['distortion']].append(cognitive(item))
-
-    all_dists = sorted(dist_scores.keys(),
-                       key=lambda d: (0 if d in UAV_DISTS else 1, d))
-    n = len(all_dists)
-
-    # For each distortion, compute: mean cognitive score and assign JND tier
-    # Sort by mean score ascending (lower = more severe)
-    dist_mean = {d: np.mean(dist_scores[d]) for d in all_dists}
-    sorted_by_severity = sorted(all_dists, key=lambda d: dist_mean[d])
-
-    # JND tiers: bottom 1/3 = Severe, middle 1/3 = Medium, top 1/3 = Mild
-    n_each = n // 3
-    jnd = {}
-    for i, d in enumerate(sorted_by_severity):
-        if i < n_each:
-            jnd[d] = 'Severe'
-        elif i < 2 * n_each:
-            jnd[d] = 'Medium'
-        else:
-            jnd[d] = 'Mild'
-
-    jnd_colors = {'Mild': '#4CAF50', 'Medium': '#FFC107', 'Severe': '#F44336'}
-
-    # Build heatmap data: distortion × (BLEU contribution, ROUGE-L contribution, CIDEr contribution, Mean Cog)
-    metrics = ['BLEU', 'ROUGE-L', 'CIDEr×0.1', 'Cognitive']
-    heatmap = np.zeros((n, 4))
-    dist_labels = []
-    for i, d in enumerate(all_dists):
-        scores = dist_scores[d]
-        heatmap[i, 0] = np.mean([item['bleu'] for item in data
-                                  if parse_sid(item['sample_id'])['distortion'] == d])
-        heatmap[i, 1] = np.mean([item['rouge_l'] for item in data
-                                  if parse_sid(item['sample_id'])['distortion'] == d])
-        heatmap[i, 2] = 0.1 * np.mean([item['cider'] for item in data
-                                        if parse_sid(item['sample_id'])['distortion'] == d])
-        heatmap[i, 3] = dist_mean[d]
-        dist_labels.append(UAV_DISPLAY.get(d, d.replace('_', ' ').title()))
-
-    # Normalize each column to [0,1]
-    heatmap_norm = (heatmap - heatmap.min(axis=0)) / (heatmap.max(axis=0) - heatmap.min(axis=0) + 1e-10)
-
-    # Sort by JND tier then by cognitive score
-    jnd_order = {'Severe': 0, 'Medium': 1, 'Mild': 2}
-    sort_idx = sorted(range(n), key=lambda i: (jnd_order[jnd[all_dists[i]]], dist_mean[all_dists[i]]))
-    heatmap_sorted = heatmap_norm[sort_idx]
-    labels_sorted = [dist_labels[i] for i in sort_idx]
-    jnd_sorted = [jnd[all_dists[i]] for i in sort_idx]
-
-    fig, ax = plt.subplots(figsize=(6, 12))
-    im = ax.imshow(heatmap_sorted, aspect='auto', cmap='YlOrRd')
-
-    # JND color bar on left
-    for i, tier in enumerate(jnd_sorted):
-        ax.axhline(y=i, color=jnd_colors[tier], linewidth=3, alpha=0.6)
-        ax.text(-0.5, i, tier[0], ha='center', va='center', fontsize=7,
-                fontweight='bold', color=jnd_colors[tier])
-
-    ax.set_yticks(range(n))
-    ax.set_yticklabels(labels_sorted, fontsize=6.5)
-    ax.set_xticks(range(4))
-    ax.set_xticklabels(metrics, rotation=30, ha='right')
-
-    # Add JND legend
-    from matplotlib.patches import Patch
-    ax.legend(handles=[
-        Patch(facecolor=jnd_colors['Mild'], alpha=0.6, label='Mild (top 1/3)'),
-        Patch(facecolor=jnd_colors['Medium'], alpha=0.6, label='Medium (mid 1/3)'),
-        Patch(facecolor=jnd_colors['Severe'], alpha=0.6, label='Severe (bottom 1/3)'),
-    ], loc='lower left', frameon=True, fontsize=7,
-              bbox_to_anchor=(0, -0.02))
-
-    plt.tight_layout()
-    save_fig(fig, 'fig4_jnd_sensitivity')
-
-
-# ── Figure 5: Per-Intensity Degradation ──────────────────────────
-def fig5_intensity_curves(data):
-    print("Figure 5: Per-intensity degradation curves")
-    # Per distortion × intensity: mean cognitive score
-    di_scores = defaultdict(lambda: defaultdict(list))
-    for item in data:
-        info = parse_sid(item['sample_id'])
-        if info['intensity'] is not None:
-            di_scores[info['distortion']][info['intensity']].append(cognitive(item))
-
-    intensities = sorted(set(info['intensity'] for item in data
-                             if parse_sid(item['sample_id'])['intensity'] is not None))
-
-    # Compute means per distortion × intensity
-    dist_intensity_mean = {}
-    for d in di_scores:
-        dist_intensity_mean[d] = {}
-        for lev in intensities:
-            if di_scores[d].get(lev):
-                dist_intensity_mean[d][lev] = np.mean(di_scores[d][lev])
-
-    # UAV panel (6 subplots)
-    fig, axes = plt.subplots(2, 3, figsize=(10, 6))
+# ─────────────────────────────────────────────────────────────────
+# Fig 2  fig_intensity_curves
+# Embodied-IQA Fig 6 style:
+#   2×3 grid, one panel per UAV distortion
+#   x = intensity level, y = mean cognitive score
+#   single UAV-orange line + ±SEM shading (not error bars)
+#   shared y-axis range per row for easy comparison
+# ─────────────────────────────────────────────────────────────────
+def fig_intensity_curves():
+    fig, axes = plt.subplots(2, 3, figsize=(9, 4.2), sharey="row")
     axes = axes.flatten()
+
     for idx, d in enumerate(UAV_DISTS):
         ax = axes[idx]
-        if d in dist_intensity_mean:
-            levs = sorted(dist_intensity_mean[d].keys())
-            vals = [dist_intensity_mean[d][l] for l in levs]
-            ax.plot(levs, vals, 'o-', color=C_UAV, linewidth=1.5, markersize=5)
-            # Fill between
-            ax.fill_between(levs, [v - 0.02 for v in vals], [v + 0.02 for v in vals],
-                            alpha=0.15, color=C_UAV)
-        ax.set_title(UAV_DISPLAY.get(d, d), fontsize=8, fontweight='bold')
-        ax.set_xlabel('Distortion Intensity')
-        ax.set_ylabel('Mean Cognitive Score')
-        ax.set_ylim(bottom=0)
-        ax.grid(True, alpha=0.2, linewidth=0.3)
+        means = np.array([np.mean(level_data[d][lv]) for lv in LEVELS])
+        sems  = np.array([np.std(level_data[d][lv]) / np.sqrt(len(level_data[d][lv]))
+                          for lv in LEVELS])
+        xs = np.array(LEVELS)
 
-    plt.tight_layout()
-    save_fig(fig, 'fig5_intensity_curves')
+        ax.fill_between(xs, means - sems, means + sems,
+                        color=COLORS["uav"], alpha=0.20)
+        ax.plot(xs, means, "-o", color=COLORS["uav"],
+                lw=1.8, markersize=5, markerfacecolor="white",
+                markeredgewidth=1.5, zorder=4)
 
+        # Level-colored dots on top
+        for lv, m in zip(LEVELS, means):
+            ax.plot(lv, m, "o", color=LEVEL_COLORS[lv], markersize=5, zorder=5)
 
-# ── Figure 6: Source Comparison (Sim vs Real) ────────────────────
-def fig6_source_comparison(data):
-    print("Figure 6: Source comparison (Sim vs Real)")
-    source_scores = defaultdict(list)
-    source_dists = defaultdict(lambda: defaultdict(list))
-    for item in data:
-        info = parse_sid(item['sample_id'])
-        src = info['source']
-        source_scores[src].append(cognitive(item))
-        source_dists[src][info['distortion']].append(cognitive(item))
+        ax.set_title(UAV_FULL[d], fontsize=FONT_SIZE - 1, pad=3, color=COLORS["uav"])
+        ax.set_xticks(LEVELS)
+        ax.set_xticklabels(["L%d" % lv for lv in LEVELS], fontsize=7)
+        ax.tick_params(axis="y", labelsize=7)
+        if idx in (0, 3):
+            ax.set_ylabel("Cognitive Score", fontsize=8)
+        if idx >= 3:
+            ax.set_xlabel("Distortion Level", fontsize=8)
 
-    # Panel A: Overall score distribution by source
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.5))
-
-    sources = sorted(source_scores.keys())
-    src_colors = {'Sim3': C_SIM, 'Sim5': C_GENERIC, 'Sim6': C_UAV, 'Real2': C_REAL}
-    src_labels = {'Sim3': 'Sim (CARLA-Air)', 'Sim5': 'Sim (AirCop-Bench)',
-                  'Sim6': 'Sim (Motion-Scape)', 'Real2': 'Real (MDMT)'}
-
-    # Violin plot
-    violin_data = [source_scores[s] for s in sources]
-    vp = ax1.violinplot(violin_data, showmeans=True, showmedians=False)
-    for i, body in enumerate(vp['bodies']):
-        body.set_facecolor(src_colors.get(sources[i], '#888888'))
-        body.set_alpha(0.6)
-    ax1.set_xticks(range(1, len(sources)+1))
-    ax1.set_xticklabels([src_labels.get(s, s) for s in sources], rotation=20, ha='right', fontsize=7)
-    ax1.set_ylabel('Cognitive Score')
-    ax1.set_title('Score Distribution by Source', fontsize=FONT_SIZE, fontweight='bold')
-
-    # Panel B: UAV distortion scores per source
-    uav_means = {}
-    for d in UAV_DISTS:
-        uav_means[d] = {}
-        for s in sources:
-            vals = source_dists[s].get(d, [])
-            uav_means[d][s] = np.mean(vals) if vals else 0
-
-    x = np.arange(len(sources))
-    width = 0.12
-    for i, d in enumerate(UAV_DISTS):
-        vals = [uav_means[d].get(s, 0) for s in sources]
-        bars = ax2.bar(x + i*width, vals, width, label=UAV_DISPLAY.get(d, d),
-                       color=CB6[i], alpha=0.8, edgecolor='white', linewidth=0.2)
-    ax2.set_xticks(x + width * 2.5)
-    ax2.set_xticklabels([src_labels.get(s, s) for s in sources], rotation=20, ha='right', fontsize=7)
-    ax2.set_ylabel('Mean Cognitive Score')
-    ax2.set_title('UAV Distortion Scores by Source', fontsize=FONT_SIZE, fontweight='bold')
-    ax2.legend(fontsize=6, frameon=True, ncol=2)
-
-    plt.tight_layout()
-    save_fig(fig, 'fig6_source_comparison')
+    plt.tight_layout(pad=0.8)
+    save_fig(fig, "fig_intensity_curves")
 
 
-# ── Summary Statistics & Tables ──────────────────────────────────
-def generate_tables(data):
-    print("Generating summary statistics...")
-    dist_scores = defaultdict(list)
-    dist_bleu = defaultdict(list)
-    dist_rouge = defaultdict(list)
-    dist_cider = defaultdict(list)
-    for item in data:
-        info = parse_sid(item['sample_id'])
-        d = info['distortion']
-        cs = cognitive(item)
-        dist_scores[d].append(cs)
-        dist_bleu[d].append(item['bleu'])
-        dist_rouge[d].append(item['rouge_l'])
-        dist_cider[d].append(item['cider'])
+# ─────────────────────────────────────────────────────────────────
+# Fig 3  fig_intensity_fingerprint
+# Embodied-IQA Fig 4 style:
+#   rows = 36 distortions (sorted by mean), cols = 4 VLMs
+#   cell = Spearman ρ(score, intensity level)
+#   diverging RdYlGn; average ρ per VLM shown below x-axis
+#   UAV rows: orange left-margin strip
+# ─────────────────────────────────────────────────────────────────
+def fig_intensity_fingerprint():
+    n_d = len(all_dists_sorted)
+    rho_mat = np.zeros((n_d, len(VLM_ORDER)))
+    for di, d in enumerate(all_dists_sorted):
+        entries = dist_data[d]
+        lvs = [e["distortion_info"]["level"] for e in entries]
+        for vi, v in enumerate(VLM_ORDER):
+            sc = [e["vlm_scores"].get(v, float("nan")) for e in entries]
+            r, _ = spearmanr(lvs, sc)
+            rho_mat[di, vi] = r
 
-    all_dists = sorted(dist_scores.keys(), key=lambda d: np.mean(dist_scores[d]))
-    print(f"\n{'Distortion':<35s} {'Category':<15s} {'Mean Cog':>8s} {'Std':>8s} {'BLEU':>8s} {'ROUGE':>8s} {'CIDEr':>8s}")
-    print("-" * 105)
-    for d in all_dists:
-        cat = DIST_CATEGORY.get(d, 'Other')
-        mc = np.mean(dist_scores[d])
-        sc = np.std(dist_scores[d])
-        mb = np.mean(dist_bleu[d])
-        mr = np.mean(dist_rouge[d])
-        ml = np.mean(dist_cider[d])
-        marker = " <-- UAV" if d in UAV_DISTS else ""
-        print(f"{d:<35s} {cat:<15s} {mc:8.4f} {sc:8.4f} {mb:8.4f} {mr:8.4f} {ml:8.4f}{marker}")
+    fig, ax = plt.subplots(figsize=(4.2, 9.5))
+    im = ax.imshow(rho_mat, vmin=-0.6, vmax=0.6,
+                   cmap="RdYlGn", aspect="auto", interpolation="nearest")
 
-    # Overall stats
-    all_cog = [cognitive(item) for item in data]
-    print(f"\nOverall: mean={np.mean(all_cog):.4f}, std={np.std(all_cog):.4f}, "
-          f"min={np.min(all_cog):.4f}, max={np.max(all_cog):.4f}")
+    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.08,
+                        orientation="horizontal")
+    cbar.set_label(r"Spearman $\rho$  (score vs. intensity level)", fontsize=8)
+    cbar.ax.tick_params(labelsize=7)
 
-    # UAV vs Generic summary
-    uav_cog = [cognitive(item) for item in data
-               if parse_sid(item['sample_id'])['distortion'] in UAV_DISTS]
-    gen_cog = [cognitive(item) for item in data
-               if parse_sid(item['sample_id'])['distortion'] not in UAV_DISTS]
-    print(f"\nUAV:     mean={np.mean(uav_cog):.4f}, std={np.std(uav_cog):.4f}, n={len(uav_cog)}")
-    print(f"Generic: mean={np.mean(gen_cog):.4f}, std={np.std(gen_cog):.4f}, n={len(gen_cog)}")
+    row_labels = [UAV_FULL.get(d, d.replace("_", " ")) for d in all_dists_sorted]
+    ax.set_yticks(range(n_d))
+    ax.set_yticklabels(row_labels, fontsize=6)
+    ax.set_xticks(range(len(VLM_ORDER)))
+    ax.set_xticklabels(VLM_SHORT, fontsize=8)
 
-    # Per-category summary
-    print("\n--- Per Category ---")
-    cat_cog = defaultdict(list)
-    for item in data:
-        cat = DIST_CATEGORY.get(parse_sid(item['sample_id'])['distortion'], 'Other')
-        cat_cog[cat].append(cognitive(item))
-    for cat in ['UAV', 'Blur', 'Luminance', 'Chrominance', 'Noise', 'Compression', 'Spatial', 'Other']:
-        if cat in cat_cog:
-            vals = cat_cog[cat]
-            print(f"  {cat:<15s}: mean={np.mean(vals):.4f}, std={np.std(vals):.4f}, n={len(vals)}")
+    # UAV left-margin strip (outside plot: use broken_barh in axes coords)
+    for di, d in enumerate(all_dists_sorted):
+        if d in UAV_DISTS:
+            ax.add_patch(plt.Rectangle((-0.5 - 0.35, di - 0.5), 0.3, 1.0,
+                                       color=COLORS["uav"], clip_on=False, zorder=6))
+
+    # Annotate cells
+    for di in range(n_d):
+        for vi in range(len(VLM_ORDER)):
+            v = rho_mat[di, vi]
+            fc = "white" if abs(v) > 0.4 else "black"
+            ax.text(vi, di, "%.2f" % v, ha="center", va="center",
+                    fontsize=5, color=fc)
+
+    # Per-VLM average rho below x-axis (Embodied-IQA style)
+    for vi, v in enumerate(VLM_ORDER):
+        avg = np.mean(rho_mat[:, vi])
+        ax.text(vi, n_d + 0.5, "avg=%.2f" % avg,
+                ha="center", va="bottom", fontsize=6.5,
+                color="#333333", transform=ax.transData)
+
+    ax.set_xlim(-0.5 - 0.5, len(VLM_ORDER) - 0.5)
+    plt.tight_layout(pad=0.5)
+    save_fig(fig, "fig_intensity_fingerprint")
 
 
-# ── Main ─────────────────────────────────────────────────────────
-if __name__ == '__main__':
-    print("=" * 60)
-    print("UAV-Embodied-IQA: Dataset Analysis Figures")
-    print("=" * 60)
+# ─────────────────────────────────────────────────────────────────
+# Fig 4  fig_task_distortion
+# AirCopBench Fig 5 style:
+#   rows = 14 question types, grouped into 4 task dimensions
+#   cols = 6 UAV distortions
+#   cell = raw mean cognitive score (not residual — reviewer noted residual is
+#          confusing to readers; raw mean with row/col annotation is cleaner)
+#   group separators + group labels on left (as in AirCopBench correlation fig)
+#   darker = more severe cognitive degradation (reversed colormap)
+# ─────────────────────────────────────────────────────────────────
+def fig_task_distortion():
+    # Build ordered row list matching QTYPE_ORDER (drop missing)
+    present_qtypes = set(e["question_type"] for e in all_data)
+    ordered_qt = [q for q in QTYPE_ORDER if q in present_qtypes]
+    n_q = len(ordered_qt)
+    n_u = len(UAV_DISTS)
 
-    data = load_data()
-    print(f"Loaded {len(data)} annotation entries")
+    cell_scores = defaultdict(list)
+    for e in all_data:
+        if e["distortion_info"]["type"] in UAV_DISTS:
+            cell_scores[(e["question_type"], e["distortion_info"]["type"])].append(
+                e["cognitive_score"])
 
-    generate_tables(data)
-    fig1_distribution(data)
-    fig2_uav_vs_generic(data)
-    fig3_three_dimensions(data)
-    fig4_jnd_sensitivity(data)
-    fig5_intensity_curves(data)
-    fig6_source_comparison(data)
+    mat = np.full((n_q, n_u), np.nan)
+    for qi, qt in enumerate(ordered_qt):
+        for di, d in enumerate(UAV_DISTS):
+            vals = cell_scores.get((qt, d), [])
+            if vals:
+                mat[qi, di] = np.mean(vals)
 
-    print("\nDone! All figures saved to figures/")
+    fig, ax = plt.subplots(figsize=(5.8, 6.2))
+    # reversed: lower score = darker red
+    im = ax.imshow(mat, vmin=0.5, vmax=1.1, cmap="RdYlGn", aspect="auto")
+
+    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label("Mean Cognitive Score", fontsize=8)
+    cbar.ax.tick_params(labelsize=7)
+
+    ax.set_xticks(range(n_u))
+    ax.set_xticklabels([UAV_FULL[d] for d in UAV_DISTS],
+                       rotation=35, ha="right", fontsize=8)
+    ax.set_yticks(range(n_q))
+    ax.set_yticklabels(ordered_qt, fontsize=7)
+
+    # Annotate cells
+    for qi in range(n_q):
+        for di in range(n_u):
+            v = mat[qi, di]
+            if not np.isnan(v):
+                ax.text(di, qi, "%.2f" % v, ha="center", va="center",
+                        fontsize=6,
+                        color="white" if v < 0.65 or v > 1.0 else "black")
+
+    # Task-group separators and left labels (AirCopBench style)
+    row_cursor = 0
+    grp_colors = ["#E69F00", "#56B4E9", "#009E73", "#CC79A7"]
+    for gi, (grp_name, members) in enumerate(TASK_GROUPS.items()):
+        n_m = len([m for m in members if m in present_qtypes])
+        if n_m == 0:
+            continue
+        # horizontal separator
+        sep_y = row_cursor - 0.5
+        if gi > 0:
+            ax.axhline(sep_y, color="#333333", lw=1.0, ls="--", alpha=0.6)
+        # group label on left side
+        mid_y = row_cursor + n_m / 2.0 - 0.5
+        ax.text(-0.6, mid_y, grp_name, ha="right", va="center",
+                fontsize=7, color=grp_colors[gi],
+                fontweight="bold", transform=ax.transData)
+        # colored left bar
+        ax.add_patch(plt.Rectangle((-0.5 - 0.25, row_cursor - 0.5),
+                                   0.18, n_m, color=grp_colors[gi],
+                                   clip_on=False, zorder=6))
+        row_cursor += n_m
+
+    ax.set_xlim(-0.5 - 0.5, n_u - 0.5)
+    plt.tight_layout(pad=0.5)
+    save_fig(fig, "fig_task_distortion")
+
+
+# ─────────────────────────────────────────────────────────────────
+# Fig 5  fig_vlm_corr
+# Embodied-IQA Fig 4 style:
+#   4x4 SRCC matrix of VLM annotators
+#   diagonal boxes outlined; per-column avg below x-axis
+# ─────────────────────────────────────────────────────────────────
+def fig_vlm_corr():
+    n = len(VLM_ORDER)
+    scores = {v: [] for v in VLM_ORDER}
+    for e in all_data:
+        for v in VLM_ORDER:
+            scores[v].append(e["vlm_scores"].get(v, float("nan")))
+
+    srcc_mat = np.zeros((n, n))
+    for i, v1 in enumerate(VLM_ORDER):
+        for j, v2 in enumerate(VLM_ORDER):
+            r, _ = spearmanr(scores[v1], scores[v2])
+            srcc_mat[i, j] = r
+
+    fig, ax = plt.subplots(figsize=(3.5, 3.0))
+    im = ax.imshow(srcc_mat, vmin=0.0, vmax=1.0, cmap="Blues", aspect="auto")
+
+    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label("SRCC", fontsize=8)
+    cbar.ax.tick_params(labelsize=7)
+
+    ax.set_xticks(range(n))
+    ax.set_yticks(range(n))
+    ax.set_xticklabels(VLM_ORDER, rotation=40, ha="right", fontsize=7)
+    ax.set_yticklabels(VLM_ORDER, fontsize=7)
+
+    for i in range(n):
+        for j in range(n):
+            val = srcc_mat[i, j]
+            color = "white" if val > 0.6 else "black"
+            weight = "bold" if i == j else "normal"
+            ax.text(j, i, "%.2f" % val, ha="center", va="center",
+                    fontsize=7, color=color, fontweight=weight)
+
+    # diagonal outline
+    for k in range(n):
+        ax.add_patch(plt.Rectangle((k - 0.5, k - 0.5), 1, 1,
+                                   fill=False, edgecolor="#333333", lw=1.2))
+
+    off_diag = srcc_mat[~np.eye(n, dtype=bool)]
+    ax.set_xlabel("Average inter-model SRCC = %.3f" % off_diag.mean(), fontsize=8)
+
+    plt.tight_layout(pad=0.5)
+    save_fig(fig, "fig_vlm_corr")
+
+
+# ─────────────────────────────────────────────────────────────────
+# Fig 6  fig_dataset_stats
+# AirCopBench Fig 3 style:
+#   3-panel: (a) score by distortion category (bar, mean±std)
+#            (b) sample count by question type (horizontal bar)
+#            (c) sample count by dataset source (vertical bar)
+# ─────────────────────────────────────────────────────────────────
+def fig_dataset_stats():
+    CAT_ORDER  = ["UAV", "Blur", "Noise", "Luminance", "Chrominance",
+                  "Compression", "Spatial", "Other"]
+    CAT_COLORS = {
+        "UAV": COLORS["uav"], "Blur": CB_PALETTE[1], "Noise": CB_PALETTE[4],
+        "Luminance": CB_PALETTE[5], "Chrominance": CB_PALETTE[2],
+        "Compression": CB_PALETTE[3], "Spatial": CB_PALETTE[6], "Other": "#AAAAAA",
+    }
+    RAW_TO_CAT = {
+        "uav": "UAV", "blur": "Blur", "noise": "Noise",
+        "brightness": "Luminance", "chromatic": "Chrominance",
+        "compression": "Compression", "spatial": "Spatial",
+        "transmission": "Other", "other": "Other",
+    }
+
+    cat_scores = defaultdict(list)
+    for e in all_data:
+        cat = RAW_TO_CAT.get(e["distortion_info"]["category"], "Other")
+        cat_scores[cat].append(e["cognitive_score"])
+
+    qtype_counts = Counter(e["question_type"] for e in all_data)
+    qt_sorted = sorted(qtype_counts.items(), key=lambda x: -x[1])
+    qt_labels = [k for k, _ in qt_sorted]
+    qt_vals   = [v for _, v in qt_sorted]
+
+    ds_counts = Counter(e["dataset"] for e in all_data)
+    ds_order  = sorted(ds_counts.keys())
+
+    fig, axes = plt.subplots(1, 3, figsize=(11, 3.2))
+
+    # (a) mean ± std bar — cleaner than box for category-level overview
+    ax = axes[0]
+    present = [c for c in CAT_ORDER if c in cat_scores]
+    means = [np.mean(cat_scores[c]) for c in present]
+    stds  = [np.std(cat_scores[c])  for c in present]
+    colors_a = [CAT_COLORS[c] for c in present]
+    bars = ax.bar(range(len(present)), means, color=colors_a, alpha=0.82, width=0.6)
+    ax.errorbar(range(len(present)), means, yerr=stds,
+                fmt="none", color="#333333", capsize=3, lw=0.9)
+    ax.set_xticks(range(len(present)))
+    ax.set_xticklabels(present, rotation=35, ha="right", fontsize=7)
+    ax.set_ylabel("Cognitive Score", fontsize=8)
+    ax.set_xlabel("(a) Score by Distortion Category", fontsize=8)
+    grand = np.mean([e["cognitive_score"] for e in all_data])
+    ax.axhline(grand, color="gray", ls="--", lw=0.8, alpha=0.7)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    # (b) horizontal bar — question type
+    ax = axes[1]
+    ypos = range(len(qt_labels))
+    ax.barh(ypos, qt_vals, color=CB_PALETTE[1], alpha=0.82)
+    ax.set_yticks(ypos)
+    ax.set_yticklabels(qt_labels, fontsize=7)
+    ax.set_xlabel("Number of Samples", fontsize=8)
+    ax.set_ylabel("(b) Question Type Distribution", fontsize=8)
+    ax.invert_yaxis()
+    for i, val in enumerate(qt_vals):
+        ax.text(val + 30, i, str(val), va="center", fontsize=6)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    # (c) vertical bar — dataset source
+    ax = axes[2]
+    ds_vals   = [ds_counts[d] for d in ds_order]
+    colors_ds = [CB_PALETTE[i % len(CB_PALETTE)] for i in range(len(ds_order))]
+    bars = ax.bar(ds_order, ds_vals, color=colors_ds, alpha=0.85, width=0.5)
+    ax.set_xlabel("(c) Dataset Source", fontsize=8)
+    ax.set_ylabel("Number of Samples", fontsize=8)
+    for bar, val in zip(bars, ds_vals):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 40,
+                str(val), ha="center", va="bottom", fontsize=7)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    plt.tight_layout(pad=1.0)
+    save_fig(fig, "fig_dataset_stats")
+if __name__ == "__main__":
+    fig_distribution()
+    fig_intensity_curves()
+    fig_intensity_fingerprint()
+    fig_task_distortion()
+    fig_vlm_corr()
+    fig_dataset_stats()
+    print("\nAll figures saved to figures/")

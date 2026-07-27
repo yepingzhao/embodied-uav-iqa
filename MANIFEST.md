@@ -4,7 +4,7 @@ Generated outputs tracked for the `insleep` paper pipeline.
 
 | File | Created | Size | Stage |
 |------|---------|------|-------|
-| [PAPER_PLAN.md](PAPER_PLAN.md) | 2026-07-13T13:37:23Z | 34,472 bytes | `/paper-plan` — section-by-section outline |
+| [PAPER_PLAN.md](PAPER_PLAN.md) | 2026-07-22T (updated) | ~37 KB | `/paper-plan` — section-by-section outline; updated with GPT-5.6-Sol external review (P0 blockers, structural revisions, page reallocation) |
 
 | [figures/fig1_distribution.pdf](figures/fig1_distribution.pdf) | 2026-07-14T00:17:00Z | 27 KB | `/paper-figure` — cognitive score distribution box plots (36 distortions) |
 | [figures/fig2_uav_vs_generic.pdf](figures/fig2_uav_vs_generic.pdf) | 2026-07-14T00:17:00Z | 24 KB | `/paper-figure` — UAV vs generic distortion comparison bar chart |
