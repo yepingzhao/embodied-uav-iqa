@@ -3,12 +3,14 @@
 **Title**: UAV-Embodied-IQA: A Benchmark for Visual Quality Assessment in Aerial Embodied Intelligence
 **Working short title**: UAV-Embodied-IQA
 **One-sentence contribution**: We introduce UAV-Embodied-IQA, the first benchmark and database for visual quality assessment in aerial embodied intelligence, featuring 6 physically-motivated UAV-specific distortion models, 36-distortion database with VLM/VLA/Execution annotations, and evidence that 15+ existing IQA methods fundamentally fail to predict UAV task performance (SRCC < 0.5), while our database enables training effective UAV-IQA models (SRCC > 0.65).
-**Venue**: ICLR
+**Venue**: NeurIPS Datasets & Benchmarks Track (primary); CVPR (backup)
 **Type**: Benchmark / Empirical
 **Date**: 2026-07-13
 **Page budget**: 9 pages (main body to Conclusion end, excluding references & appendix)
 **Section count**: 7
 **Status**: IN PROGRESS — experiments deployed, results pending
+
+> **Competitive landscape update (2026-07-27)**: Embodied-IQA (arXiv 2505.16815, SJTU/Shanghai AI Lab) accepted to **ICLR 2026** — this is the direct predecessor. Venue target adjusted to NeurIPS D&B (primary) / CVPR (backup). Differentiation strategy: UAV platform (6DoF outdoor) vs. ground manipulators (indoor); 6 physically-derived UAV distortion models vs. generic catalog; 4 aerial task categories; ~108K vs. 36.9K annotated pairs. See §2 Related Work for full positioning.
 
 ---
 
@@ -80,18 +82,18 @@
 - **Results preview**: All 15+ benchmarked IQA methods — including state-of-the-art NR-IQA (MANIQA, Q-Align, CLIP-IQA), FR-IQA (LPIPS, DISTS, TOPIQ), and frequency-aware methods — achieve SRCC < 0.5 on UAV data. UAV-IQANet trained on our database exceeds SRCC 0.65, with the frequency-aware branch contributing >0.05 SRCC improvement and task conditioning contributing >0.03 SRCC.
 - **Hero figure**: Figure 1 should show a 3-panel overview: (Left) 4 UAV task exemplars (inspection, tracking, delivery, SAR) with clean vs. UAV-distorted image pairs, (Center) degradation impact — bar chart of ΔVLA success rate for 6 UAV distortions vs. 6 representative generic distortions, color-coded by task, (Right) benchmark summary — scatter plot of model size vs. SRCC for all methods, with UAV-IQANet highlighted at the Pareto frontier (highest SRCC, smallest model). Caption: "UAV-Embodied-IQA overview. Left: UAV tasks suffer from 6 UAV-specific visual degradations not captured by conventional IQA. Center: UAV distortions cause task-dependent VLA performance degradation that differs from generic distortions. Right: Existing IQA methods fail on UAV data (SRCC < 0.5); UAV-IQANet trained on our database achieves SRCC > 0.65 at <5.5M parameters."
 - **Estimated length**: 1.5 pages
-- **Key citations**: AirCopBench (2511.11025), Embodied-IQA (2505.16815), EPD/MA-EIQA (2412.18774), BRISQUE (2012), NIQE (2013), MANIQA (2022), Q-Align (2024), CLIP-IQA (2023)
+- **Key citations**: AirCopBench (2511.11025), Embodied-IQA (2505.16815, **ICLR 2026** — direct predecessor), EPD/MA-EIQA (2412.18774), BRISQUE (2012), NIQE (2013), MANIQA (2022), Q-Align (2024), CLIP-IQA (2023)
 - **Front-loading check**: A skim reader who reads only the title, abstract, Figure 1, and Introduction will know: (1) UAV-specific visual quality assessment is an unsolved problem, (2) we built the first benchmark for it, (3) existing methods fail badly, (4) our database enables effective models.
 
 ### §2 Related Work (1 page)
 
 - **Subtopics**:
   1. **Image Quality Assessment (IQA)** — NR-IQA methods (BRISQUE, NIQE, MANIQA, Q-Align, CLIP-IQA), FR-IQA methods (PSNR, SSIM, LPIPS, DISTS, AHIQ, TOPIQ). Position: these are designed for human perceptual quality; we show they fail for UAV task-oriented quality.
-  2. **Embodied IQA and Task-Oriented Quality** — Embodied-IQA (2505.16815) VLM→VLA→Execution methodology, EPD/MA-EIQA (2412.18774) Moravec paradox demonstration. Position: we extend the annotation methodology to UAV scenarios with 6 novel distortion types, and establish the Moravec paradox for aerial embodied intelligence.
+  2. **Embodied IQA and Task-Oriented Quality** — Embodied-IQA (2505.16815, **ICLR 2026**) establishes the VLM→VLA→Execution annotation pipeline and demonstrates that existing IQA methods fail to predict robot task performance on ground manipulators (SRCC < 0.65). EPD/MA-EIQA (2412.18774) quantifies the Moravec paradox for indoor fixed-base robots. Position: Embodied-IQA is our **direct predecessor** — we adopt its annotation methodology but differ fundamentally on three axes: (1) platform (fixed-base indoor manipulators vs. 6DoF outdoor UAV), (2) distortion types (generic catalog vs. 6 physically-derived UAV-specific models), (3) task diversity (single manipulation task type vs. 4 aerial task categories). The Moravec paradox we establish for aerial embodied intelligence is more severe and mechanistically distinct from the ground-robot case.
   3. **Frequency-Aware IQA and Distortion Modeling** — BRISQUE/DCT, DeepFIQA, log-polar frequency representations. Position: existing frequency IQA methods use spatially local transforms unsuitable for 6DoF UAV motion; our frequency-aware branch uses patch-FFT with log-polar transform for rotation/scale invariance.
   4. **UAV Perception and Benchmarking** — AirCopBench (2511.11025) multi-UAV task protocols, CARLA-Air simulation, UAV-specific degradation studies. Position: AirCopBench provides task protocols but lacks distortion-level annotations; we add continuous quality scores and degradation modeling.
   5. **Lightweight and Task-Conditioned Architectures** — MobileNetV4, MobileViT, EfficientViT, FiLM conditioning, CBAM attention. Position: we compose these into a strong lightweight baseline without claiming architectural novelty.
-- **Positioning**: UAV-Embodied-IQA bridges 4 previously separate lines: AirCopBench task protocols + Embodied-IQA annotation methodology + EPD's Moravec quantification for UAV + 6 novel UAV-specific frequency-domain distortion models. No existing resource combines (a) UAV-specific distortions with physical models, (b) task-conditioned multi-layer annotations, and (c) comprehensive IQA benchmarking.
+- **Positioning**: UAV-Embodied-IQA bridges 4 previously separate lines: AirCopBench task protocols + Embodied-IQA annotation methodology (ICLR 2026) + EPD's Moravec quantification extended to UAV + 6 novel UAV-specific frequency-domain distortion models. The key distinction from Embodied-IQA (the closest prior work) is the shift from fixed-base indoor manipulation to 6DoF outdoor aerial embodied intelligence, which introduces physically-distinct distortions (propeller vibration, atmospheric scattering, 6DoF motion blur) that require new distortion models, a larger-scale database (~108K vs. 36.9K annotated pairs), and task-conditioned evaluation across 4 diverse aerial task categories. No existing resource combines (a) UAV-specific distortions with physical models, (b) task-conditioned multi-layer annotations, and (c) comprehensive IQA benchmarking.
 - **Organization rule**: Organized by research community / method family, not paper-by-paper. Each paragraph synthesizes 3-5 papers, states what they achieved, and identifies the gap our work fills.
 - **Minimum length**: 1 full page (4-5 paragraphs with substantive synthesis)
 
