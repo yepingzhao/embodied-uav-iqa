@@ -478,7 +478,29 @@ class VLMScorer:
                 def _patched_clip_from_pretrained(cls, *args, **kwargs):
                     kwargs.setdefault("torch_dtype", torch.float16)
                     kwargs.setdefault("ignore_mismatched_sizes", True)
-                    return _orig_clip_from_pretrained.__func__(cls, *args, **kwargs)
+                    model = _orig_clip_from_pretrained.__func__(cls, *args, **kwargs)
+                    # Fix corrupted position_ids on CLIP vision embeddings.
+                    # The position_ids buffer can contain stale/garbage data
+                    # because internlm-xcomposer2d5-clip was created with
+                    # transformers 4.33.1 (persistent buffer defaults differ
+                    # across versions). Re-compute from config to guarantee
+                    # correct indices for the position_embedding lookup.
+                    try:
+                        emb = (
+                            model.embeddings
+                            if hasattr(model, "embeddings")
+                            else model.vision_model.embeddings
+                        )
+                        n_patches = (emb.image_size // emb.patch_size) ** 2
+                        device = getattr(emb.position_ids, "device", torch.device("cpu"))
+                        emb.register_buffer(
+                            "position_ids",
+                            torch.arange(n_patches + 1, device=device).unsqueeze(0),
+                            persistent=False,
+                        )
+                    except Exception:
+                        pass
+                    return model
 
                 _CLIPVisionModel.from_pretrained = _patched_clip_from_pretrained
 
@@ -505,6 +527,38 @@ class VLMScorer:
                         **load_kwargs,
                     ).to(self.device)
                     self._model.eval()
+                    # Fix CLIP vision position_ids corrupted during
+                    # loading/.to(device).  The buffer contains garbage
+                    # (non-deterministic uninitialized memory) that
+                    # causes CUDA device-side asserts in the position
+                    # embedding lookup (Bug #4 in internlm_xc series).
+                    for _m in self._model.modules():
+                        if isinstance(_m, _CLIPVisionModel):
+                            _emb = (
+                                _m.embeddings
+                                if hasattr(_m, "embeddings")
+                                else _m.vision_model.embeddings
+                            )
+                            _n = (_emb.image_size // _emb.patch_size) ** 2
+                            _emb.register_buffer(
+                                "position_ids",
+                                torch.arange(
+                                    _n + 1,
+                                    device=_emb.position_ids.device,
+                                ).unsqueeze(0),
+                                persistent=False,
+                            )
+                    # Move max_length from config to generation_config.
+                    # config.max_length is needed by the model __init__
+                    # but transformers 5.x raises ValueError when the
+                    # config has non-standard attributes at generation
+                    # time.  Transfer it to the generation_config where
+                    # it belongs in the 5.x API.
+                    if hasattr(self._model.config, "max_length"):
+                        _ml = self._model.config.max_length
+                        if not hasattr(self._model.generation_config, "max_length") or self._model.generation_config.max_length is None:
+                            self._model.generation_config.max_length = _ml
+                        del self._model.config.max_length
                 finally:
                     _urllib_request.urlopen = _orig_urlopen
                     _TransformerPTM.get_init_context = _orig_get_init_ctx

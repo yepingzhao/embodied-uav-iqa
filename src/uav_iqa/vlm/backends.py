@@ -146,7 +146,7 @@ def _internlm_xc_gen(
         response_text, _history = model.chat(
             processor,
             query=query,
-            image=image_paths if len(image_paths) > 1 else image_paths[0],
+            image=image_paths,
             max_new_tokens=max_tokens,
             do_sample=False,
         )

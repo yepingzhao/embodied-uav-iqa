@@ -121,6 +121,7 @@ MODEL_REGISTRY: Dict[str, VLMConfig] = {
         chat_template="<|User|>:{prompt}<|Bot|>:",
         model_class_name="AutoModelForCausalLM",
         processor_class_name="AutoTokenizer",
+        trust_remote_code=True,
     ),
     # --- Ovis family ---
     "Ovis1.5-Gemma": VLMConfig(
