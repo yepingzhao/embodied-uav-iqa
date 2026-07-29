@@ -2,7 +2,6 @@ import hashlib
 import json
 import logging
 import subprocess
-import warnings
 from pathlib import Path
 
 import lightning as L
@@ -11,31 +10,6 @@ import yaml
 from .utils import count_parameters
 
 _log = logging.getLogger(__name__)
-
-
-class CurriculumStageCallback(L.Callback):
-    """DEPRECATED: The 3-stage curriculum system (VLM→VLA→Execution) has been
-    superseded by direct cognitive_score aggregation. This callback is kept for
-    backward compatibility but is now a no-op.
-    """
-
-    def __init__(
-        self,
-        vlm_epochs: int = 20,
-        vla_epochs: int = 20,
-        execution_epochs: int = 10,
-    ):
-        super().__init__()
-
-    def on_train_epoch_start(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
-        if not getattr(self, "_warned_deprecation", False):
-            self._warned_deprecation = True
-            warnings.warn(
-                "CurriculumStageCallback is deprecated and all parameters "
-                "(vlm_epochs, vla_epochs, execution_epochs) are ignored.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
 
 
 class SetupRunCallback(L.Callback):

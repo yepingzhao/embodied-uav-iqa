@@ -27,7 +27,6 @@ src/uav_iqa/           # Core library (~8K LOC total, 16 top-level + 15 inferenc
   callbacks.py         #   SetupRunCallback, MetricsHistoryCallback, ResultsSavingCallback
   text_metrics.py      #   BLEU, ROUGE-L, CIDEr text similarity for VLM comparison scoring
   vlm/                 #   VLM scoring subpackage: config, scorer, VQA index
-  vla_scorer.py        #   BaseScorer: VLA/execution score interface
   batch_annotator.py   #   BatchAnnotator: multi-GPU batch annotation across splits
   inference/           #   Multi-GPU offline inference framework (15 modules)
   utils.py             #   Utilities: count_parameters, logging, image I/O
@@ -42,10 +41,6 @@ scripts/               # Data pipeline + benchmark + experiment scripts
   train.py                           # Training entry point (LightningCLI wrapper, replaces main.py)
   benchmark_iqa_methods.py           # Benchmark 15+ IQA methods via pyiqa
   finetune_baselines.py              # Fine-tune FR/NR baselines on UAV data
-  fix_configs.py                     # Config migration/validation helper
-  visualize_distortions.py           # Verify all 36 distortions produce visually plausible outputs
-  overfit_sanity_check.py            # Overfit test: train on 100 random images, verify loss → 0
-  validate_synth_real_correlation.py # C2 correlation validation: synthetic vs real scores
   inference.py                       # Multi-GPU offline inference CLI (Phase 5)
 data/                  # Datasets (raw = external inputs, processed = generated artifacts)
 tests/                 # pytest tests (13+ files: test_distortion, test_lightning, test_data_synthesis, test_text_metrics, test_vlm_config, test_vlm_scorer, test_vlm_smoke, test_batch_annotator, test_annotations, test_dataset, test_model_text, test_inference_phase1-5)
@@ -151,8 +146,6 @@ python scripts/train.py fit --config configs/experiments/r021b_uav_only.yaml    
 
 # Annotation source ablation
 python scripts/train.py fit --config configs/experiments/r022_vlm_only.yaml       # VLM-only cognitive_score
-python scripts/train.py fit --config configs/experiments/r022b_vla_only.yaml      # VLA-only cognitive_score
-python scripts/train.py fit --config configs/experiments/r023_no_exec.yaml        # Execution score excluded
 
 # Per-task training
 python scripts/train.py fit --config configs/experiments/r024a_tracking.yaml
@@ -187,6 +180,5 @@ The proposal is **READY** (score 9.0/10). Read these for context:
 - `data/` and `outputs/` are gitignored — datasets must be downloaded separately (AirCopBench from arXiv 2511.11025)
 - Real-ESRGAN dependency is optional (for `LowResSuperResolution` distortion); falls back to bicubic + sharpen if not installed
 - Package is installed via `uv sync` — `scripts/train.py` and other scripts use `from uav_iqa.xxx` imports
-- openVLA and CARLA require manual installation (not on PyPI); not needed for basic training/inference
 - **W&B**: Set `WANDB_API_KEY` env var (or use `.env` file) to enable cloud experiment tracking. Without it, training falls back to local CSVLogger (metrics.csv) logging. Config at `trainer.logger` in `configs/default.yaml`.
 - **`UAVIQACLI` removed (2026-06)**: Training uses vanilla `lightning.pytorch.cli.LightningCLI` via `scripts/train.py`. Multi-seed loops via shell `for` loops. Full experiment documentation is at `docs/EXPERIMENTS.md`. CSVLogger + WandbLogger handle metrics; ModelCheckpoint saves checkpoints.

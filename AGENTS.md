@@ -20,9 +20,8 @@ black src/ tests/ scripts/
 pytest tests/test_distortion.py::test_pipeline_has_all_distortions -v
 
 # Overfit test (fast correctness check of the model)
-python scripts/overfit_sanity_check.py
 
-# Download VLM/VLA model weights for annotation scoring (optional)
+# Download VLM model weights for annotation scoring (optional)
 python scripts/download_models.py --all
 
 # Validate downloaded models load correctly
@@ -42,10 +41,9 @@ src/uav_iqa/
   metrics.py          # SRCC, PLCC, RMSE, Kendall tau
   lightning_module.py # UAVIQALightningModule (MSE + ListMLE + cross-task loss)
   data_module.py      # UAVIQADataModule (train/test dataloaders, task/distortion/LOO filters)
-  callbacks.py        # SetupRunCallback, MetricsHistoryCallback, ResultsSavingCallback; CurriculumStageCallback (deprecated/no-op)
+  callbacks.py        # SetupRunCallback, MetricsHistoryCallback, ResultsSavingCallback
   text_metrics.py     # BLEU, ROUGE-L, CIDEr text similarity for VLM comparison scoring
   vlm/                # VLM scoring subpackage: config, scorer, VQA index
-  vla_scorer.py       # BaseScorer: VLA/execution score interface
   batch_annotator.py  # BatchAnnotator: multi-GPU batch annotation across splits
   inference/          # Multi-GPU offline inference framework (15 modules)
   utils.py            # count_parameters, find_images, load_image_tensor, logging
@@ -55,9 +53,6 @@ scripts/
   download_models.py             # Download VLM model weights from HuggingFace Hub
   vlm_annotate.py                # Batch VLM annotation CLI with checkpoint/resume
   benchmark_iqa_methods.py       # Benchmark existing IQA methods (pyiqa)
-  visualize_distortions.py       # Visual sanity check of all distortions
-  overfit_sanity_check.py        # 100-image overfit test
-  validate_synth_real_correlation.py  # C2 correlation validation
   inference.py                   # Multi-GPU offline inference CLI
 
 configs/default.yaml          # Model/data/training config template
@@ -70,7 +65,6 @@ scripts/train.py              # Unified training entry point (LightningCLI)
 - **Scripts use `sys.path.insert`** to import from `src/`. Either `pip install -e .` first or run from repo root.
 - **`data/` and `outputs/` are gitignored.** Datasets must be downloaded separately (AirCopBench: arXiv 2511.11025).
 - **Real-ESRGAN is optional** (`LowResSuperResolution` distortion); falls back to bicubic+sharpen if not installed.
-- **openVLA and CARLA are manual installs** (not on PyPI); not needed for basic training/inference.
 - **VLM extras** (`vllm`, `transformers`, `accelerate`) for annotation scoring: `uv sync --group dev --extra vlm`.
 - **Data pipeline order matters**: `extract → inject → annotate → aggregate → train → benchmark`.
 - **Distortion naming**: `{name}_L{intensity*10:02d}` (e.g., `propeller_vibration_blur_L04`).

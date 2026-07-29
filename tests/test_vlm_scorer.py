@@ -1,4 +1,4 @@
-"""Tests for uav_iqa.vlm_scorer — BaseScorer, VLMScorer (prompt, backend, fallback, coverage, pipeline)."""
+"""Tests for uav_iqa.vlm — VLMScorer (prompt, backend, fallback, coverage, pipeline)."""
 
 import sys
 import tempfile
@@ -10,10 +10,6 @@ import pytest
 from PIL import Image
 
 from uav_iqa.annotations import SUBTASK_NAMES
-from uav_iqa.vla_scorer import (
-    ALL_TASKS,
-    BaseScorer,
-)
 from uav_iqa.vlm import (
     MODEL_REGISTRY,
     VLMScorer,
@@ -184,33 +180,6 @@ class _MockVLLMModel:
 
 
 # ===========================================================================
-# BaseScorer abstract class tests
-# ===========================================================================
-
-
-class TestBaseScorer:
-    """Verify that BaseScorer can't be instantiated and its interface contract."""
-
-    def test_cannot_instantiate_abstract(self):
-        """BaseScorer is abstract — direct instantiation should fail."""
-        with pytest.raises(TypeError, match="abstract"):
-            BaseScorer()  # type: ignore[abstract]
-
-    def test_concrete_subclass_must_implement_all_methods(self):
-        """A subclass missing any abstract method should fail to instantiate."""
-
-        class IncompleteScorer(BaseScorer):
-            def score_image(self, image_path, task):
-                return {}
-
-            # Missing score_batch and build_ref_lookup
-
-        with pytest.raises(TypeError, match="abstract"):
-            IncompleteScorer()  # type: ignore[abstract]
-
-
-# ===========================================================================
-# VLMScorer — unit tests (comparison-based API)
 # ===========================================================================
 
 

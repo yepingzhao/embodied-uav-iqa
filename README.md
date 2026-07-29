@@ -78,10 +78,9 @@ src/uav_iqa/               # Core library (~8K LOC, 16 top-level + 15 inference 
   lightning_module.py      # LightningModule with MSE + ListMLE + cross-task loss
   data_module.py           # LightningDataModule with manifest filtering
   metrics.py               # SRCC, PLCC, RMSE, Kendall τ metrics
-  callbacks.py             # SetupRunCallback, MetricsHistoryCallback, ResultsSavingCallback; CurriculumStageCallback (deprecated/no-op)
+  callbacks.py             # SetupRunCallback, MetricsHistoryCallback, ResultsSavingCallback
   text_metrics.py          # BLEU, ROUGE-L, CIDEr text similarity for VLM comparison scoring
   vlm/                     # VLM scoring subpackage: config, scorer, VQA index
-  vla_scorer.py            # BaseScorer: VLA/execution score interface
   batch_annotator.py       # BatchAnnotator: multi-GPU batch annotation across splits
   inference/               # Multi-GPU offline inference framework (15 modules)
   utils.py                 # count_parameters, find_images, manifest I/O, logging
@@ -92,10 +91,6 @@ scripts/                   # Executable experiment scripts (12 total)
   vlm_annotate.py                # Batch VLM annotation CLI with checkpoint/resume
   benchmark_iqa_methods.py       # Benchmark 15+ existing IQA methods
   finetune_baselines.py          # Fine-tune DL-based IQA baselines on UAV data
-  fix_configs.py                 # Config migration/format converter
-  visualize_distortions.py       # Visual sanity check of all 36 distortions
-  overfit_sanity_check.py        # 100-image overfit test (model correctness)
-  validate_synth_real_correlation.py  # C2 correlation validation
   train.py                       # Unified training entry point (LightningCLI)
   inference.py                   # CLI entry point for multi-GPU offline inference
 
@@ -255,14 +250,12 @@ python scripts/benchmark_iqa_methods.py --max-samples 100
 ### Overfit Test
 
 ```bash
-python scripts/overfit_sanity_check.py
 # Verifies loss → 0 on 100 random images. Passes if final loss < 0.001.
 ```
 
 ### Distortion Verification
 
 ```bash
-python scripts/visualize_distortions.py --output-dir outputs/m0_distortion_check
 # Generates visual grid of all 36 distortions × 1 random intensity level.
 ```
 
@@ -352,7 +345,6 @@ black src/ tests/ scripts/
 - **Single `cognitive_score` supervision:** Unified quality score from VLM multi-image aggregation (replaces 3-stage curriculum).
 - **Loss layers:** MSE + λ_rank · ListMLE (per-distortion ranking) + λ_cross_task · CrossTaskRegularization (negative pairwise score variance)
 - **Real-ESRGAN** is optional (`LowResSuperResolution` distortion); falls back to bicubic+sharpen if not installed
-- **openVLA/CARLA** are manual installs (not on PyPI); not needed for basic training/inference
 - **VLM extras** (`vllm`, `transformers`, `accelerate`) for annotation scoring: `uv sync --group dev --extra vlm`
 - **Training entry:** `scripts/train.py` (vanilla LightningCLI). `main.py`, `run_m3_train.py` and `UAVIQACLI` were removed in the 2026-06 refactor.
 - **Score annotation:** `scripts/data_synthesis.py annotate` scores distorted groups via VLM, `aggregate` computes `cognitive_score` as mean of VLM scores.

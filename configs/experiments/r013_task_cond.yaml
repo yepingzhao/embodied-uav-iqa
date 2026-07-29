@@ -41,11 +41,6 @@ trainer:
       save_dir: outputs/r013_task_cond
   callbacks:
   - class_path: uav_iqa.callbacks.SetupRunCallback
-  - class_path: uav_iqa.callbacks.CurriculumStageCallback
-    init_args:
-      vlm_epochs: 20
-      vla_epochs: 20
-      execution_epochs: 10
   - class_path: uav_iqa.callbacks.MetricsHistoryCallback
   - class_path: uav_iqa.callbacks.ResultsSavingCallback
   - class_path: lightning.pytorch.callbacks.ModelCheckpoint

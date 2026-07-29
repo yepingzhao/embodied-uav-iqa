@@ -48,7 +48,6 @@ from .utils import (
     load_flat_samples,
     setup_logging,
 )
-from .vla_scorer import BaseScorer
 from uav_iqa.vlm import VLMScorer
 # UAVIQACLI removed (2026-06) — use vanilla lightning.pytorch.cli.LightningCLI
 
@@ -93,7 +92,6 @@ __all__ = [
     "DatasetFormat",
     "DataSynthesisPipeline",
     "create_pipeline",
-    "BaseScorer",
     "VLMScorer",
     "BatchAnnotator",
 ]
