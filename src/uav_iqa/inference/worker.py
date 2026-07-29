@@ -58,6 +58,12 @@ def worker_main(
         Number of tasks processed.
     """
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    # After CUDA_VISIBLE_DEVICES remapping, the target GPU is always
+    # device 0 from the worker's perspective.  Update the executor's
+    # device attribute so that model.to(device) does not reference a
+    # now-invalid ordinal (e.g. "cuda:1" → "cuda:0").
+    if hasattr(executor, "device") and executor.device:
+        executor.device = "cuda:0"
     _log.info("Worker %d started on GPU %d", worker_id, gpu_id)
 
     executor.prepare()
