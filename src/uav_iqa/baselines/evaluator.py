@@ -6,6 +6,7 @@ Provides the 15 baseline methods from the Embodied-IQA paper (NeurIPS 2025):
   NR (5): CLIPIQA, CNNIQA, DBCNN, QualiClip, TOPIQ-NR
 """
 
+import json
 import logging
 import multiprocessing as mp
 import os
@@ -58,8 +59,8 @@ def load_image_and_score(sample, data_dir, image_size=256, image_dir=None):
 # Registry: name -> (category, needs_instance, can_finetune)
 # Matches the 15 baseline methods in the Embodied-IQA paper (NeurIPS 2025):
 AVAILABLE_METHODS = {
-    "psnr": ("Zero-shot", False, False),
-    "ssim": ("Zero-shot", False, False),
+    "psnr": ("Zero-shot", True, False),
+    "ssim": ("Zero-shot", True, False),
     "brisque": ("Zero-shot", True, True),
     "q_align": ("Zero-shot", True, False),
     "q_align_plus": ("Zero-shot", True, False),
@@ -100,31 +101,51 @@ METHOD_TO_PYIQA = {
 class IQAEvaluator:
     """Registry of IQA methods with uniform (data_dir, img_np, img_t, ref_path) -> float."""
 
-    def __init__(self, device: torch.device = None):
+    def __init__(self, device: torch.device = None, ref_image_dir: str | Path | None = None):
         self.device = device or torch.device("cpu")
+        self.ref_image_dir = Path(ref_image_dir) if ref_image_dir else None
 
-    @staticmethod
-    def _load_ref_tensor(ref_path, data_dir):
-        ref_img = Image.open(Path(data_dir) / ref_path).convert("RGB")
+    def _ref_base(self, fallback_dir):
+        """Directory to resolve reference image paths against.
+
+        Uses ``ref_image_dir`` when set on the evaluator; falls back to
+        *fallback_dir* for backward compatibility.
+        """
+        return self.ref_image_dir or Path(fallback_dir)
+
+    def _load_ref_tensor(self, ref_path, fallback_dir="", target_size=None):
+        """Load a reference image as a ``[1, 3, H, W]`` float32 tensor.
+
+        If *target_size* ``(H, W)`` is given, the reference is resized to
+        match before conversion.
+        """
+        base = self._ref_base(fallback_dir)
+        ref_img = Image.open(base / ref_path).convert("RGB")
+        if target_size is not None:
+            ref_img = ref_img.resize((target_size[1], target_size[0]), Image.BILINEAR)
         ref_np = np.array(ref_img).astype(np.float32) / 255.0
         return torch.from_numpy(ref_np).permute(2, 0, 1).unsqueeze(0)
 
-    # -- Full-reference (static) --
+    # -- Full-reference --
 
-    @staticmethod
-    def psnr(data_dir, img_np, img_t, ref_path):
+    def psnr(self, data_dir, img_np, img_t, ref_path):
         from skimage.metrics import peak_signal_noise_ratio
         if not ref_path:
             return 0.0
-        ref = np.array(Image.open(Path(data_dir) / ref_path).convert("RGB"))
+        base = self._ref_base(data_dir)
+        h, w = img_np.shape[:2]
+        ref_img = Image.open(base / ref_path).convert("RGB").resize((w, h), Image.BILINEAR)
+        ref = np.array(ref_img)
         return peak_signal_noise_ratio(ref, (img_np * 255).astype(np.uint8), data_range=255)
 
-    @staticmethod
-    def ssim(data_dir, img_np, img_t, ref_path):
+    def ssim(self, data_dir, img_np, img_t, ref_path):
         from skimage.metrics import structural_similarity
         if not ref_path:
             return 0.0
-        ref = np.array(Image.open(Path(data_dir) / ref_path).convert("RGB"))
+        base = self._ref_base(data_dir)
+        h, w = img_np.shape[:2]
+        ref_img = Image.open(base / ref_path).convert("RGB").resize((w, h), Image.BILINEAR)
+        ref = np.array(ref_img)
         return structural_similarity(ref, (img_np * 255).astype(np.uint8), channel_axis=2, data_range=255)
 
     # -- LPIPS --
@@ -139,12 +160,16 @@ class IQAEvaluator:
             return lpips.LPIPS(net=net, verbose=False).to(self.device)
         except ImportError:
             return None
+        except Exception as e:
+            _log.warning("Failed to create LPIPS metric (net=%s): %s", net, e)
+            return None
 
     def _lpips(self, img_t, ref_path, data_dir, net="alex"):
         loss_fn = self._get_lpips(net)
         if loss_fn is None or not ref_path:
             return 0.0
-        ref_t = IQAEvaluator._load_ref_tensor(ref_path, data_dir).to(self.device)
+        _, _, h, w = img_t.shape
+        ref_t = self._load_ref_tensor(ref_path, data_dir, target_size=(h, w)).to(self.device)
         return float(loss_fn(img_t.to(self.device), ref_t).item())
 
     # -- pyiqa helpers --
@@ -156,6 +181,9 @@ class IQAEvaluator:
             return pyiqa.create_metric(metric_name, device=self.device)
         except ImportError:
             return None
+        except Exception as e:
+            _log.warning("Failed to create pyiqa metric '%s': %s", metric_name, e)
+            return None
 
     def _pyiqa_fr(self, data_dir, img_t, ref_path, metric_name):
         if not ref_path:
@@ -163,7 +191,8 @@ class IQAEvaluator:
         metric = self._get_pyiqa_metric(metric_name)
         if metric is None:
             return 0.0
-        ref_t = IQAEvaluator._load_ref_tensor(ref_path, data_dir).to(self.device)
+        _, _, h, w = img_t.shape
+        ref_t = self._load_ref_tensor(ref_path, data_dir, target_size=(h, w)).to(self.device)
         return float(metric(img_t.to(self.device), ref_t).item())
 
     def _pyiqa_nr(self, img_t, metric_name):
@@ -218,6 +247,203 @@ class IQAEvaluator:
 
 
 # ---------------------------------------------------------------------------
+# PyTorch batch PSNR / SSIM (equivalent to skimage, no extra dependencies)
+# ---------------------------------------------------------------------------
+
+
+def _psnr_batch(img: torch.Tensor, ref: torch.Tensor) -> list[float]:
+    """PSNR for ``[B, C, H, W]`` tensors in [0, 1].  Returns list of *B* floats."""
+    mse = torch.mean((img - ref) ** 2, dim=[1, 2, 3])
+    return (10 * torch.log10(1.0 / (mse + 1e-8))).tolist()
+
+
+def _ssim_batch(img: torch.Tensor, ref: torch.Tensor,
+                window_size: int = 11, sigma: float = 1.5) -> list[float]:
+    """SSIM for ``[B, C, H, W]`` tensors in [0, 1].  Returns list of *B* floats."""
+    C1, C2 = 0.01 ** 2, 0.03 ** 2
+    B, C, H, W = img.shape
+
+    coords = torch.arange(window_size, dtype=torch.float32, device=img.device)
+    coords = coords - window_size / 2 + 0.5
+    g = torch.exp(-coords ** 2 / (2 * sigma ** 2))
+    g = g / g.sum()
+    g2d = g.unsqueeze(0) * g.unsqueeze(1)
+    window = g2d.expand(C, 1, window_size, window_size)
+
+    pad = window_size // 2
+
+    def _conv(t):
+        return torch.nn.functional.conv2d(
+            torch.nn.functional.pad(t, (pad, pad, pad, pad), mode="reflect"),
+            window, groups=C,
+        )
+
+    mu1 = _conv(img)
+    mu2 = _conv(ref)
+    mu1_sq, mu2_sq, mu1_mu2 = mu1 ** 2, mu2 ** 2, mu1 * mu2
+
+    sigma1_sq = _conv(img * img) - mu1_sq
+    sigma2_sq = _conv(ref * ref) - mu2_sq
+    sigma12 = _conv(img * ref) - mu1_mu2
+
+    ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / \
+               ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
+    return ssim_map.mean(dim=[1, 2, 3]).tolist()
+
+
+# ---------------------------------------------------------------------------
+# Batch scoring helpers
+# ---------------------------------------------------------------------------
+
+
+def _should_use_batching(method_name: str, batch_size: int) -> bool:
+    """Return ``True`` when *method_name* supports batched inference."""
+    if method_name in ("q_align", "q_align_plus"):
+        return False  # q_align asserts batch_size == 1
+    pyiqa_name = METHOD_TO_PYIQA.get(method_name)
+    return batch_size > 1 and (
+        pyiqa_name is not None or method_name in ("lpips", "psnr", "ssim")
+    )
+
+
+def _score_method_entries(
+    evaluator: "IQAEvaluator",
+    entries: list,
+    data_dir: str,
+    image_dir: str,
+    image_base: str,
+    image_size: int,
+    method_name: str,
+    cat: str,
+    batch_size: int,
+    func,
+    *,
+    log_prefix: str = "",
+    log_interval: int = 1000,
+) -> list[float]:
+    """Score *entries* with *method_name* using either batch or per-sample path.
+
+    Routes to :func:`_score_batched` when batching is viable, otherwise falls
+    back to a per-sample loop calling *func*.
+    """
+    if _should_use_batching(method_name, batch_size):
+        return _score_batched(
+            evaluator, entries, image_base, image_size,
+            method_name, cat, batch_size,
+        )
+
+    predictions: list[float] = []
+    for i, s in enumerate(entries):
+        img_np, img_t, _score, _task, _dist, _int, ref_path = load_image_and_score(
+            s, data_dir, image_size, image_dir=image_dir,
+        )
+        try:
+            pred = func(image_base, img_np, img_t, ref_path)
+        except Exception:
+            pred = 0.0
+        predictions.append(float(pred) if pred is not None else 0.0)
+        if (i + 1) % log_interval == 0:
+            _log.info("%s%d/%d", log_prefix, i + 1, len(entries))
+    return predictions
+
+
+def _score_batched(
+    evaluator: "IQAEvaluator",
+    entries: list,
+    image_dir: str,
+    image_size: int,
+    method_name: str,
+    cat: str,
+    batch_size: int,
+) -> list[float]:
+    """Score *entries* in batches using a pyiqa metric or LPIPS.
+
+    Returns a flat list of scalar scores (one per entry).
+    """
+    predictions: list[float] = []
+    pyiqa_name = METHOD_TO_PYIQA.get(method_name)
+    is_qalign_plus = method_name == "q_align_plus"
+    is_lpips = method_name == "lpips"
+    is_skimage = method_name in ("psnr", "ssim")
+    is_fr = cat == "FR" or is_skimage  # PSNR/SSIM need reference images
+
+    # -- acquire metric once (cached inside evaluator) --
+    metric = None
+    if is_lpips:
+        metric = evaluator._get_lpips("alex")
+    elif not is_skimage:
+        metric = evaluator._get_pyiqa_metric(pyiqa_name)
+
+    if metric is None and not is_skimage:
+        return [0.0] * len(entries)
+
+    total = len(entries)
+    for batch_start in range(0, total, batch_size):
+        batch_end = min(batch_start + batch_size, total)
+        batch_slice = entries[batch_start:batch_end]
+        count = len(batch_slice)
+
+        if batch_start % 5000 == 0:
+            _log.info("    %d/%d", batch_start, total)
+
+        img_batch: list[torch.Tensor] = []
+        ref_batch: list[torch.Tensor] = [] if is_fr else None  # type: ignore[assignment]
+
+        for s in batch_slice:
+            img_path = Path(image_dir) / s["path"]
+            img_t = load_image_tensor(img_path, image_size)
+            if img_t.dim() == 3:
+                img_t = img_t.unsqueeze(0)
+            img_batch.append(img_t)
+
+            if is_fr:
+                ref_path = s.get("ref_path", "")
+                if ref_path:
+                    ref_t = evaluator._load_ref_tensor(
+                        ref_path, image_dir, target_size=(image_size, image_size)
+                    )
+                else:
+                    ref_t = torch.zeros(1, 3, image_size, image_size)
+                ref_batch.append(ref_t)  # type: ignore[union-attr]
+
+        batch_t = torch.cat(img_batch, dim=0).to(evaluator.device)
+
+        try:
+            if is_lpips:
+                batch_ref = torch.cat(ref_batch, dim=0).to(evaluator.device)  # type: ignore[arg-type]
+                out = metric(batch_t, batch_ref)
+            elif is_skimage:
+                batch_ref = torch.cat(ref_batch, dim=0).to(evaluator.device)  # type: ignore[arg-type]
+                if method_name == "psnr":
+                    out = _psnr_batch(batch_t, batch_ref)
+                else:
+                    out = _ssim_batch(batch_t, batch_ref)
+            elif is_fr:
+                batch_ref = torch.cat(ref_batch, dim=0).to(evaluator.device)  # type: ignore[arg-type]
+                out = metric(batch_t, batch_ref)
+            elif is_qalign_plus:
+                out = metric.forward(batch_t, task_="aesthetic")
+            else:
+                out = metric(batch_t)
+
+            if isinstance(out, list):
+                predictions.extend(out)
+            elif hasattr(out, "squeeze"):
+                vals = out.squeeze()
+                if vals.dim() == 0:
+                    vals = vals.unsqueeze(0)
+                predictions.extend([float(v) for v in vals.detach().cpu()])
+            else:
+                predictions.extend([float(out)])
+        except Exception as e:
+            _log.warning("  Batch [%d:%d] failed for %s: %s: %s",
+                         batch_start, batch_end, method_name, type(e).__name__, e)
+            predictions.extend([0.0] * count)
+
+    return predictions
+
+
+# ---------------------------------------------------------------------------
 # Checkpoint loading
 # ---------------------------------------------------------------------------
 
@@ -263,7 +489,11 @@ def run_benchmark(
     image_size: int,
     finetuned_dir: Optional[Path] = None,
     image_dir: Optional[Path] = None,
+    ref_image_dir: Optional[Path] = None,
+    batch_size: int = 1,
 ) -> dict:
+    # Reduce CUDA memory fragmentation to avoid OOM with large batch sizes.
+    os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
     targets = []
     task_ids = []
     distortion_labels = []
@@ -276,7 +506,7 @@ def run_benchmark(
         distortion_labels.append(s.get("distortion", "unknown"))
     targets = np.array(targets)
 
-    evaluator = IQAEvaluator(device=device)
+    evaluator = IQAEvaluator(device=device, ref_image_dir=ref_image_dir)
     results = {}
 
     finetuned_models = {}
@@ -293,6 +523,7 @@ def run_benchmark(
                     _log.info("  Loaded fine-tuned %s from %s", method_name, ckpt_path)
 
     img_base_dir = image_dir or data_dir
+    ref_base = ref_image_dir or img_base_dir
 
     for method_name in methods:
         info = AVAILABLE_METHODS.get(method_name)
@@ -308,18 +539,11 @@ def run_benchmark(
         )
         _log.info("  Running %s (%s, zero-shot)...", method_name, cat)
 
-        predictions = []
-        for i, s in enumerate(entries):
-            img_np, img_t, _score, _task, _dist, _int, ref_path = load_image_and_score(
-                s, data_dir, image_size, image_dir=image_dir
-            )
-            try:
-                pred = func(img_base_dir, img_np, img_t, ref_path)
-            except Exception:
-                pred = 0.0
-            predictions.append(float(pred) if pred is not None else 0.0)
-            if (i + 1) % 1000 == 0:
-                _log.info("    %d/%d", i + 1, len(entries))
+        predictions = _score_method_entries(
+            evaluator, entries, str(data_dir), str(image_dir or data_dir),
+            str(img_base_dir), image_size, method_name, cat, batch_size,
+            func, log_prefix="    ", log_interval=1000,
+        )
 
         preds = np.array(predictions)
         metrics = evaluate_iqa(preds, targets)
@@ -346,7 +570,7 @@ def run_benchmark(
                     if is_fr:
                         ref_path = s.get("ref_path", "")
                         if ref_path:
-                            ref_img = Image.open(Path(img_base_dir) / ref_path).convert("RGB")
+                            ref_img = Image.open(ref_base / ref_path).convert("RGB")
                             ref_np = np.array(ref_img).astype(np.float32) / 255.0
                             ref_t = torch.from_numpy(ref_np).permute(2, 0, 1).unsqueeze(0).to(device)
                     try:
@@ -389,6 +613,8 @@ def _benchmark_worker(
     image_size: int,
     finetuned_dir: str | None,
     result_queue: mp.Queue,
+    ref_image_dir: str | None = None,
+    batch_size: int = 1,
 ) -> None:
     """Run one IQA method on one GPU (called via ``multiprocessing.Process``).
 
@@ -399,6 +625,8 @@ def _benchmark_worker(
     gpu_semaphore.acquire()
     try:
         os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+        # Reduce CUDA memory fragmentation to avoid OOM with large batch sizes
+        os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
         info = AVAILABLE_METHODS.get(method_name)
@@ -409,26 +637,21 @@ def _benchmark_worker(
 
         _log.info("[%s] GPU %d, %d samples", method_name, gpu_id, len(entries))
 
+        ref_base = Path(ref_image_dir) if ref_image_dir else Path(image_dir)
+
         # -- Zero-shot scoring --
-        evaluator = IQAEvaluator(device=device)
+        evaluator = IQAEvaluator(device=device, ref_image_dir=ref_image_dir)
         func = (
             getattr(evaluator, method_name.replace("-", "_"))
             if needs_instance
             else getattr(IQAEvaluator, method_name)
         )
 
-        predictions = []
-        for i, s in enumerate(entries):
-            img_np, img_t, _score, _task, _dist, _int, ref_path = load_image_and_score(
-                s, data_dir, image_size, image_dir=image_dir
-            )
-            try:
-                pred = func(image_dir, img_np, img_t, ref_path)
-            except Exception:
-                pred = 0.0
-            predictions.append(float(pred) if pred is not None else 0.0)
-            if (i + 1) % 5000 == 0:
-                _log.info("[%s] %d/%d", method_name, i + 1, len(entries))
+        predictions = _score_method_entries(
+            evaluator, entries, data_dir, image_dir, image_dir,
+            image_size, method_name, cat, batch_size, func,
+            log_prefix=f"[{method_name}] ", log_interval=5000,
+        )
 
         # -- Fine-tuned scoring --
         ft_predictions = None
@@ -448,7 +671,7 @@ def _benchmark_worker(
                             if is_fr:
                                 ref_path = s.get("ref_path", "")
                                 if ref_path:
-                                    ref_img = Image.open(Path(image_dir) / ref_path).convert("RGB")
+                                    ref_img = Image.open(ref_base / ref_path).convert("RGB")
                                     ref_np = np.array(ref_img).astype(np.float32) / 255.0
                                     ref_t = torch.from_numpy(ref_np).permute(2, 0, 1).unsqueeze(0).to(device)
                             try:
@@ -479,6 +702,8 @@ def run_benchmark_parallel(
     num_workers_per_gpu: int = 4,
     finetuned_dir: Optional[Path] = None,
     image_dir: Optional[Path] = None,
+    ref_image_dir: Optional[Path] = None,
+    batch_size: int = 1,
 ) -> dict:
     """Run benchmark with methods distributed across GPUs in parallel.
 
@@ -488,6 +713,9 @@ def run_benchmark_parallel(
 
     Returns the same ``dict`` structure as :func:`run_benchmark`.
     """
+    # Reduce CUDA memory fragmentation (avoids OOM with large batch sizes,
+    # particularly for AHIQ which uses CFANet with large intermediate tensors).
+    os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
     # Pre-compute ground truth (CPU)
     targets = np.array([_extract_score(s) for s in entries])
     task_ids = [s.get("task", "scene_description") for s in entries]
@@ -524,8 +752,9 @@ def run_benchmark_parallel(
     data_dir_str = str(data_dir)
     image_dir_str = str(image_dir) if image_dir else data_dir_str
     ft_dir_str = str(finetuned_dir) if finetuned_dir else None
+    ref_image_dir_str = str(ref_image_dir) if ref_image_dir else None
 
-    for worker_id, method_name, gpu_id, info in assignments:
+    for _, method_name, gpu_id, info in assignments:
         p = mp.Process(
             target=_benchmark_worker,
             args=(
@@ -538,76 +767,52 @@ def run_benchmark_parallel(
                 image_size,
                 ft_dir_str,
                 result_queue,
+                ref_image_dir_str,
+                batch_size,
             ),
             daemon=False,
         )
         p.start()
         processes.append(p)
 
-    # Collect results
-    gathered: dict[str, tuple] = {}
+    # Collect results — compute metrics and save incrementally
+    results: dict = {}
+    results_file = Path(os.environ.get("BENCHMARK_RESULTS_JSON",
+                                       "benchmark_results_partial.json"))
     for _ in range(len(assignments)):
         method_name, preds, ft_preds, error = result_queue.get()
-        if error:
+        info = AVAILABLE_METHODS.get(method_name)
+        cat = info[0] if info else "?"
+        if error or preds is None:
             _log.error("Method %s failed: %s", method_name, error)
-            gathered[method_name] = (None, None)
+            results[method_name] = {
+                "category": cat, "finetuned": False,
+                "error": error or "Method failed",
+                "srcc": 0.0, "plcc": 0.0, "rmse": 0.0, "kendall_tau": 0.0,
+                "per_task": {}, "per_distortion_category": {},
+            }
         else:
-            gathered[method_name] = (preds, ft_preds)
+            preds_arr = np.array(preds)
+            metrics = evaluate_iqa(preds_arr, targets)
+            per_task = per_task_metrics(preds_arr, targets, task_ids)
+            per_cat = per_distortion_category_metrics(preds_arr, targets, distortion_labels)
+            results[method_name] = {
+                "category": cat, "finetuned": False,
+                "srcc": float(metrics["srcc"]), "plcc": float(metrics["plcc"]),
+                "rmse": float(metrics["rmse"]),
+                "kendall_tau": float(metrics.get("kendall_tau", 0.0)),
+                "per_task": per_task, "per_distortion_category": per_cat,
+            }
+            _log.info("  %-24s %-5s  Zero-shot  %8.4f %8.4f",
+                      method_name, cat, metrics["srcc"], metrics["plcc"])
+            # Save incrementally — survives interruption
+            results_file.write_text(json.dumps(
+                {"n_samples": len(entries), "methods": results}, indent=2,
+            ))
 
     # Wait for all processes
     for p in processes:
         p.join()
-
-    # Compute metrics (main process, CPU)
-    results: dict = {}
-    for method_name in method_order:
-        info = AVAILABLE_METHODS.get(method_name)
-        if info is None:
-            continue
-        cat = info[0]
-        pair = gathered.get(method_name)
-        if pair is None or pair[0] is None:
-            results[method_name] = {
-                "category": cat, "finetuned": False,
-                "error": "Method failed or not found",
-                "srcc": 0.0, "plcc": 0.0, "rmse": 0.0, "kendall_tau": 0.0,
-                "per_task": {}, "per_distortion_category": {},
-            }
-            continue
-
-        preds_arr, ft_preds_arr = np.array(pair[0]), pair[1]
-        metrics = evaluate_iqa(preds_arr, targets)
-        per_task = per_task_metrics(preds_arr, targets, task_ids)
-        per_cat = per_distortion_category_metrics(preds_arr, targets, distortion_labels)
-        results[method_name] = {
-            "category": cat, "finetuned": False,
-            "srcc": float(metrics["srcc"]), "plcc": float(metrics["plcc"]),
-            "rmse": float(metrics["rmse"]),
-            "kendall_tau": float(metrics.get("kendall_tau", 0.0)),
-            "per_task": per_task, "per_distortion_category": per_cat,
-        }
-        _log.info(
-            "  %-24s %-5s   No  %8.4f %8.4f",
-            method_name, cat, metrics["srcc"], metrics["plcc"],
-        )
-
-        if ft_preds_arr is not None:
-            ft_preds_arr = np.array(ft_preds_arr)
-            ft_metrics = evaluate_iqa(ft_preds_arr, targets)
-            ft_per_task = per_task_metrics(ft_preds_arr, targets, task_ids)
-            ft_per_cat = per_distortion_category_metrics(ft_preds_arr, targets, distortion_labels)
-            ft_key = f"{method_name}_ft"
-            results[ft_key] = {
-                "category": cat, "finetuned": True,
-                "srcc": float(ft_metrics["srcc"]), "plcc": float(ft_metrics["plcc"]),
-                "rmse": float(ft_metrics["rmse"]),
-                "kendall_tau": float(ft_metrics.get("kendall_tau", 0.0)),
-                "per_task": ft_per_task, "per_distortion_category": ft_per_cat,
-            }
-            _log.info(
-                "  %-24s %-5s  Yes  %8.4f %8.4f",
-                method_name, cat, ft_metrics["srcc"], ft_metrics["plcc"],
-            )
 
     return results
 

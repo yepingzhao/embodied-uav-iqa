@@ -7,6 +7,7 @@ Thin CLI wrapper — see uav_iqa.baselines.evaluator for the implementation.
 import argparse
 import json
 import logging
+import os
 from pathlib import Path
 
 import torch
@@ -39,7 +40,18 @@ def main():
                         help="Base directory for image files (distorted + ref). "
                              "Default: data/processed.")
     parser.add_argument("--finetuned-dir", default=None)
+    parser.add_argument("--ref-image-dir", default=None,
+                        help="Root directory for reference (original) images. "
+                             "FR methods load ref images from this directory. "
+                             "Default: same as --image-dir.")
+    parser.add_argument("--batch-size", type=int, default=1,
+                        help="Batch size for pyiqa/LPIPS methods (default: 1, no batching). "
+                             "Larger values (e.g. 32, 64) accelerate GPU inference.")
     args = parser.parse_args()
+
+    # Reduce CUDA memory fragmentation to avoid OOM with large batch sizes
+    # (particularly AHIQ which uses CFANet with large intermediate tensors).
+    os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
 
     data_dir = Path(args.data_dir)
     output_dir = Path(args.output_dir)
@@ -59,6 +71,7 @@ def main():
 
     finetuned_dir = Path(args.finetuned_dir) if args.finetuned_dir else None
     image_dir = Path(args.image_dir)
+    ref_image_dir = Path(args.ref_image_dir) if args.ref_image_dir else None
 
     if use_parallel:
         gpu_ids = [int(x.strip()) for x in (args.gpu_ids or "0").split(",")]
@@ -73,6 +86,8 @@ def main():
             num_workers_per_gpu=args.num_workers_per_gpu,
             finetuned_dir=finetuned_dir,
             image_dir=image_dir,
+            ref_image_dir=ref_image_dir,
+            batch_size=args.batch_size,
         )
     else:
         device = torch.device(args.device)
@@ -85,6 +100,8 @@ def main():
             image_size=args.image_size,
             finetuned_dir=finetuned_dir,
             image_dir=image_dir,
+            ref_image_dir=ref_image_dir,
+            batch_size=args.batch_size,
         )
 
     with open(output_dir / "benchmark_results.json", "w") as f:
