@@ -29,11 +29,9 @@ from uav_iqa.vlm.config import DEPRECATED_MODELS, MODEL_REGISTRY, VLMConfig
 from uav_iqa.vlm.vqa_index import VQAIndex
 
 try:
-    from transformers import AutoConfig as _AutoConfig
     from transformers import PreTrainedModel as _TransformerPTM
     from transformers import CLIPVisionModel as _CLIPVisionModel
 except ImportError:
-    _AutoConfig = None
     _TransformerPTM = None
     _CLIPVisionModel = None
 
