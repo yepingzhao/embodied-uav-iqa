@@ -220,7 +220,7 @@ def normalize_subtask_type(question_type: str) -> str:
             return SUBTASK_NAMES[code]
 
         for keyword, name in _KEYWORD_MAP.items():
-            if keyword in question_type:
+            if keyword.lower() in question_type.lower():
                 return name
 
     return "scene_description"
