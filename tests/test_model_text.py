@@ -8,7 +8,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from uav_iqa.model import UAVIQANet
+from uav_iqa.models import UAVIQANet
 from uav_iqa.models.text import QuestionTextEncoder
 
 
@@ -21,8 +21,8 @@ class TestModelTextInput:
         return UAVIQANet(
             backbone="mobilenetv4_conv_small",
             num_tasks=14,
-            use_fab=True,
-            use_cbam=True,
+            use_frequency_encoder=True,
+            use_spatial_attention=True,
             use_task_conditioning=True,
         )
 
@@ -32,8 +32,8 @@ class TestModelTextInput:
         return UAVIQANet(
             backbone="mobilenetv4_conv_small",
             num_tasks=14,
-            use_fab=False,
-            use_cbam=False,
+            use_frequency_encoder=False,
+            use_spatial_attention=False,
             use_task_conditioning=False,
         )
 

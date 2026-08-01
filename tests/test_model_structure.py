@@ -3,7 +3,7 @@
 import timm
 import torch
 
-from uav_iqa.model import UAVIQANet
+from uav_iqa.models import UAVIQANet
 from uav_iqa.models.frequency import FrequencyFeatureGate, LogPolarFrequencyEncoder
 from uav_iqa.models.heads import TaskConditionedRegressor
 from uav_iqa.models.spatial import ConvolutionalBlockAttention, PANFeaturePyramid
