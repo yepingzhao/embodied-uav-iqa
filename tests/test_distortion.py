@@ -185,3 +185,20 @@ def test_generic_unknown_distortion_raises():
 
     with pytest.raises(ValueError):
         GenericDistortions("nonexistent_distortion")
+
+
+def test_all_uav_distortions_are_deterministic_for_fixed_seed():
+    """Two seeded pipelines produce equal outputs for every UAV distortion."""
+    rows, columns = np.indices((64, 64), dtype=np.uint8)
+    image = np.stack([rows, columns, rows + columns], axis=-1)
+    first_pipeline = UAVDistortionPipeline(seed=17)
+    second_pipeline = UAVDistortionPipeline(seed=17)
+
+    assert first_pipeline.get_all_distortion_names() == second_pipeline.get_all_distortion_names()
+    uav_names = first_pipeline.get_uav_distortion_names()
+    assert uav_names == second_pipeline.get_uav_distortion_names()
+
+    for name in uav_names:
+        first_output = first_pipeline.apply_distortion(image, name, 0.4)
+        second_output = second_pipeline.apply_distortion(image, name, 0.4)
+        assert np.array_equal(first_output, second_output), name

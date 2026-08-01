@@ -9,6 +9,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from uav_iqa.model import UAVIQANet
+from uav_iqa.models.text import QuestionTextEncoder
 
 
 class TestModelTextInput:
@@ -135,38 +136,24 @@ class TestTextEncoder:
     def test_text_encoder_module_exists(self):
         """Verify that a TextEncoder class can be imported after implementation."""
         # This test will pass once the TextEncoder is added to model.py
-        try:
-            from uav_iqa.model import UAVIQATextEncoder
-        except ImportError:
-            pytest.skip("UAVIQATextEncoder not yet implemented")
-
-        encoder = UAVIQATextEncoder(text_dim=128)
+        encoder = QuestionTextEncoder(text_dim=128)
         assert encoder is not None
 
     def test_text_encoder_forward(self):
         """encode should handle a list of strings."""
-        try:
-            from uav_iqa.model import UAVIQATextEncoder
-        except ImportError:
-            pytest.skip("UAVIQATextEncoder not yet implemented")
-
-        encoder = UAVIQATextEncoder(text_dim=128)
+        encoder = QuestionTextEncoder(text_dim=128)
         questions = ["Scene description question?", "Object counting query?"]
         features = encoder(questions)
         assert features.shape == (2, 128)
 
     def test_text_encoder_tokenization(self):
-        from uav_iqa.model import UAVIQATextEncoder
-
-        encoder = UAVIQATextEncoder(max_len=16)
+        encoder = QuestionTextEncoder(max_len=16)
         token_ids = encoder._tokenize(["hello world"])
         assert token_ids.shape == (1, 11)  # 11 printable chars
         assert token_ids.dtype == torch.long
 
     def test_text_encoder_pad_unk(self):
-        from uav_iqa.model import UAVIQATextEncoder
-
-        encoder = UAVIQATextEncoder(max_len=16)
+        encoder = QuestionTextEncoder(max_len=16)
         token_ids = encoder._tokenize(["ab", "abcd"])
 
         assert token_ids.shape == (2, 4)
@@ -174,33 +161,25 @@ class TestTextEncoder:
         assert token_ids[0, 3] == encoder.PAD_IDX
 
     def test_text_encoder_unknown_chars(self):
-        from uav_iqa.model import UAVIQATextEncoder
-
-        encoder = UAVIQATextEncoder(max_len=16)
+        encoder = QuestionTextEncoder(max_len=16)
         token_ids = encoder._tokenize(["\x00\xff\u4e2d", "abc"])
         assert token_ids[0, 0] == encoder.UNK_IDX
         assert token_ids[0, 1] == encoder.UNK_IDX
         assert token_ids[0, 2] == encoder.UNK_IDX
 
     def test_text_encoder_truncation(self):
-        from uav_iqa.model import UAVIQATextEncoder
-
-        encoder = UAVIQATextEncoder(max_len=5)
+        encoder = QuestionTextEncoder(max_len=5)
         token_ids = encoder._tokenize(["hello world"])
         assert token_ids.size(1) <= 5
 
     def test_text_encoder_empty_string(self):
-        from uav_iqa.model import UAVIQATextEncoder
-
-        encoder = UAVIQATextEncoder(text_dim=128)
+        encoder = QuestionTextEncoder(text_dim=128)
         token_ids = encoder._tokenize([""])
         assert token_ids.shape == (1, 0)
         assert token_ids.nelement() == 0
 
     def test_text_encoder_device_move(self):
-        from uav_iqa.model import UAVIQATextEncoder
-
-        encoder = UAVIQATextEncoder(text_dim=128, max_len=16)
+        encoder = QuestionTextEncoder(text_dim=128, max_len=16)
         encoder.eval()
         out = encoder(["hello"])
         assert out.device == encoder.char_embed.weight.device
