@@ -67,26 +67,21 @@ Categories: blur (3), brightness (5), chromatic (3), noise (6), compression (3),
 ## Project Layout
 
 ```
-src/uav_iqa/               # Core library (~8K LOC, 16 top-level + 15 inference modules)
-  __init__.py              # Public API exports (45 symbols)
-  distortion.py            # 36 distortion models (UAVDistortionPipeline)
-  model.py                 # UAVIQANet (backbone → FPN → CBAM → FAB → task heads)
-  dataset.py               # UAVIQADataset — manifest.json loader
-  losses.py                # ListMLELoss + CrossTaskRegularization
-  annotations.py           # AirCopBench annotation parsing, degradation factors, score synthesis
-  data_synthesis.py        # Dataset-agnostic data pipeline (DatasetFormat + DataSynthesisPipeline)
-  lightning_module.py      # LightningModule with MSE + ListMLE + cross-task loss
-  data_module.py           # LightningDataModule with manifest filtering
-  metrics.py               # SRCC, PLCC, RMSE, Kendall τ metrics
-  callbacks.py             # SetupRunCallback, MetricsHistoryCallback, ResultsSavingCallback
-  text_metrics.py          # BLEU, ROUGE-L, CIDEr text similarity for VLM comparison scoring
-  vlm/                     # VLM scoring subpackage: config, scorer, VQA index
-  batch_annotator.py       # BatchAnnotator: multi-GPU batch annotation across splits
+src/uav_iqa/               # Core library
+  __init__.py              # Lightweight package metadata
+  domain/                  # AirCopBench taxonomy, parsing, degradation factors, score synthesis
+  models/                  # UAVIQANet composition, spatial/frequency/text components, heads
+  distortions/             # 36 distortion models (UAVDistortionPipeline)
+  data/                    # Dataset adapters, synthesis, samples, dataset, and datamodule
+  training/                # Lightning module, MSE/ListMLE/cross-task losses, callbacks
+  evaluation/              # IQA and text-similarity metrics
+  vlm/                     # VLM scorer, BatchAnnotator, config, backends, VQA index
+  baselines/               # Existing IQA evaluation and fine-tuning
   inference/               # Multi-GPU offline inference framework (15 modules)
   utils.py                 # count_parameters, find_images, manifest I/O, logging
 
 scripts/                   # Executable experiment scripts (12 total)
-  data_synthesis.py              # Unified data synthesis CLI (extract/inject/manifest/annotate/all)
+  distortion_synthesis.py              # Unified data synthesis CLI (extract/inject/manifest/annotate/all)
   download_models.py             # Download VLM model weights from HuggingFace Hub
   vlm_annotate.py                # Batch VLM annotation CLI with checkpoint/resume
   benchmark_iqa_methods.py       # Benchmark 15+ existing IQA methods
@@ -101,14 +96,14 @@ configs/
 tests/
   test_distortion.py           # 19 tests for distortion models
   test_lightning.py            # Tests for LightningModule & DataModule
-  test_data_synthesis.py       # 29 tests for data pipeline
+  test_distortion_synthesis.py       # 29 tests for data pipeline
   test_text_metrics.py         # Tests for BLEU, ROUGE-L, CIDEr text metrics
   test_vlm_config.py           # Tests for VLMConfig & MODEL_REGISTRY (15 models)
   test_vlm_scorer.py           # 109 tests for VLMScorer, prompts, pipeline
   test_vlm_smoke.py            # GPU smoke tests × 15 parametrized models
   test_batch_annotator.py      # Tests for BatchAnnotator (filter, checkpoint, resume)
   test_annotations.py          # Tests for annotation parsing utilities
-  test_dataset.py              # Tests for UAVIQADataset collation and loading
+  test_dataset.py              # Tests for UAVQualityDataset collation and loading
   test_model_text.py           # Tests for model text/export utilities
   test_inference_phase[1-5].py # 5-phase tests for inference framework
 
@@ -153,25 +148,25 @@ Data is **not** included in the repo. Download AirCopBench from [arXiv 2511.1102
 
 ```bash
 # Full pipeline (all 4 steps at once)
-python scripts/data_synthesis.py all \
+python scripts/distortion_synthesis.py all \
   --dataset aircopbench \
   --input-root data/raw/AirCopBench \
   --output-dir data/processed
 
 # Or run individual steps:
-python scripts/data_synthesis.py extract \
+python scripts/distortion_synthesis.py extract \
   --dataset aircopbench --input-root data/raw/AirCopBench \
   --output-dir data/processed/ref_images
 
-python scripts/data_synthesis.py inject \
+python scripts/distortion_synthesis.py inject \
   --image-dir data/processed/ref_images \
   --output-dir data/processed/distorted --workers 8
 
-python scripts/data_synthesis.py manifest \
+python scripts/distortion_synthesis.py manifest \
   --dataset aircopbench --distorted-dir data/processed/distorted \
   --output-dir data/processed
 
-python scripts/data_synthesis.py annotate \
+python scripts/distortion_synthesis.py annotate \
   --dataset aircopbench --manifest-dir data/processed \
   --input-root data/raw/AirCopBench
 ```
@@ -282,8 +277,8 @@ The [default config](configs/default.yaml) serves as a reference template. Each 
 seed_everything: 42
 model:
   backbone: mobilenetv4_conv_small
-  use_fab: true            # Frequency-Aware Branch
-  use_cbam: true           # CBAM attention
+  use_frequency_encoder: true            # Frequency-Aware Branch
+  use_spatial_attention: true           # CBAM attention
   use_task_conditioning: true  # FiLM task heads
   lambda_rank: 0.3         # ListMLE loss weight
   lambda_cross_task: 0.1   # Cross-task regularization
@@ -305,7 +300,7 @@ trainer:
     - class_path: lightning.pytorch.loggers.WandbLogger
     - class_path: lightning.pytorch.loggers.CSVLogger
   callbacks:
-    - class_path: uav_iqa.callbacks.SetupRunCallback
+    - class_path: uav_iqa.training.SetupRunCallback
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
 ```
 
@@ -347,7 +342,7 @@ black src/ tests/ scripts/
 - **Real-ESRGAN** is optional (`LowResSuperResolution` distortion); falls back to bicubic+sharpen if not installed
 - **VLM extras** (`vllm`, `transformers`, `accelerate`) for annotation scoring: `uv sync --group dev --extra vlm`
 - **Training entry:** `scripts/train.py` (vanilla LightningCLI). `main.py`, `run_m3_train.py` and `UAVIQACLI` were removed in the 2026-06 refactor.
-- **Score annotation:** `scripts/data_synthesis.py annotate` scores distorted groups via VLM, `aggregate` computes `cognitive_score` as mean of VLM scores.
+- **Score annotation:** `scripts/distortion_synthesis.py annotate` scores distorted groups via VLM, `aggregate` computes `cognitive_score` as mean of VLM scores.
 - **`scipy` removed as a direct dependency** for distortion models — uses `cv2.filter2D` with manual wrap padding. `scipy` is retained for metric computation.
 - **Model download:** `scripts/download_models.py` provides offline VLM model weight download from HuggingFace Hub for VLM annotation scoring. Supports `--all`, `--models <name>`, `--validate`, and `--validate-only`.
 

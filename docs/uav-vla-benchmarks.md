@@ -114,12 +114,12 @@ python AirVLNSimulatorServerTool.py --port 30000 --root_path /path/to/your/envs
 ## 6. 接入本项目的方案
 
 ### 畸变注入点
-AirSim 通过 `simGetImages` 返回 RGB/Depth。本项目 `src/uav_iqa/distortion.py` 应插在
+AirSim 通过 `simGetImages` 返回 RGB/Depth。本项目 `src/uav_iqa/distortions/` 应插在
 **"AirSim 取图 → 喂给 VLA"** 之间,对 `O_t` 做退化,三分数共用同一畸变管线:
 
 ```
 TravelUAV 场景 → O_t (clean, RGB+Depth)
-        │  注入 36 种畸变 (distortion.py)
+        │  注入 36 种畸变 (distortions/)
         ▼
       O_t' → VLA (LLaMA-UAV baseline / OpenVLA)
         │

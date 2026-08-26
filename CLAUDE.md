@@ -13,28 +13,23 @@ UAV-Embodied-IQA: visual quality assessment for aerial embodied intelligence (re
 ## Project structure
 
 ```
-src/uav_iqa/           # Core library (~8K LOC total, 16 top-level + 15 inference modules)
-  __init__.py          #   Public API: exports 45 symbols
-  distortion.py        #   36 distortion models (UAVDistortionPipeline + 6 UAV + 30 generic)
-  model.py             #   UAVIQANet (backbone → PANet FPN → CBAM → FAB → task heads)
-  dataset.py           #   UAVIQADataset — loads grouped JSON, image/cognitive_score/subtask
-  losses.py            #   ListMLELoss + CrossTaskRegularization
-  annotations.py       #   AirCopBench annotation parsing, degradation factors, score synthesis
-  data_synthesis.py    #   Dataset-agnostic data pipeline (DatasetFormat ABC + AirCopBenchFormat + GenericImageDirFormat + DataSynthesisPipeline)
-  lightning_module.py  #   UAVIQALightningModule (training_step, validation_step, etc.)
-  data_module.py       #   UAVIQADataModule (train/test dataloaders, grouped JSON)
-  metrics.py           #   SRCC, PLCC, RMSE, Kendall tau metrics
-  callbacks.py         #   SetupRunCallback, MetricsHistoryCallback, ResultsSavingCallback
-  text_metrics.py      #   BLEU, ROUGE-L, CIDEr text similarity for VLM comparison scoring
-  vlm/                 #   VLM scoring subpackage: config, scorer, VQA index
-  batch_annotator.py   #   BatchAnnotator: multi-GPU batch annotation across splits
+src/uav_iqa/           # Core library
+  __init__.py          #   Lightweight package metadata; import concrete subpackages explicitly
+  utils.py             #   Shared logging, image I/O, and parameter helpers
+  domain/              #   Shared task taxonomy, annotation parsing, and score synthesis
+  models/              #   UAVIQANet composition, spatial/frequency/text components and heads
+  distortions/         #   6 UAV + 30 generic distortions and UAVDistortionPipeline
+  data/                #   Sample contracts, adapters, synthesis, dataset, and datamodule
+  training/            #   Lightning module, ranking/cross-task losses, callbacks
+  evaluation/          #   IQA metrics plus BLEU, ROUGE-L, CIDEr, and cognitive score
+  vlm/                 #   VLM scoring, batch annotation, config, backends, and VQA index
+  baselines/           #   Existing IQA method evaluation and fine-tuning
   inference/           #   Multi-GPU offline inference framework (15 modules)
-  utils.py             #   Utilities: count_parameters, logging, image I/O
 configs/               # YAML-driven configuration
   default.yaml         #   Default training/model/distortion config template
   experiments/         #   21 per-experiment configs (r013–r024c)
 scripts/               # Data pipeline + benchmark + experiment scripts
-  data_synthesis.py                  # Unified data synthesis CLI (extract/inject/annotate/aggregate/all)
+  distortion_synthesis.py                  # Unified data synthesis CLI (extract/inject/annotate/aggregate/all)
   download_models.py                 # Download VLM model weights from HuggingFace Hub
   vlm_annotate.py                    # Batch VLM annotation CLI with checkpoint/resume
   vlm_cognitive_score_vqa.py         # VQA-paradigm cognitive scoring with VLM + BLEU/ROUGE-L/CIDEr
@@ -50,20 +45,20 @@ docs/                  # CODEMAPS, literature reviews, research roadmap, and EXP
 
 ## Data pipeline
 
-Data synthesis is handled by `src/uav_iqa/data_synthesis.py` (library) and `scripts/data_synthesis.py` (CLI). The pipeline has 4 steps — run individually or end-to-end:
+Data synthesis is handled by `src/uav_iqa/data/synthesis.py` (library) and `scripts/distortion_synthesis.py` (CLI). The pipeline has 4 steps — run individually or end-to-end:
 
 ```bash
 # Full pipeline (all 4 steps)
-python scripts/data_synthesis.py all \
+python scripts/distortion_synthesis.py all \
   --dataset aircopbench \
   --input-root data/raw/AirCopBench \
   --output-dir data/processed
 
 # Or run steps individually:
-python scripts/data_synthesis.py extract --dataset aircopbench --input-root ... --output-dir ...
-python scripts/data_synthesis.py inject --image-dir ... --output-dir ...
-python scripts/data_synthesis.py annotate --dataset aircopbench --distorted-dir ...
-python scripts/data_synthesis.py aggregate --dataset aircopbench --annotated-dir ...
+python scripts/distortion_synthesis.py extract --dataset aircopbench --input-root ... --output-dir ...
+python scripts/distortion_synthesis.py inject --image-dir ... --output-dir ...
+python scripts/distortion_synthesis.py annotate --dataset aircopbench --distorted-dir ...
+python scripts/distortion_synthesis.py aggregate --dataset aircopbench --annotated-dir ...
 ```
 
 1. **`extract`** — Copy VQA JSONs from raw dataset to processed directory → `data/processed/`
@@ -115,7 +110,7 @@ Input (3×256×256)
 - **Training splits**: train/test only (no val); `cognitive_score` is the single training label
 - **Loss**: MSE + λ_rank * ListMLE (per-distortion ranking) + λ_cross_task * CrossTaskRegularization (negative pairwise score variance)
 - **Callbacks**: `SetupRunCallback` (data hash, DDP-safe), `MetricsHistoryCallback` (epoch metrics → `history.json`), `ResultsSavingCallback` (best ckpt → `results.json`)
-- **Ablation toggles**: configured via `model.init_args.use_fab/cbam/task_conditioning` in experiment YAML (e.g., `r016_no_fab.yaml`)
+- **Ablation toggles**: configured via `model.init_args.use_frequency_encoder/cbam/task_conditioning` in experiment YAML (e.g., `r016_no_fab.yaml`)
 - **Distortion naming**: `{name}_L{intensity*10:02d}` (e.g., `propeller_vibration_blur_L04`)
 
 ## Common training invocations

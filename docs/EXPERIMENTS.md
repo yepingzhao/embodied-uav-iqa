@@ -23,7 +23,7 @@ export WANDB_API_KEY=your_key_here
 # 或创建 .env 文件: echo "WANDB_API_KEY=your_key" > .env
 
 # 3. 合成数据（如果尚未完成）
-python scripts/data_synthesis.py all \
+python scripts/distortion_synthesis.py all \
     --dataset aircopbench \
     --input-root data/raw/AirCopBench \
     --output-dir data/processed
@@ -120,7 +120,7 @@ outputs/<experiment>/
 
 完整模型，所有组件启用：FAB + CBAM + FiLM task conditioning + single cognitive_score。
 
-**关键配置**: `use_fab=true, use_cbam=true, use_task_conditioning=true`
+**关键配置**: `use_frequency_encoder=true, use_spatial_attention=true, use_task_conditioning=true`
 
 ```bash
 # 单种子
@@ -168,7 +168,7 @@ done
 
 移除 patch FFT + log-polar transform + tiny CNN 分支（~30K 参数）。验证 AC3。
 
-**关键配置**: `use_fab=false`
+**关键配置**: `use_frequency_encoder=false`
 
 ```bash
 for seed in 42 100 200; do
@@ -204,7 +204,7 @@ done
 
 移除通道注意力 + 空间注意力模块。
 
-**关键配置**: `use_cbam=false`
+**关键配置**: `use_spatial_attention=false`
 
 ```bash
 for seed in 42 100 200; do
