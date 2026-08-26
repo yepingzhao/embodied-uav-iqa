@@ -2,7 +2,7 @@
 
 import pytest
 
-from uav_iqa.text_metrics import (
+from uav_iqa.evaluation import (
     compute_bleu,
     compute_cider,
     compute_cognitive_score,

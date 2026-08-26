@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import List
 
-from uav_iqa.batch_annotator import BatchAnnotator
+from uav_iqa.vlm.annotator import BatchAnnotator
 
 
 class _FakeScorer:
@@ -147,9 +147,7 @@ class TestBatchAnnotatorAnnotateFile:
         output_dir = tmp_path / "processed"
         (output_dir / "train").mkdir(parents=True)
 
-        entries = [
-            _make_flat_entry(question_id=f"Q{i}", question=f"Q{i}") for i in range(10)
-        ]
+        entries = [_make_flat_entry(question_id=f"Q{i}", question=f"Q{i}") for i in range(10)]
         json_path = output_dir / "train" / "Sim3_VQA_train.json"
         _write_entries_json(entries, json_path)
 
@@ -163,14 +161,14 @@ class TestBatchAnnotatorAnnotateFile:
         (output_dir / "train").mkdir(parents=True)
         ckpt_path = tmp_path / "ckpt.json"
 
-        entries = [
-            _make_flat_entry(question_id=f"Q{i}", question=f"Q{i}") for i in range(5)
-        ]
+        entries = [_make_flat_entry(question_id=f"Q{i}", question=f"Q{i}") for i in range(5)]
         json_path = output_dir / "train" / "Sim3_VQA_train.json"
         _write_entries_json(entries, json_path)
 
         annotator = BatchAnnotator(scorer, output_dir)
-        result = annotator.annotate_file(json_path, checkpoint_path=ckpt_path, checkpoint_interval=2)
+        result = annotator.annotate_file(
+            json_path, checkpoint_path=ckpt_path, checkpoint_interval=2
+        )
         assert result["scored"] == 5
 
 

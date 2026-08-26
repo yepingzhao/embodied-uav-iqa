@@ -1,6 +1,6 @@
-"""Tests for uav_iqa.annotations utility functions."""
+"""Tests for uav_iqa.domain annotation utilities."""
 
-from uav_iqa.annotations import (
+from uav_iqa.domain import (
     build_sample_id,
     extract_uav_id_from_question_id,
     normalize_subtask_type,
@@ -24,16 +24,11 @@ class TestExtractUavIdFromQuestionId:
         assert extract_uav_id_from_question_id("something_no_uav") == "UAV1"
 
     def test_no_uav_in_question_id_with_type_hint(self):
-        assert (
-            extract_uav_id_from_question_id("something_no_uav", "(UAV3)")
-            == "UAV3"
-        )
+        assert extract_uav_id_from_question_id("something_no_uav", "(UAV3)") == "UAV3"
 
     def test_question_type_uav_in_parens(self):
         assert (
-            extract_uav_id_from_question_id(
-                "question_without_uav", "scene_understanding (UAV2)"
-            )
+            extract_uav_id_from_question_id("question_without_uav", "scene_understanding (UAV2)")
             == "UAV2"
         )
 

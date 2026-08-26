@@ -1,4 +1,4 @@
-"""Tests for uav_iqa.distortion_synthesis — DatasetFormat registry, formats, and pipeline."""
+"""Tests for uav_iqa.data — adapter registry and distortion synthesis pipeline."""
 
 import json
 import tempfile
@@ -8,11 +8,11 @@ import cv2
 import numpy as np
 import pytest
 
-from uav_iqa.distortion_synthesis import (
-    AirCopBenchFormat,
-    DatasetFormat,
-    DataSynthesisPipeline,
-    GenericImageDirFormat,
+from uav_iqa.data import (
+    AirCopBenchAdapter,
+    DatasetAdapter,
+    DistortionSynthesisPipeline,
+    ImageDirectoryAdapter,
     create_pipeline,
 )
 
@@ -30,27 +30,27 @@ def _make_vqa_json(path: Path, entries: list[dict]):
 
 
 # ===========================================================================
-# DatasetFormat registry
+# DatasetAdapter registry
 # ===========================================================================
 
 
 class TestRegistry:
-    def test_list_formats_includes_registered(self):
-        formats = DatasetFormat.list_formats()
+    def test_list_adapters_includes_registered(self):
+        formats = DatasetAdapter.list_adapters()
         assert "aircopbench" in formats
         assert "generic" in formats
 
     def test_get_returns_correct_class(self):
-        assert DatasetFormat.get("aircopbench") is AirCopBenchFormat
-        assert DatasetFormat.get("generic") is GenericImageDirFormat
+        assert DatasetAdapter.get("aircopbench") is AirCopBenchAdapter
+        assert DatasetAdapter.get("generic") is ImageDirectoryAdapter
 
     def test_get_unknown_raises(self):
-        with pytest.raises(ValueError, match="Unknown dataset format"):
-            DatasetFormat.get("bogus")
+        with pytest.raises(ValueError, match="Unknown dataset adapter"):
+            DatasetAdapter.get("bogus")
 
     def test_register_new_format(self):
-        @DatasetFormat.register
-        class _TestFormat(DatasetFormat):
+        @DatasetAdapter.register
+        class _TestFormat(DatasetAdapter):
             name = "_test_fmt"
 
             def get_exclude_dirs(self):
@@ -59,18 +59,18 @@ class TestRegistry:
             def find_reference_images(self, input_root):
                 return []
 
-        assert "_test_fmt" in DatasetFormat.list_formats()
-        del DatasetFormat._registry["_test_fmt"]
+        assert "_test_fmt" in DatasetAdapter.list_adapters()
+        del DatasetAdapter._registry["_test_fmt"]
 
 
 # ===========================================================================
-# AirCopBenchFormat
+# AirCopBenchAdapter
 # ===========================================================================
 
 
-class TestAirCopBenchFormat:
+class TestAirCopBenchAdapter:
     def test_exclude_dirs(self):
-        fmt = AirCopBenchFormat()
+        fmt = AirCopBenchAdapter()
         dirs = fmt.get_exclude_dirs()
         assert "loss" in dirs
         assert "Annotations" in dirs
@@ -83,7 +83,7 @@ class TestAirCopBenchFormat:
             _make_dummy_image(root / "loss" / "bad.jpg")
             _make_dummy_image(root / "noise" / "bad2.jpg")
 
-            fmt = AirCopBenchFormat()
+            fmt = AirCopBenchAdapter()
             images = fmt.find_reference_images(root)
             paths = [p.name for p in images]
             assert "good.jpg" in paths
@@ -92,13 +92,13 @@ class TestAirCopBenchFormat:
 
 
 # ===========================================================================
-# GenericImageDirFormat
+# ImageDirectoryAdapter
 # ===========================================================================
 
 
-class TestGenericImageDirFormat:
+class TestImageDirectoryAdapter:
     def test_no_exclude_dirs(self):
-        fmt = GenericImageDirFormat()
+        fmt = ImageDirectoryAdapter()
         assert fmt.get_exclude_dirs() == set()
 
     def test_find_reference_images_finds_all(self):
@@ -107,7 +107,7 @@ class TestGenericImageDirFormat:
             _make_dummy_image(root / "a.jpg")
             _make_dummy_image(root / "sub" / "b.png")
 
-            fmt = GenericImageDirFormat()
+            fmt = ImageDirectoryAdapter()
             images = fmt.find_reference_images(root)
             assert len(images) == 2
 
@@ -120,11 +120,11 @@ class TestGenericImageDirFormat:
 class TestCreatePipeline:
     def test_default_is_aircopbench(self):
         p = create_pipeline()
-        assert isinstance(p.format, AirCopBenchFormat)
+        assert isinstance(p.adapter, AirCopBenchAdapter)
 
     def test_explicit_generic(self):
         p = create_pipeline("generic")
-        assert isinstance(p.format, GenericImageDirFormat)
+        assert isinstance(p.adapter, ImageDirectoryAdapter)
 
     def test_unknown_raises(self):
         with pytest.raises(ValueError):
@@ -132,7 +132,7 @@ class TestCreatePipeline:
 
 
 # ===========================================================================
-# DataSynthesisPipeline — inject step
+# DistortionSynthesisPipeline — inject step
 # ===========================================================================
 
 
@@ -166,7 +166,7 @@ class TestPipelineInject:
             }
             _make_vqa_json(train_dir / "Sim3_VQA_train.json", [vqa_entry])
 
-            pipeline = DataSynthesisPipeline(GenericImageDirFormat(), seed=42)
+            pipeline = DistortionSynthesisPipeline(ImageDirectoryAdapter(), seed=42)
             stats = pipeline.inject_distortions(
                 input_root=src,
                 output_dir=dst,
@@ -196,4 +196,3 @@ class TestPipelineInject:
             assert distorted_dir.is_dir()
             distorted_imgs = list(distorted_dir.glob("*.png"))
             assert len(distorted_imgs) >= 3
-

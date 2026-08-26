@@ -2,10 +2,10 @@
 
 import json
 
-from uav_iqa.utils import load_flat_samples
+from uav_iqa.data.samples import load_benchmark_samples
 
 
-def test_load_flat_samples_projects_current_flat_schema(tmp_path):
+def test_load_benchmark_samples_projects_current_flat_schema(tmp_path):
     """A processed flat entry maps to the exact manifest-compatible projection."""
     split_dir = tmp_path / "train"
     split_dir.mkdir()
@@ -30,7 +30,7 @@ def test_load_flat_samples_projects_current_flat_schema(tmp_path):
     with (split_dir / "mission_VQA_001.json").open("w") as file:
         json.dump([entry], file)
 
-    assert load_flat_samples(tmp_path, "train") == [
+    assert load_benchmark_samples(tmp_path, "train") == [
         {
             "path": "processed/mission/a_view.jpg",
             "ref_path": "raw/mission/a_view.jpg",

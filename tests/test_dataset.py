@@ -1,4 +1,4 @@
-"""Tests for UAVIQADataset — multi-image loading, question text output, collation."""
+"""Tests for UAVQualityDataset — multi-image loading, question text output, collation."""
 import json
 import sys
 from pathlib import Path
@@ -8,7 +8,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from uav_iqa.dataset import UAVIQADataset, validate_manifest
+from uav_iqa.data import UAVQualityDataset, validate_manifest
 
 
 class TestValidateManifest:
@@ -67,7 +67,7 @@ class TestDatasetOutput:
 
     def test_returns_question_text(self, data_dir):
         """__getitem__ should include the 'question' field."""
-        ds = UAVIQADataset(data_root=data_dir, split="train")
+        ds = UAVQualityDataset(data_root=data_dir, split="train")
         sample = ds[0]
         assert "question" in sample, "dataset must return 'question' field"
         assert isinstance(sample["question"], str)
@@ -75,13 +75,13 @@ class TestDatasetOutput:
 
     def test_question_matches_input(self, data_dir):
         """question text should match what was in the JSON."""
-        ds = UAVIQADataset(data_root=data_dir, split="train")
+        ds = UAVQualityDataset(data_root=data_dir, split="train")
         sample = ds[1]
         assert sample["question"] == "What is visible in scene 1?"
 
     def test_returns_images_tensor(self, data_dir):
         """images should be a (N, 3, H, W) tensor."""
-        ds = UAVIQADataset(data_root=data_dir, split="train")
+        ds = UAVQualityDataset(data_root=data_dir, split="train")
         sample = ds[0]
         assert "images" in sample
         img = sample["images"]
@@ -90,30 +90,30 @@ class TestDatasetOutput:
         assert img.shape[1] == 3  # 3 channels
 
     def test_returns_task_id(self, data_dir):
-        ds = UAVIQADataset(data_root=data_dir, split="train")
+        ds = UAVQualityDataset(data_root=data_dir, split="train")
         sample = ds[0]
         assert "task_id" in sample
         assert isinstance(sample["task_id"], torch.Tensor)
 
     def test_returns_score(self, data_dir):
-        ds = UAVIQADataset(data_root=data_dir, split="train")
+        ds = UAVQualityDataset(data_root=data_dir, split="train")
         sample = ds[0]
         assert "score" in sample
         assert isinstance(sample["score"], torch.Tensor)
 
     def test_returns_sample_id(self, data_dir):
-        ds = UAVIQADataset(data_root=data_dir, split="train")
+        ds = UAVQualityDataset(data_root=data_dir, split="train")
         sample = ds[0]
         assert "sample_id" in sample
         assert sample["sample_id"].startswith("Sim3")
 
     def test_len(self, data_dir):
-        ds = UAVIQADataset(data_root=data_dir, split="train")
+        ds = UAVQualityDataset(data_root=data_dir, split="train")
         assert len(ds) == 3
 
     def test_multiple_samples(self, data_dir):
         """All samples should have different question text."""
-        ds = UAVIQADataset(data_root=data_dir, split="train")
+        ds = UAVQualityDataset(data_root=data_dir, split="train")
         questions = [ds[i]["question"] for i in range(len(ds))]
         assert len(set(questions)) == 3  # all unique
 
@@ -141,7 +141,7 @@ class TestCollateFunction:
                 "num_uavs": 3,
             },
         ]
-        result = UAVIQADataset.collate_fn(batch)
+        result = UAVQualityDataset.collate_fn(batch)
 
         assert "question" in result, "collate_fn must return 'question' field"
         assert result["question"] == [

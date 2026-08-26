@@ -67,9 +67,9 @@ class TestModelTextInput:
         scores = model(x, task_ids)  # no question_text
         assert scores.shape == (B,)
 
-    def test_text_encoder_exists(self, model):
-        """Model should have a text_encoder attribute after init."""
-        assert hasattr(model, "text_encoder"), "model must have text_encoder"
+    def test_question_encoder_exists(self, model):
+        """Model should expose its question-text encoder after initialization."""
+        assert hasattr(model, "question_encoder"), "model must have question_encoder"
 
     def test_encode_text_returns_features(self, model):
         """encode_text() should convert question strings to feature vectors."""
@@ -95,7 +95,7 @@ class TestModelTextInput:
         )
 
     def test_text_encoder_output_dim(self, model):
-        """text_encoder should output feature vectors of a known dimensionality."""
+        """Question encoder should output feature vectors of a known dimensionality."""
         questions = ["A question about UAV imagery."]
         features = model.encode_text(questions)
         # text_dim should be reasonable (e.g., 64 or 128)
@@ -175,8 +175,8 @@ class TestTextEncoder:
     def test_text_encoder_empty_string(self):
         encoder = QuestionTextEncoder(text_dim=128)
         token_ids = encoder._tokenize([""])
-        assert token_ids.shape == (1, 0)
-        assert token_ids.nelement() == 0
+        assert token_ids.shape == (1, 1)
+        assert token_ids.item() == encoder.PAD_IDX
 
     def test_text_encoder_device_move(self):
         encoder = QuestionTextEncoder(text_dim=128, max_len=16)

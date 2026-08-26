@@ -9,11 +9,25 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from uav_iqa.annotations import SUBTASK_NAMES
+from uav_iqa.domain import SUBTASK_NAMES, SUBTASK_NAME_LIST
 from uav_iqa.vlm import (
     MODEL_REGISTRY,
     VLMScorer,
 )
+from uav_iqa.vlm.vqa_index import VQAIndex
+
+ALL_TASKS = SUBTASK_NAME_LIST
+
+
+@pytest.fixture(autouse=True)
+def _isolate_vqa_index(monkeypatch, tmp_path):
+    """Keep scorer tests independent of a checkout's processed dataset."""
+
+    monkeypatch.setattr(
+        "uav_iqa.vlm.scorer.VQAIndex",
+        lambda _vqa_dir: VQAIndex(str(tmp_path)),
+    )
+
 
 # ===========================================================================
 # Helper functions
@@ -243,9 +257,9 @@ class TestVLMScorerPrompt:
         for task in ALL_TASKS:
             formatted = scorer._build_description_prompt(task, 0)
             assert len(formatted) > 0, f"{task}: empty formatted prompt"
-            assert "aerial" in formatted.lower(), (
-                f"{task}: missing 'aerial' in prompt: {formatted[:80]}..."
-            )
+            assert (
+                "aerial" in formatted.lower()
+            ), f"{task}: missing 'aerial' in prompt: {formatted[:80]}..."
 
     def test_all_tasks_have_3_prompts(self):
         """Every task type returns 3 non-empty description prompts."""
@@ -488,9 +502,9 @@ class TestChatTemplateFormatting:
             for task in ALL_TASKS:
                 formatted = scorer._build_description_prompt(task, 0)
                 assert len(formatted) > 0, f"{short_name}/{task}: empty prompt"
-                assert "aerial" in formatted.lower(), (
-                    f"{short_name}/{task}: 'aerial' not in prompt: {formatted[:80]}..."
-                )
+                assert (
+                    "aerial" in formatted.lower()
+                ), f"{short_name}/{task}: 'aerial' not in prompt: {formatted[:80]}..."
 
     def test_internvl3_format_matches_internvl_pattern(self):
         """InternVL3 uses same format as InternVL2."""
@@ -688,7 +702,7 @@ class TestVLMScorerModelLoading:
         with patch.dict("sys.modules", {"transformers": mock_tf, "torch": torch}):
             scorer = VLMScorer(model_name="InternVL2", backend="transformers", device="cpu")
             scorer._load_model()
-            assert trust_values == [False]
+            assert trust_values == [scorer.vlm_config.trust_remote_code]
 
     def test_load_model_qwen_uses_auto_model_for_vision2seq(self):
         """Qwen family uses AutoModelForVision2Seq (backward compat)."""
@@ -838,9 +852,9 @@ class TestVLMScorerPipelineIntegration:
                     result = scorer.score_image_comparison(str(img1), str(img2), "tracking")
 
                 assert result["metadata"]["annotated"] is True, f"{short_name}: annot mismatch"
-                assert result["summary"]["cognitive_score"] > 0.9, (
-                    f"{short_name}: low cognitive score {result['summary']['cognitive_score']}"
-                )
+                assert (
+                    result["summary"]["cognitive_score"] > 0.9
+                ), f"{short_name}: low cognitive score {result['summary']['cognitive_score']}"
 
     def test_different_families_score_comparison_mocked(self):
         """Every model family works with mocked score_image_comparison."""
@@ -867,9 +881,9 @@ class TestVLMScorerPipelineIntegration:
                     result = scorer.score_image_comparison(str(img1), str(img2), "tracking")
 
                 assert result["metadata"]["annotated"] is True, f"{short_name}: annot mismatch"
-                assert result["summary"]["cognitive_score"] > 0.9, (
-                    f"{short_name}: low cognitive score"
-                )
+                assert (
+                    result["summary"]["cognitive_score"] > 0.9
+                ), f"{short_name}: low cognitive score"
 
 
 class TestGenerateAnswerMulti:

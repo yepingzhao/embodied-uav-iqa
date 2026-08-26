@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from uav_iqa.distortion import (
+from uav_iqa.distortions import (
     AtmosphericScatteringHaze,
     CommunicationPacketLoss,
     GenericDistortions,

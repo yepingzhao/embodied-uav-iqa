@@ -7,36 +7,36 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from uav_iqa.lightning_module import UAVIQALightningModule
+from uav_iqa.training import UAVQualityTrainingModule
 
 
 class TestLightningModule:
     def test_init(self):
-        model = UAVIQALightningModule()
+        model = UAVQualityTrainingModule()
         assert model.model is not None
-        assert model.model.use_fab is True
-        assert model.model.use_cbam is True
+        assert model.model.use_frequency_encoder is True
+        assert model.model.use_spatial_attention is True
         assert model.model.use_task_conditioning is True
 
     def test_no_fab(self):
-        model = UAVIQALightningModule(use_fab=False)
-        assert model.model.use_fab is False
+        model = UAVQualityTrainingModule(use_frequency_encoder=False)
+        assert model.model.use_frequency_encoder is False
 
     def test_configure_optimizers(self):
-        model = UAVIQALightningModule()
+        model = UAVQualityTrainingModule()
         opt_cfg = model.configure_optimizers()
         assert "optimizer" in opt_cfg
         assert "lr_scheduler" in opt_cfg
         assert opt_cfg["lr_scheduler"]["interval"] == "epoch"
 
     def test_no_warmup_configure_optimizers(self):
-        model = UAVIQALightningModule(warmup_epochs=0)
+        model = UAVQualityTrainingModule(warmup_epochs=0)
         opt_cfg = model.configure_optimizers()
         assert "optimizer" in opt_cfg
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="No GPU available")
     def test_training_step(self):
-        model = UAVIQALightningModule(lambda_rank=0.0, lambda_cross_task=0.0)
+        model = UAVQualityTrainingModule(lambda_rank=0.0, lambda_cross_task=0.0)
 
         batch = {
             "images": torch.randn(4, 3, 256, 256),
@@ -85,9 +85,9 @@ class TestLightningDataModule:
         return str(data_root)
 
     def test_data_module_setup(self, mock_data_dir):
-        from uav_iqa.data_module import UAVIQADataModule
+        from uav_iqa.data import UAVQualityDataModule
 
-        dm = UAVIQADataModule(
+        dm = UAVQualityDataModule(
             data_root=mock_data_dir,
             batch_size=4,
             num_workers=0,
