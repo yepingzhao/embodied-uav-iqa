@@ -7,7 +7,7 @@ from pathlib import Path
 import lightning as L
 import yaml
 
-from .utils import count_parameters
+from uav_iqa.utils import count_parameters
 
 _log = logging.getLogger(__name__)
 

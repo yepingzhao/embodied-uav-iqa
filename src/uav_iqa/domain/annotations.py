@@ -204,9 +204,7 @@ def extract_subtask_id(question_type: str) -> int:
     return SUBTASK_TO_ID.get(subtask_type, 0)
 
 
-_KEYWORD_MAP = {
-    name.replace("_", " ").title(): name for name in SUBTASK_NAME_LIST
-}
+_KEYWORD_MAP = {name.replace("_", " ").title(): name for name in SUBTASK_NAME_LIST}
 
 
 def normalize_subtask_type(question_type: str) -> str:
@@ -279,8 +277,7 @@ def build_sample_id(
     safe_frame = sequence_frame.replace("/", "_").replace("\\", "_")
     if split or question_id:
         return (
-            f"{dataset}__{split}__{safe_frame}__{question_id}"
-            f"__{distortion_type}_L{level:02d}"
+            f"{dataset}__{split}__{safe_frame}__{question_id}" f"__{distortion_type}_L{level:02d}"
         )
     return f"{dataset}__{safe_frame}__{distortion_type}_L{level:02d}"
 

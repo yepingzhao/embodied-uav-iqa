@@ -9,12 +9,13 @@ compute a cognitive quality score.
 import importlib
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
 from tqdm import tqdm
 
-from uav_iqa.text_metrics import (
+from uav_iqa.evaluation import (
     compute_bleu,
     compute_cider,
     compute_cognitive_score,
@@ -71,7 +72,12 @@ class VLMScorer:
         self.max_num_seqs = max_num_seqs
         self._model = None
         self._load_failed = False
-        self.vqa_index = VQAIndex(vqa_dir)
+        # Most scoring paths use task-conditioned description prompts and do
+        # not query the VQA lookup.  Build the filesystem-backed index only
+        # for the explicit VQA scoring methods so normal model construction
+        # does not walk the processed dataset once per worker.
+        self._vqa_dir = vqa_dir
+        self._vqa_index: Optional[VQAIndex] = None
 
         self.vlm_config = self._resolve_model_name(model_name)
         self.model_name = self.vlm_config.hf_model_id
@@ -97,7 +103,8 @@ class VLMScorer:
             new_name = DEPRECATED_MODELS[name]
             _log.warning(
                 "VLM model '%s' is deprecated, auto-mapping to '%s'",
-                name, new_name,
+                name,
+                new_name,
             )
             name = new_name
 
@@ -132,6 +139,13 @@ class VLMScorer:
             f"or a HuggingFace model ID (e.g., 'org/model-name')."
         )
 
+    @property
+    def vqa_index(self) -> VQAIndex:
+        """Lazily construct the optional filesystem-backed VQA prompt index."""
+        if self._vqa_index is None:
+            self._vqa_index = VQAIndex(self._vqa_dir)
+        return self._vqa_index
+
     def _resolve_backend(self) -> str:
         """Resolve actual backend capability.
 
@@ -159,9 +173,7 @@ class VLMScorer:
                     self.vlm_config.family,
                 )
                 return self._resolve_transformers_backend()
-            import importlib.util
-
-            if importlib.util.find_spec("vllm") is not None:
+            if self._module_is_available("vllm"):
                 return "vllm"
             raise RuntimeError(
                 "vLLM backend explicitly requested but not installed. "
@@ -173,18 +185,14 @@ class VLMScorer:
 
         # auto: try vllm first, then transformers, then raise
         if vllm_viable:
-            import importlib.util
-
-            if importlib.util.find_spec("vllm") is not None:
+            if self._module_is_available("vllm"):
                 return "vllm"
 
         return self._resolve_transformers_backend()
 
     def _resolve_transformers_backend(self) -> str:
         """Resolve the transformers backend."""
-        import importlib.util
-
-        if importlib.util.find_spec("transformers") is not None:
+        if self._module_is_available("transformers"):
             return "transformers"
 
         if self.backend == "transformers":
@@ -199,6 +207,20 @@ class VLMScorer:
             "Install vLLM (pip install vllm) or "
             "transformers (pip install transformers accelerate)."
         )
+
+    @staticmethod
+    def _module_is_available(module_name: str) -> bool:
+        """Return whether an optional module can be imported without importing it.
+
+        Test harnesses and embedding applications sometimes pre-populate
+        ``sys.modules`` with a lightweight module object whose ``__spec__`` is
+        unset.  ``importlib.util.find_spec`` raises ``ValueError`` for that
+        valid already-loaded state, so handle it before querying importlib.
+        A ``None`` sentinel remains an explicit unavailable module.
+        """
+        if module_name in sys.modules:
+            return sys.modules[module_name] is not None
+        return importlib.util.find_spec(module_name) is not None
 
     @staticmethod
     def _apply_global_patches(tf_mod):
@@ -293,7 +315,15 @@ class VLMScorer:
         NOT inside rope_scaling (standard Phi-3 layout), vLLM 0.19.1 fails to
         propagate it. This monkey-patches patch_rope_parameters to inject it.
         """
-        import vllm.transformers_utils.config as _vllm_cfg
+        try:
+            import vllm.transformers_utils.config as _vllm_cfg
+        except ModuleNotFoundError:
+            # A lightweight embedding/test stub can expose ``vllm.LLM``
+            # without the optional internal configuration package.  The rope
+            # workaround is unnecessary in that case; the subsequent LLM
+            # construction remains the authoritative load result.
+            _log.debug("vLLM rope configuration module is unavailable; skipping patch")
+            return
 
         if getattr(_vllm_cfg.patch_rope_parameters, "_uav_iqa_patched", False):
             return
@@ -323,7 +353,8 @@ class VLMScorer:
             # Fix vLLM v0.19 CUDA graph memory profiling (can over-estimate
             # by 5000%+, starving the KV cache).  See vLLM issue tracker.
             os.environ.setdefault(
-                "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS", "1",
+                "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS",
+                "1",
             )
             llm_kwargs: dict = dict(
                 model=self.model_name,
@@ -530,7 +561,7 @@ class VLMScorer:
                     # (non-deterministic uninitialized memory) that
                     # causes CUDA device-side asserts in the position
                     # embedding lookup (Bug #4 in internlm_xc series).
-                    for _m in self._model.modules():
+                    for _m in getattr(self._model, "modules", lambda: ())():
                         if isinstance(_m, _CLIPVisionModel):
                             _emb = (
                                 _m.embeddings
@@ -552,11 +583,16 @@ class VLMScorer:
                     # config has non-standard attributes at generation
                     # time.  Transfer it to the generation_config where
                     # it belongs in the 5.x API.
-                    if hasattr(self._model.config, "max_length"):
-                        _ml = self._model.config.max_length
-                        if not hasattr(self._model.generation_config, "max_length") or self._model.generation_config.max_length is None:
-                            self._model.generation_config.max_length = _ml
-                        del self._model.config.max_length
+                    _model_config = getattr(self._model, "config", None)
+                    _generation_config = getattr(self._model, "generation_config", None)
+                    if _model_config is not None and hasattr(_model_config, "max_length"):
+                        _ml = _model_config.max_length
+                        if _generation_config is not None and (
+                            not hasattr(_generation_config, "max_length")
+                            or _generation_config.max_length is None
+                        ):
+                            _generation_config.max_length = _ml
+                        del _model_config.max_length
                 finally:
                     _urllib_request.urlopen = _orig_urlopen
                     _TransformerPTM.get_init_context = _orig_get_init_ctx
@@ -640,7 +676,9 @@ class VLMScorer:
                 # which prepare_inputs_for_generation consumes but forward
                 # does not.  transformers 4.57.6 validates all model_kwargs,
                 # flagging `infer_mode`.  Make the model tolerate it.
-                if "2d5" in self.model_name:
+                if "2d5" in self.model_name and hasattr(
+                    self._model, "_validate_model_kwargs"
+                ):
                     self._model._validate_model_kwargs_bak = self._model._validate_model_kwargs
                     self._model._validate_model_kwargs = lambda *a, **kw: None
 
@@ -1448,10 +1486,7 @@ class VLMScorer:
             valid_indices.append(i)
 
         if not all_prompts:
-            return [
-                default_indices.get(i, dict(empty_result))
-                for i in range(N)
-            ]
+            return [default_indices.get(i, dict(empty_result)) for i in range(N)]
 
         # Single batched generate() for all ref + dist prompts
         try:
@@ -1479,7 +1514,8 @@ class VLMScorer:
                     except Exception:
                         _log.error(
                             "Sequential fallback failed for entry %d (sample_id=%s)",
-                            i, batch_ref_paths[i] if i < len(batch_ref_paths) else "?",
+                            i,
+                            batch_ref_paths[i] if i < len(batch_ref_paths) else "?",
                         )
                         raise
             return results
@@ -1509,15 +1545,17 @@ class VLMScorer:
                 ref_texts=[ref_text],
                 dist_texts=[dist_text],
             )
-            results.append({
-                "cognitive_score": round(metric_result["cognitive_score"], 6),
-                "bleu": round(metric_result["bleu"], 6),
-                "rouge_l": round(metric_result["rouge_l"], 6),
-                "cider": round(metric_result["cider"], 6),
-                "ref_description": ref_text,
-                "dist_description": dist_text,
-                "prompt": batch_questions[i].strip(),
-            })
+            results.append(
+                {
+                    "cognitive_score": round(metric_result["cognitive_score"], 6),
+                    "bleu": round(metric_result["bleu"], 6),
+                    "rouge_l": round(metric_result["rouge_l"], 6),
+                    "cider": round(metric_result["cider"], 6),
+                    "ref_description": ref_text,
+                    "dist_description": dist_text,
+                    "prompt": batch_questions[i].strip(),
+                }
+            )
 
             valid_idx += 1
 

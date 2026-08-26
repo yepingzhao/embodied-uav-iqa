@@ -2,8 +2,8 @@ seed_everything: 42
 model:
   backbone: mobilenetv4_conv_small
   num_tasks: 14
-  use_fab: true
-  use_cbam: true
+  use_frequency_encoder: true
+  use_spatial_attention: true
   use_task_conditioning: true
   freeze_backbone_stage: 2
   lambda_rank: 0.3
@@ -17,7 +17,7 @@ data:
   batch_size: 256
   num_workers: 16
   image_size: 256
-  subtask_filter: "1.1,1.2,1.3,2.1,2.2,2.3,2.4"
+  subtask_filter: "scene_description,scene_comparison,observing_posture,object_recognition,object_counting,object_grounding,object_matching"
   distortion_filter: null
   dry_run: false
 trainer:
@@ -40,9 +40,9 @@ trainer:
       name: r024a_tracking
       save_dir: outputs/r024a_tracking
   callbacks:
-  - class_path: uav_iqa.callbacks.SetupRunCallback
-  - class_path: uav_iqa.callbacks.MetricsHistoryCallback
-  - class_path: uav_iqa.callbacks.ResultsSavingCallback
+  - class_path: uav_iqa.training.SetupRunCallback
+  - class_path: uav_iqa.training.MetricsHistoryCallback
+  - class_path: uav_iqa.training.ResultsSavingCallback
   - class_path: lightning.pytorch.callbacks.ModelCheckpoint
     init_args:
       dirpath: null

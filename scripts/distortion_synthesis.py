@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """UAV-IQA distortion synthesis pipeline — CLI.
 
-Backed by ``uav_iqa.distortion_synthesis``.
+Backed by ``uav_iqa.data``.
 
 Subcommands:
     inject     Group by scene+frame, apply 36 distortions to all UAVs.
@@ -15,7 +15,7 @@ Examples:
 
 import argparse
 
-from uav_iqa.distortion_synthesis import DatasetFormat, create_pipeline
+from uav_iqa.data import DatasetAdapter, create_pipeline
 from uav_iqa.utils import setup_logging
 
 _log = setup_logging(__name__)
@@ -25,7 +25,7 @@ def _add_dataset_arg(parser, required: bool = False):
     parser.add_argument(
         "--dataset",
         default="aircopbench",
-        choices=DatasetFormat.list_formats(),
+        choices=DatasetAdapter.list_adapters(),
         required=required,
         help="Dataset format (default: aircopbench)",
     )

@@ -22,7 +22,6 @@ import logging
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
 
 from .queue import BaseQueue
 from .repository import TaskRepository

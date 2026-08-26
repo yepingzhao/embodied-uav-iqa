@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.stats import pearsonr, spearmanr
 
-from .annotations import SUBTASK_NAME_LIST as TASK_NAMES
+from uav_iqa.domain import SUBTASK_NAME_LIST as TASK_NAMES
 
 
 def compute_srcc(pred: np.ndarray, target: np.ndarray) -> float:
@@ -127,7 +127,7 @@ def per_distortion_category_metrics(
         {'UAV': {...}, 'Generic': {...}}
     """
     if uav_dist_names is None:
-        from .distortion import UAV_DISTORTION_NAMES
+        from uav_iqa.distortions import UAV_DISTORTION_NAMES
 
         uav_dist_names = UAV_DISTORTION_NAMES
 

@@ -20,22 +20,21 @@ from pathlib import Path
 
 import numpy as np
 
-from uav_iqa.annotations import build_ref_score_lookup
-from uav_iqa.metrics import (
+from uav_iqa.domain import build_ref_score_lookup
+from uav_iqa.evaluation import (
     compute_plcc,
     compute_rmse,
     compute_srcc,
     per_distortion_category_metrics,
 )
-from uav_iqa.utils import load_flat_samples, setup_logging
+from uav_iqa.data.samples import load_benchmark_samples
+from uav_iqa.utils import setup_logging
 
 _log = setup_logging(__name__)
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="C2: VLM-Predicted-vs-Real correlation"
-    )
+    parser = argparse.ArgumentParser(description="C2: VLM-Predicted-vs-Real correlation")
     parser.add_argument(
         "--output-dir",
         default="data/processed",
@@ -89,7 +88,7 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    entries = load_flat_samples(Path(args.output_dir), args.split)
+    entries = load_benchmark_samples(Path(args.output_dir), args.split)
     _log.info("Loaded %d entries from %s/%s", len(entries), args.output_dir, args.split)
 
     ref_lookup = build_ref_score_lookup(Path(args.aircopbench_dir))

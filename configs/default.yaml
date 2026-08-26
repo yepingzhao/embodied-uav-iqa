@@ -2,8 +2,8 @@ seed_everything: 42
 model:
   backbone: mobilenetv4_conv_small
   num_tasks: 14
-  use_fab: true
-  use_cbam: true
+  use_frequency_encoder: true
+  use_spatial_attention: true
   use_task_conditioning: true
   freeze_backbone_stage: 2
   lambda_rank: 0.3
@@ -42,7 +42,7 @@ trainer:
       name: default
       save_dir: outputs/default
   callbacks:
-  - class_path: uav_iqa.callbacks.SetupRunCallback
+  - class_path: uav_iqa.training.SetupRunCallback
   - class_path: lightning.pytorch.callbacks.ModelCheckpoint
     init_args:
       dirpath: null

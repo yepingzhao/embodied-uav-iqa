@@ -11,7 +11,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from uav_iqa.distortion import UAVDistortionPipeline
+from uav_iqa.distortions import UAVDistortionPipeline
 from uav_iqa.utils import setup_logging
 
 _log = setup_logging(__name__)

@@ -16,11 +16,13 @@ _log = logging.getLogger(__name__)
 
 # -- top-level helpers -------------------------------------------------------
 
+
 def _load_images(image_paths: List[str]) -> List[Image.Image]:
     return [Image.open(p).convert("RGB") for p in image_paths]
 
 
 # -- backend: vLLM -----------------------------------------------------------
+
 
 def run_vllm_inference(
     model: Any,
@@ -56,8 +58,7 @@ def run_vllm_inference(
     text = outputs[0].outputs[0].text.strip()
     if not text:
         _log.warning(
-            "vLLM returned empty text. "
-            "token_ids=%s, finish_reason=%s, text_raw=%r",
+            "vLLM returned empty text. " "token_ids=%s, finish_reason=%s, text_raw=%r",
             len(getattr(outputs[0].outputs[0], "token_ids", []) or []),
             getattr(outputs[0].outputs[0], "finish_reason", "?"),
             outputs[0].outputs[0].text,
@@ -101,18 +102,19 @@ def run_vllm_inference_batch(
         image_tags = "".join([image_placeholder] * len(image_paths))
         try:
             formatted_prompt = chat_template.format(
-                prompt=prompt_text, image_tags=image_tags,
+                prompt=prompt_text,
+                image_tags=image_tags,
             )
         except KeyError:
-            formatted_prompt = (
-                image_tags + "\n" + chat_template.format(prompt=prompt_text)
-            )
+            formatted_prompt = image_tags + "\n" + chat_template.format(prompt=prompt_text)
         images = _load_images(image_paths)
         image_data = images[0] if len(images) == 1 else images
-        batch_data.append({
-            "prompt": formatted_prompt,
-            "multi_modal_data": {"image": image_data},
-        })
+        batch_data.append(
+            {
+                "prompt": formatted_prompt,
+                "multi_modal_data": {"image": image_data},
+            }
+        )
 
     outputs = model.generate(batch_data, sp)
 
@@ -132,6 +134,7 @@ def run_vllm_inference_batch(
 
 
 # -- backend: transformers, per-family ---------------------------------------
+
 
 def _internlm_xc_gen(
     model: Any,
@@ -181,9 +184,7 @@ def _internvl_gen(
     for p in image_paths:
         image = Image.open(p).convert("RGB")
         pixel_values_list.append(transform(image).unsqueeze(0))
-    pixel_values = torch.cat(pixel_values_list, dim=0).to(
-        device=device, dtype=torch.float16
-    )
+    pixel_values = torch.cat(pixel_values_list, dim=0).to(device=device, dtype=torch.float16)
     gen_config = {"max_new_tokens": max_tokens, "do_sample": False}
     with torch.no_grad():
         return model.chat(
@@ -205,9 +206,7 @@ def _phi_gen(
     short_name: str = "",
 ) -> str:
     image_tags = "\n".join(f"<|image_{i + 1}|>" for i in range(len(image_paths)))
-    prompt_with_images = (
-        f"<|user|>\n{image_tags}\n{prompt}<|end|>\n<|assistant|>\n"
-    )
+    prompt_with_images = f"<|user|>\n{image_tags}\n{prompt}<|end|>\n<|assistant|>\n"
     images = _load_images(image_paths)
     inputs = processor(
         text=prompt_with_images,
@@ -260,9 +259,7 @@ def _qwen_gen(
     content.append({"type": "text", "text": prompt})
     messages = [{"role": "user", "content": content}]
 
-    text = processor.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
+    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     images = _load_images(image_paths)
     inputs = processor(text=[text], images=images, return_tensors="pt").to(device)
     with torch.no_grad():
@@ -284,9 +281,7 @@ def _mplug_gen(
     image_tags = "\n".join(["<|image|>"] * len(image_paths))
     messages = [{"role": "user", "content": f"{image_tags}\n{prompt}"}]
     images = _load_images(image_paths)
-    inputs = model.mplug_processor_cached(
-        messages, images=images, return_tensors="pt"
-    )
+    inputs = model.mplug_processor_cached(messages, images=images, return_tensors="pt")
     input_ids = inputs.pop("input_ids").to(device)
     model_kwargs: Dict[str, Any] = {
         "input_ids": input_ids,
@@ -372,6 +367,7 @@ def _generic_gen(
 
 # -- top-level dispatcher ----------------------------------------------------
 
+
 def run_transformers_family(
     vlm_config: Any,
     model: Any,
@@ -402,9 +398,7 @@ def run_transformers_family(
     if family == "internlm_xc":
         return _internlm_xc_gen(model, processor, image_paths, prompt, max_tokens)
     if family == "internvl":
-        return _internvl_gen(
-            model, processor, image_paths, prompt, max_tokens, device
-        )
+        return _internvl_gen(model, processor, image_paths, prompt, max_tokens, device)
     elif family == "phi":
         return _phi_gen(
             model,

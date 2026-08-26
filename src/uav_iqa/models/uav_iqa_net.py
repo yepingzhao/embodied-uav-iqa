@@ -39,7 +39,8 @@ class UAVIQANet(nn.Module):
     ):
         super().__init__()
         if num_tasks is None:
-            from uav_iqa.annotations import NUM_SUBTASKS
+            from uav_iqa.domain import NUM_SUBTASKS
+
             num_tasks = NUM_SUBTASKS
         self.use_frequency_encoder = use_frequency_encoder
         self.use_spatial_attention = use_spatial_attention
@@ -64,16 +65,23 @@ class UAVIQANet(nn.Module):
 
         try:
             self.backbone = timm.create_model(
-                backbone, pretrained=True, features_only=True, out_indices=out_indices,
+                backbone,
+                pretrained=True,
+                features_only=True,
+                out_indices=out_indices,
             )
         except Exception as exc:
             _log.warning(
                 "Could not load pretrained weights for %s: %s. "
                 "Falling back to random initialization - results may differ.",
-                backbone, exc,
+                backbone,
+                exc,
             )
             self.backbone = timm.create_model(
-                backbone, pretrained=False, features_only=True, out_indices=out_indices,
+                backbone,
+                pretrained=False,
+                features_only=True,
+                out_indices=out_indices,
             )
 
         dummy_in = torch.randn(1, 3, 256, 256)
@@ -81,11 +89,11 @@ class UAVIQANet(nn.Module):
             feats = self.backbone(dummy_in)
 
         in_channels = [f.shape[1] for f in feats]
-        self.fpn = PANFeaturePyramid(in_channels)
-        self.fpn_proj = nn.Conv2d(256, 256, 3, padding=1)
+        self.feature_pyramid = PANFeaturePyramid(in_channels)
+        self.pyramid_projection = nn.Conv2d(256, 256, 3, padding=1)
 
         if self.use_spatial_attention:
-            self.cbam = ConvolutionalBlockAttention(256)
+            self.spatial_attention = ConvolutionalBlockAttention(256)
 
         self.spatial_pool = nn.AdaptiveAvgPool2d(1)
         self.spatial_proj = nn.Linear(256, 256)
@@ -106,14 +114,14 @@ class UAVIQANet(nn.Module):
             self.null_text_embed = None
 
         if self.use_task_conditioning:
-            self.task_head = TaskConditionedRegressor(
+            self.regressor = TaskConditionedRegressor(
                 in_features=fused_dim,
                 hidden_dim=128,
                 task_embed_dim=min(num_tasks, 32),
                 num_tasks=num_tasks,
             )
         else:
-            self.shared_head = create_shared_regressor(fused_dim)
+            self.shared_regressor = create_shared_regressor(fused_dim)
 
         if freeze_backbone_stage > 0:
             self._freeze_backbone_stages(freeze_backbone_stage)
@@ -136,7 +144,8 @@ class UAVIQANet(nn.Module):
             _log.warning(
                 "No parameters matched freeze patterns - backbone %s may use different naming. "
                 "Sample param names: %s",
-                self.backbone.__class__.__name__, sample_names,
+                self.backbone.__class__.__name__,
+                sample_names,
             )
         else:
             _log.info("Froze %d backbone parameters (first %d stages)", frozen_count, num_stages)
@@ -152,11 +161,11 @@ class UAVIQANet(nn.Module):
             B, N = images.shape[0], 1
 
         feats = self.backbone(images_flat)
-        feats = self.fpn(feats)
+        feats = self.feature_pyramid(feats)
 
-        spatial = self.fpn_proj(feats[0])
+        spatial = self.pyramid_projection(feats[0])
         if self.use_spatial_attention:
-            spatial = self.cbam(spatial)
+            spatial = self.spatial_attention(spatial)
 
         spatial = self.spatial_pool(spatial).flatten(1)
         spatial_features = self.spatial_proj(spatial)
@@ -191,9 +200,7 @@ class UAVIQANet(nn.Module):
             return None
         return self.question_encoder(texts)
 
-    def _maybe_encode_text(
-        self, question_text: Optional[List[str]]
-    ) -> Optional[torch.Tensor]:
+    def _maybe_encode_text(self, question_text: Optional[List[str]]) -> Optional[torch.Tensor]:
         if not self.use_text_encoder or self.question_encoder is None:
             return None
         if question_text is not None and len(question_text) > 0:
@@ -217,8 +224,8 @@ class UAVIQANet(nn.Module):
         if self.use_task_conditioning:
             if task_ids is None:
                 task_ids = torch.zeros(images.shape[0], dtype=torch.long, device=images.device)
-            return self.task_head(fused, task_ids)
-        return self.shared_head(fused).squeeze(-1)
+            return self.regressor(fused, task_ids)
+        return self.shared_regressor(fused).squeeze(-1)
 
     def forward_all_tasks(
         self,
@@ -236,9 +243,9 @@ class UAVIQANet(nn.Module):
         if self.use_task_conditioning:
             B = fused.shape[0]
             scores = []
-            for t in range(self.task_head.num_tasks):
+            for t in range(self.regressor.num_tasks):
                 tids = torch.full((B,), t, dtype=torch.long, device=fused.device)
-                scores.append(self.task_head(fused, tids))
+                scores.append(self.regressor(fused, tids))
             return torch.stack(scores, dim=1)
-        q = self.shared_head(fused).squeeze(-1)
+        q = self.shared_regressor(fused).squeeze(-1)
         return q.unsqueeze(-1).expand(-1, self.num_tasks)

@@ -7,12 +7,11 @@ computes the cognitive_score for each entry, then updates:
   - ``cognitive_score``: mean of all available per-model cognitive_scores
 
 The cognitive_score formula (matching ``compute_cognitive_score`` in
-``src/uav_iqa/text_metrics.py``):
+``src/uav_iqa/evaluation/text.py``):
     score = (1.0 * bleu + 1.0 * rouge_l + 0.1 * cider) / 2.1
 """
 
 import json
-import os
 from pathlib import Path
 
 WEIGHTS = (1.0, 1.0, 0.1)
@@ -50,9 +49,7 @@ def main():
             target_by_id = {e["sample_id"]: i for i, e in enumerate(target_entries)}
 
             # Collect per-model cognitive scores
-            model_scores: dict[str, dict[str, float]] = {
-                m: {} for m in MODELS
-            }
+            model_scores: dict[str, dict[str, float]] = {m: {} for m in MODELS}
             for model in MODELS:
                 vlm_path = VLM_DIR / model / split / filename
                 if not vlm_path.exists():
@@ -66,9 +63,7 @@ def main():
                 missing = 0
                 for entry in vlm_entries:
                     sid = entry["sample_id"]
-                    score = compute_cognitive_score(
-                        entry["bleu"], entry["rouge_l"], entry["cider"]
-                    )
+                    score = compute_cognitive_score(entry["bleu"], entry["rouge_l"], entry["cider"])
                     if sid in target_by_id:
                         model_scores[model][sid] = round(score, 6)
                         found += 1

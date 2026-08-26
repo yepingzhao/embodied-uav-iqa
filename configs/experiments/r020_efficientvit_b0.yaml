@@ -2,8 +2,8 @@ seed_everything: 42
 model:
   backbone: efficientvit_b0
   num_tasks: 14
-  use_fab: true
-  use_cbam: true
+  use_frequency_encoder: true
+  use_spatial_attention: true
   use_task_conditioning: true
   freeze_backbone_stage: 2
   lambda_rank: 0.3
@@ -40,9 +40,9 @@ trainer:
       name: r020_efficientvit_b0
       save_dir: outputs/r020_efficientvit_b0
   callbacks:
-  - class_path: uav_iqa.callbacks.SetupRunCallback
-  - class_path: uav_iqa.callbacks.MetricsHistoryCallback
-  - class_path: uav_iqa.callbacks.ResultsSavingCallback
+  - class_path: uav_iqa.training.SetupRunCallback
+  - class_path: uav_iqa.training.MetricsHistoryCallback
+  - class_path: uav_iqa.training.ResultsSavingCallback
   - class_path: lightning.pytorch.callbacks.ModelCheckpoint
     init_args:
       dirpath: null

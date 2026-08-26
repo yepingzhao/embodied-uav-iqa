@@ -15,13 +15,14 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
-from uav_iqa.dataset import UAVIQADataset
-from uav_iqa.metrics import (
+from uav_iqa.data import UAVQualityDataset
+from uav_iqa.evaluation import (
     evaluate_iqa,
     per_distortion_category_metrics,
     per_task_metrics,
 )
-from uav_iqa.utils import load_flat_samples, load_image_tensor
+from uav_iqa.data.samples import load_benchmark_samples
+from uav_iqa.utils import load_image_tensor
 
 _log = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ class BaselineFRDataset(Dataset):
     def __init__(self, data_dir: str, split: str, image_size: int = 256):
         self.data_dir = Path(data_dir)
         self.image_size = image_size
-        self.samples = load_flat_samples(self.data_dir, split)
+        self.samples = load_benchmark_samples(self.data_dir, split)
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -206,17 +207,17 @@ class BaselineDataModule(L.LightningDataModule):
         self.max_train_samples = max_train_samples
 
     def _load_split(self, split):
-        return load_flat_samples(self.data_dir, split)
+        return load_benchmark_samples(self.data_dir, split)
 
     def _make_dataset(self, split: str):
         if self.metric_mode == "FR":
             return BaselineFRDataset(data_dir=str(self.data_dir), split=split, image_size=self.image_size)
-        return UAVIQADataset(data_root=str(self.data_dir), split=split, image_size=self.image_size)
+        return UAVQualityDataset(data_root=str(self.data_dir), split=split, image_size=self.image_size)
 
     def _get_collate_fn(self):
         if self.metric_mode == "FR":
             return BaselineFRDataset.collate_fn
-        return UAVIQADataset.collate_fn
+        return UAVQualityDataset.collate_fn
 
     def setup(self, _stage=None):
         train_samples = self._load_split("train")
@@ -265,7 +266,7 @@ def evaluate_checkpoint(ckpt_path: str, method_name: str, data_dir: str,
     model.to(device)
     is_fr = getattr(model, "metric_mode", "NR") == "FR"
 
-    test_samples = load_flat_samples(Path(data_dir), "test")
+    test_samples = load_benchmark_samples(Path(data_dir), "test")
     predictions, targets, task_ids, distortion_labels = [], [], [], []
 
     with torch.no_grad():

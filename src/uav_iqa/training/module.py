@@ -6,17 +6,17 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 
-from .distortion import UAV_DISTORTION_NAMES
+from uav_iqa.distortions import UAV_DISTORTION_NAMES
 from .losses import CrossTaskRegularization, ListMLELoss
-from .metrics import (
+from uav_iqa.evaluation import (
     evaluate_iqa,
     per_distortion_metrics,
     per_task_metrics,
 )
-from .model import UAVIQANet
+from uav_iqa.models import UAVIQANet
 
 
-class UAVIQALightningModule(L.LightningModule):
+class UAVQualityTrainingModule(L.LightningModule):
     """LightningModule wrapping UAVIQANet with MSE + ListMLE + cross-task loss.
 
     All __init__ parameters are flat basic types for jsonargparse/LightningCLI compatibility.
@@ -26,9 +26,11 @@ class UAVIQALightningModule(L.LightningModule):
         self,
         backbone: str = "mobilenetv4_conv_small",
         num_tasks: int = 14,
-        use_fab: bool = True,
-        use_cbam: bool = True,
+        use_frequency_encoder: bool = True,
+        use_spatial_attention: bool = True,
         use_task_conditioning: bool = True,
+        use_text_encoder: bool = True,
+        text_dim: int = 128,
         freeze_backbone_stage: int = 2,
         lambda_rank: float = 0.3,
         lambda_cross_task: float = 0.1,
@@ -43,9 +45,11 @@ class UAVIQALightningModule(L.LightningModule):
         model_cfg = dict(
             backbone=backbone,
             num_tasks=num_tasks,
-            use_fab=use_fab,
-            use_cbam=use_cbam,
+            use_frequency_encoder=use_frequency_encoder,
+            use_spatial_attention=use_spatial_attention,
             use_task_conditioning=use_task_conditioning,
+            use_text_encoder=use_text_encoder,
+            text_dim=text_dim,
             freeze_backbone_stage=freeze_backbone_stage,
         )
         self.model = UAVIQANet(**model_cfg)

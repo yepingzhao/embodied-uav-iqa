@@ -57,9 +57,7 @@ class VQAIndex:
             if not img:
                 continue
             options = item.get("options", {})
-            is_multi = any(
-                "UAV" in v and uav_id not in str(v) for v in options.values()
-            )
+            is_multi = any("UAV" in v and uav_id not in str(v) for v in options.values())
             if is_multi:
                 continue
             stem = Path(img).stem

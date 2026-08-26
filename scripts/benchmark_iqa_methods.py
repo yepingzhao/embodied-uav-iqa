@@ -13,7 +13,7 @@ from pathlib import Path
 import torch
 
 from uav_iqa.baselines.evaluator import AVAILABLE_METHODS, run_benchmark, run_benchmark_parallel
-from uav_iqa.utils import load_flat_samples
+from uav_iqa.data.samples import load_benchmark_samples
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s",
                     datefmt="%Y-%m-%d %H:%M:%S")
@@ -64,7 +64,7 @@ def main():
     elif args.parallel or args.gpu_ids is not None:
         use_parallel = True
 
-    entries = load_flat_samples(data_dir, "test")
+    entries = load_benchmark_samples(data_dir, "test")
     if args.max_samples > 0:
         entries = entries[: args.max_samples]
     _log.info("Evaluating %d samples", len(entries))

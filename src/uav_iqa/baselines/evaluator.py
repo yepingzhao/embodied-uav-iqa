@@ -18,7 +18,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from uav_iqa.metrics import (
+from uav_iqa.evaluation import (
     evaluate_iqa,
     per_distortion_category_metrics,
     per_task_metrics,
@@ -823,4 +823,3 @@ def _extract_score(sample: dict) -> float:
     if isinstance(score, list):
         score = float(np.mean(score))
     return float(score)
-

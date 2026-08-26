@@ -1,4 +1,3 @@
-import json
 import logging
 from pathlib import Path
 from typing import Optional
@@ -75,7 +74,7 @@ def find_images(
 def load_image_tensor(path: Path, image_size: int = 256) -> torch.Tensor:
     """Load an image and convert to (C, H, W) float tensor in [0, 1].
 
-    Used by both UAVIQADataset and benchmark scripts.
+    Used by the UAV quality dataset and benchmark scripts.
     """
     image = Image.open(path).convert("RGB")
     image = image.resize((image_size, image_size), Image.Resampling.BILINEAR)
@@ -88,61 +87,3 @@ def count_parameters(model) -> tuple:
     total = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     return total, trainable
-
-
-def load_flat_samples(output_dir: Path, split: str) -> list[dict]:
-    """Load processed flat JSON entries and convert to manifest-compatible format.
-
-    The data synthesis pipeline writes flat entries (one per question × distortion)
-    with keys: sample_id, uav_paths, distorted_uav_paths, distortion_info,
-    subtask_type, cognitive_score, etc.
-
-    Each returned dict has: path, ref_path, uav_paths, uav_keys,
-    distorted_uav_paths, task, distortion, category, intensity_level,
-    score, ref_id, sample_id.
-
-    This provides backward compatibility for benchmarking/finetuning scripts
-    that expected the old manifest.json format.
-    """
-    split_dir = output_dir / split
-    samples: list[dict] = []
-
-    for fpath in sorted(split_dir.glob("*_VQA_*.json")):
-        with open(fpath) as f:
-            entries = json.load(f)
-
-        if not isinstance(entries, list):
-            continue
-
-        for entry in entries:
-            uav_paths = entry.get("uav_paths", {})
-            if not uav_paths:
-                continue
-
-            uav_keys = sorted(uav_paths.keys())
-            if not uav_keys:
-                continue
-
-            distorted_uav_paths = entry.get("distorted_uav_paths", {})
-            distortion_info = entry.get("distortion_info", {})
-
-            score = entry.get("cognitive_score")
-            if score is None:
-                score = 0.0
-
-            samples.append({
-                "path": str(distorted_uav_paths.get(uav_keys[0], "")),
-                "ref_path": str(uav_paths.get(uav_keys[0], "")),
-                "uav_paths": uav_paths,
-                "uav_keys": uav_keys,
-                "distorted_uav_paths": distorted_uav_paths,
-                "task": entry.get("subtask_type", "unknown"),
-                "distortion": distortion_info.get("type", ""),
-                "category": distortion_info.get("category", "unknown"),
-                "intensity_level": distortion_info.get("intensity", 0.5),
-                "score": score,
-                "ref_id": str(Path(str(uav_paths.get(uav_keys[0], ""))).stem),
-                "sample_id": entry.get("sample_id", ""),
-            })
-
-    return samples
