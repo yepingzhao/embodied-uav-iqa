@@ -36,8 +36,7 @@ Thumbs.db
 
 # pytest
 .pytest_cache/
-.pytest-*-data/
-.pytest-task*/
+/.pytest-*/
 .coverage
 coverage.xml
 htmlcov/
@@ -53,8 +52,8 @@ htmlcov/
 # Logs
 *.log
 
-# Data (large datasets, not versioned)
-data/
+# Root dataset repository (keep src/uav_iqa/data/ versioned)
+/data/
 
 # Output / results
 output/
@@ -81,6 +80,7 @@ lightning_logs/
 # LightningCLI auto-generated config
 config.yaml
 
-# Experiment runner runtime artifacts
-scripts/run_all_experiments.status
-scripts/run_all_experiments.log
+# Local workflow artifacts
+/.reports/
+/.paper-history/
+/.superpowers/
