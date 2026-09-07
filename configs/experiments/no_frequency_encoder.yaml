@@ -2,9 +2,9 @@ seed_everything: 42
 model:
   backbone: mobilenetv4_conv_small
   num_tasks: 14
-  use_frequency_encoder: true
+  use_frequency_encoder: false
   use_spatial_attention: true
-  use_task_conditioning: false
+  use_task_conditioning: true
   freeze_backbone_stage: 2
   lambda_rank: 0.3
   lambda_cross_task: 0.1
@@ -28,17 +28,17 @@ trainer:
   gradient_clip_val: 1.0
   log_every_n_steps: 10
   enable_progress_bar: true
-  default_root_dir: outputs/r017_no_task_cond
+  default_root_dir: outputs/no_frequency_encoder
   logger:
   - class_path: lightning.pytorch.loggers.CSVLogger
     init_args:
       save_dir: outputs
-      name: r017_no_task_cond
+      name: no_frequency_encoder
   - class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
       project: uav-iqa
-      name: r017_no_task_cond
-      save_dir: outputs/r017_no_task_cond
+      name: no_frequency_encoder
+      save_dir: outputs/no_frequency_encoder
   callbacks:
   - class_path: uav_iqa.training.SetupRunCallback
   - class_path: uav_iqa.training.MetricsHistoryCallback

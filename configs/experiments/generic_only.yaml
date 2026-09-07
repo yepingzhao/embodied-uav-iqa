@@ -1,6 +1,6 @@
 seed_everything: 42
 model:
-  backbone: efficientvit_b0
+  backbone: mobilenetv4_conv_small
   num_tasks: 14
   use_frequency_encoder: true
   use_spatial_attention: true
@@ -18,7 +18,7 @@ data:
   num_workers: 16
   image_size: 256
   subtask_filter: null  # all 14 subtasks
-  distortion_filter: null
+  distortion_filter: generic
   dry_run: false
 trainer:
   accelerator: auto
@@ -28,17 +28,17 @@ trainer:
   gradient_clip_val: 1.0
   log_every_n_steps: 10
   enable_progress_bar: true
-  default_root_dir: outputs/r020_efficientvit_b0
+  default_root_dir: outputs/generic_only
   logger:
   - class_path: lightning.pytorch.loggers.CSVLogger
     init_args:
       save_dir: outputs
-      name: r020_efficientvit_b0
+      name: generic_only
   - class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
       project: uav-iqa
-      name: r020_efficientvit_b0
-      save_dir: outputs/r020_efficientvit_b0
+      name: generic_only
+      save_dir: outputs/generic_only
   callbacks:
   - class_path: uav_iqa.training.SetupRunCallback
   - class_path: uav_iqa.training.MetricsHistoryCallback

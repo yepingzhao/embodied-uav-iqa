@@ -1,6 +1,6 @@
 seed_everything: 42
 model:
-  backbone: mobilenetv4_conv_small
+  backbone: mobilevit_s
   num_tasks: 14
   use_frequency_encoder: true
   use_spatial_attention: true
@@ -28,17 +28,17 @@ trainer:
   gradient_clip_val: 1.0
   log_every_n_steps: 10
   enable_progress_bar: true
-  default_root_dir: outputs/r022_vlm_only
+  default_root_dir: outputs/backbone_mobilevit_s
   logger:
   - class_path: lightning.pytorch.loggers.CSVLogger
     init_args:
       save_dir: outputs
-      name: r022_vlm_only
+      name: backbone_mobilevit_s
   - class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
       project: uav-iqa
-      name: r022_vlm_only
-      save_dir: outputs/r022_vlm_only
+      name: backbone_mobilevit_s
+      save_dir: outputs/backbone_mobilevit_s
   callbacks:
   - class_path: uav_iqa.training.SetupRunCallback
   - class_path: uav_iqa.training.MetricsHistoryCallback

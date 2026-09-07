@@ -3,7 +3,7 @@ model:
   backbone: mobilenetv4_conv_small
   num_tasks: 14
   use_frequency_encoder: true
-  use_spatial_attention: true
+  use_spatial_attention: false
   use_task_conditioning: true
   freeze_backbone_stage: 2
   lambda_rank: 0.3
@@ -18,7 +18,7 @@ data:
   num_workers: 16
   image_size: 256
   subtask_filter: null  # all 14 subtasks
-  distortion_filter: generic
+  distortion_filter: null
   dry_run: false
 trainer:
   accelerator: auto
@@ -28,17 +28,17 @@ trainer:
   gradient_clip_val: 1.0
   log_every_n_steps: 10
   enable_progress_bar: true
-  default_root_dir: outputs/r021_generic_only
+  default_root_dir: outputs/no_spatial_attention
   logger:
   - class_path: lightning.pytorch.loggers.CSVLogger
     init_args:
       save_dir: outputs
-      name: r021_generic_only
+      name: no_spatial_attention
   - class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
       project: uav-iqa
-      name: r021_generic_only
-      save_dir: outputs/r021_generic_only
+      name: no_spatial_attention
+      save_dir: outputs/no_spatial_attention
   callbacks:
   - class_path: uav_iqa.training.SetupRunCallback
   - class_path: uav_iqa.training.MetricsHistoryCallback

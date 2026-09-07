@@ -4,13 +4,13 @@
 Usage::
 
     # Single experiment
-    python scripts/train.py fit --config configs/experiments/r013_task_cond.yaml
+    python scripts/train.py fit --config configs/experiments/full_model.yaml
 
     # With seed and custom output dir
     python scripts/train.py fit \
-        --config configs/experiments/r013_task_cond.yaml \
+        --config configs/experiments/full_model.yaml \
         --seed_everything 42 \
-        --trainer.default_root_dir outputs/r013_task_cond_seed42
+        --trainer.default_root_dir outputs/full_model_seed42
 """
 
 from dotenv import load_dotenv

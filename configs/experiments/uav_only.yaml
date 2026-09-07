@@ -17,8 +17,8 @@ data:
   batch_size: 256
   num_workers: 16
   image_size: 256
-  subtask_filter: "quality_assessment,usability_assessment,causal_assessment"
-  distortion_filter: null
+  subtask_filter: null  # all 14 subtasks
+  distortion_filter: uav_only
   dry_run: false
 trainer:
   accelerator: auto
@@ -28,17 +28,17 @@ trainer:
   gradient_clip_val: 1.0
   log_every_n_steps: 10
   enable_progress_bar: true
-  default_root_dir: outputs/r024a_inspection
+  default_root_dir: outputs/uav_only
   logger:
   - class_path: lightning.pytorch.loggers.CSVLogger
     init_args:
       save_dir: outputs
-      name: r024a_inspection
+      name: uav_only
   - class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
       project: uav-iqa
-      name: r024a_inspection
-      save_dir: outputs/r024a_inspection
+      name: uav_only
+      save_dir: outputs/uav_only
   callbacks:
   - class_path: uav_iqa.training.SetupRunCallback
   - class_path: uav_iqa.training.MetricsHistoryCallback

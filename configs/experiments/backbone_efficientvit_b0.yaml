@@ -1,6 +1,6 @@
 seed_everything: 42
 model:
-  backbone: mobilenetv4_conv_small
+  backbone: efficientvit_b0
   num_tasks: 14
   use_frequency_encoder: true
   use_spatial_attention: true
@@ -17,7 +17,7 @@ data:
   batch_size: 256
   num_workers: 16
   image_size: 256
-  subtask_filter: null  # all 14 subtasks (multitask control; old leave_out_task=sar not applicable)
+  subtask_filter: null  # all 14 subtasks
   distortion_filter: null
   dry_run: false
 trainer:
@@ -28,17 +28,17 @@ trainer:
   gradient_clip_val: 1.0
   log_every_n_steps: 10
   enable_progress_bar: true
-  default_root_dir: outputs/r024b_leave_sar
+  default_root_dir: outputs/backbone_efficientvit_b0
   logger:
   - class_path: lightning.pytorch.loggers.CSVLogger
     init_args:
       save_dir: outputs
-      name: r024b_leave_sar
+      name: backbone_efficientvit_b0
   - class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
       project: uav-iqa
-      name: r024b_leave_sar
-      save_dir: outputs/r024b_leave_sar
+      name: backbone_efficientvit_b0
+      save_dir: outputs/backbone_efficientvit_b0
   callbacks:
   - class_path: uav_iqa.training.SetupRunCallback
   - class_path: uav_iqa.training.MetricsHistoryCallback

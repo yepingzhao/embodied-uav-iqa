@@ -18,7 +18,7 @@ data:
   num_workers: 16
   image_size: 256
   subtask_filter: null  # all 14 subtasks
-  distortion_filter: uav_only
+  distortion_filter: null
   dry_run: false
 trainer:
   accelerator: auto
@@ -28,17 +28,17 @@ trainer:
   gradient_clip_val: 1.0
   log_every_n_steps: 10
   enable_progress_bar: true
-  default_root_dir: outputs/r021b_uav_only
+  default_root_dir: outputs/full_model
   logger:
   - class_path: lightning.pytorch.loggers.CSVLogger
     init_args:
       save_dir: outputs
-      name: r021b_uav_only
+      name: full_model
   - class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
       project: uav-iqa
-      name: r021b_uav_only
-      save_dir: outputs/r021b_uav_only
+      name: full_model
+      save_dir: outputs/full_model
   callbacks:
   - class_path: uav_iqa.training.SetupRunCallback
   - class_path: uav_iqa.training.MetricsHistoryCallback
