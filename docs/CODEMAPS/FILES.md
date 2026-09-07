@@ -16,9 +16,9 @@ embodied-uav-iqa/
 │   ├── inference/       # multi-GPU offline inference framework
 │   └── utils.py         # small shared logging/image/parameter helpers
 ├── scripts/             # CLI composition roots
-├── configs/             # default template and experiments r013–r024c
+├── configs/             # configuration catalog and 8 maintained experiment configs
 ├── tests/               # unit, package-boundary, and inference tests
-└── docs/                # research context, executable experiments, codemaps
+└── docs/                # codemaps, literature notes, research analysis, paper sources
 ```
 
 ## Main entrypoints

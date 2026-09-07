@@ -26,8 +26,8 @@ src/uav_iqa/           # Core library
   baselines/           #   Existing IQA method evaluation and fine-tuning
   inference/           #   Multi-GPU offline inference framework (15 modules)
 configs/               # YAML-driven configuration
-  default.yaml         #   Default training/model/distortion config template
-  experiments/         #   21 per-experiment configs (r013–r024c)
+  README.md            #   Maintained configuration catalog and prerequisites
+  experiments/         #   8 configs; full_model.yaml is the reference
 scripts/               # Data pipeline + benchmark + experiment scripts
   distortion_synthesis.py                  # Unified data synthesis CLI (extract/inject/annotate/aggregate/all)
   download_models.py                 # Download VLM model weights from HuggingFace Hub
@@ -39,8 +39,7 @@ scripts/               # Data pipeline + benchmark + experiment scripts
   inference.py                       # Multi-GPU offline inference CLI (Phase 5)
 data/                  # Datasets (raw = external inputs, processed = generated artifacts)
 tests/                 # pytest tests (13+ files: test_distortion, test_lightning, test_data_synthesis, test_text_metrics, test_vlm_config, test_vlm_scorer, test_vlm_smoke, test_batch_annotator, test_annotations, test_dataset, test_model_text, test_inference_phase1-5)
-refine-logs/           # Research-refine artifacts (FINAL_PROPOSAL, EXPERIMENT_PLAN, etc.)
-docs/                  # CODEMAPS, literature reviews, research roadmap, and EXPERIMENTS.md
+docs/                  # CODEMAPS, inference architecture, and literature references
 ```
 
 ## Data pipeline
@@ -110,70 +109,45 @@ Input (3×256×256)
 - **Training splits**: train/test only (no val); `cognitive_score` is the single training label
 - **Loss**: MSE + λ_rank * ListMLE (per-distortion ranking) + λ_cross_task * CrossTaskRegularization (negative pairwise score variance)
 - **Callbacks**: `SetupRunCallback` (data hash, DDP-safe), `MetricsHistoryCallback` (epoch metrics → `history.json`), `ResultsSavingCallback` (best ckpt → `results.json`)
-- **Ablation toggles**: configured via `model.init_args.use_frequency_encoder/cbam/task_conditioning` in experiment YAML (e.g., `r016_no_fab.yaml`)
+- **Ablation toggles**: configured via `model.use_frequency_encoder`, `model.use_spatial_attention`, and `model.use_task_conditioning` in experiment YAML (e.g., `no_frequency_encoder.yaml`)
 - **Distortion naming**: `{name}_L{intensity*10:02d}` (e.g., `propeller_vibration_blur_L04`)
 
 ## Common training invocations
 
-All hyperparameters live in self-contained `configs/experiments/<name>.yaml`. Training uses `scripts/train.py` (LightningCLI) as the entry point. See `docs/EXPERIMENTS.md` for the full experiment catalog with step descriptions and runnable commands.
+All hyperparameters live in self-contained `configs/experiments/<name>.yaml`. Training uses `scripts/train.py` (LightningCLI) as the entry point. Inspect the selected configuration and its data paths before running an experiment.
 
 ```bash
 # Standard training (task-conditioned, all components enabled)
-python scripts/train.py fit --config configs/experiments/r013_task_cond.yaml
+python scripts/train.py fit --config configs/experiments/full_model.yaml
 
 # Multi-seed (shell loop — root dir via --trainer.default_root_dir)
 for seed in 42 100 200; do
-  python scripts/train.py fit --config configs/experiments/r013_task_cond.yaml \
+  python scripts/train.py fit --config configs/experiments/full_model.yaml \
     --seed_everything $seed \
-    --trainer.default_root_dir "outputs/r013_seed${seed}"
+    --trainer.default_root_dir "outputs/full_model_seed${seed}"
 done
 
 # Ablations (each is a self-contained config)
-python scripts/train.py fit --config configs/experiments/r016_no_fab.yaml         # w/o FAB
-python scripts/train.py fit --config configs/experiments/r017_no_task_cond.yaml   # w/o task conditioning
-python scripts/train.py fit --config configs/experiments/r018_no_cbam.yaml        # w/o CBAM
-python scripts/train.py fit --config configs/experiments/r019_mobilevit_s.yaml    # MobileViT-S backbone
-python scripts/train.py fit --config configs/experiments/r020_efficientvit_b0.yaml # EfficientViT-B0 backbone
+python scripts/train.py fit --config configs/experiments/no_frequency_encoder.yaml         # w/o FAB
+python scripts/train.py fit --config configs/experiments/no_task_conditioning.yaml  # w/o task conditioning
+python scripts/train.py fit --config configs/experiments/no_spatial_attention.yaml        # w/o CBAM
+python scripts/train.py fit --config configs/experiments/backbone_mobilevit_s.yaml    # MobileViT-S backbone
+python scripts/train.py fit --config configs/experiments/backbone_efficientvit_b0.yaml # EfficientViT-B0 backbone
 
 # Distortion filtering
-python scripts/train.py fit --config configs/experiments/r021_generic_only.yaml   # only generic distortions
-python scripts/train.py fit --config configs/experiments/r021b_uav_only.yaml      # only UAV distortions
-
-# Annotation source ablation
-python scripts/train.py fit --config configs/experiments/r022_vlm_only.yaml       # VLM-only cognitive_score
-
-# Per-task training
-python scripts/train.py fit --config configs/experiments/r024a_tracking.yaml
-python scripts/train.py fit --config configs/experiments/r024a_delivery.yaml
-python scripts/train.py fit --config configs/experiments/r024a_inspection.yaml
-python scripts/train.py fit --config configs/experiments/r024a_sar.yaml
-
-# Leave-one-task-out
-python scripts/train.py fit --config configs/experiments/r024b_leave_tracking.yaml
-python scripts/train.py fit --config configs/experiments/r024b_leave_sar.yaml
-
-# Full multi-task (all tasks)
-python scripts/train.py fit --config configs/experiments/r024c_multitask.yaml
+python scripts/train.py fit --config configs/experiments/generic_only.yaml   # only generic distortions
+python scripts/train.py fit --config configs/experiments/uav_only.yaml      # only UAV distortions
 
 # Override any config key from CLI
-python scripts/train.py fit --config configs/experiments/r013_task_cond.yaml \
+python scripts/train.py fit --config configs/experiments/full_model.yaml \
   --trainer.max_epochs 100 \
-  --data.init_args.batch_size 32
+  --data.batch_size 32
 ```
-
-## Research state
-
-The proposal is **READY** (score 9.0/10). Read these for context:
-- `refine-logs/FINAL_PROPOSAL.md` — refined method thesis
-- `refine-logs/EXPERIMENT_PLAN.md` — 33 runs, 6 milestones, 4 claims
-- `refine-logs/EXPERIMENT_TRACKER.md` — per-run status tracker
-
-4 claims to validate: C1 (UAV distortion distinctiveness), C2 (synthetic↔real correlation), C3 (existing IQA failure), C4 (cross-task generalization).
 
 ## Notes
 
 - `data/` and `outputs/` are gitignored — datasets must be downloaded separately (AirCopBench from arXiv 2511.11025)
 - Real-ESRGAN dependency is optional (for `LowResSuperResolution` distortion); falls back to bicubic + sharpen if not installed
 - Package is installed via `uv sync` — `scripts/train.py` and other scripts use `from uav_iqa.xxx` imports
-- **W&B**: Set `WANDB_API_KEY` env var (or use `.env` file) to enable cloud experiment tracking. Without it, training falls back to local CSVLogger (metrics.csv) logging. Config at `trainer.logger` in `configs/default.yaml`.
-- **`UAVIQACLI` removed (2026-06)**: Training uses vanilla `lightning.pytorch.cli.LightningCLI` via `scripts/train.py`. Multi-seed loops via shell `for` loops. Full experiment documentation is at `docs/EXPERIMENTS.md`. CSVLogger + WandbLogger handle metrics; ModelCheckpoint saves checkpoints.
+- **W&B**: Experiment configs explicitly include `WandbLogger`; install with `uv sync --group dev --extra wandb` and configure authentication/offline mode, or replace `trainer.logger` with a CSV-only configuration. There is no automatic CSV-only fallback. See `configs/README.md` for prerequisites and configuration scope.
+- **Training entry point**: `scripts/train.py` uses `lightning.pytorch.cli.LightningCLI` with `configs/experiments/`. CSVLogger + WandbLogger handle metrics; ModelCheckpoint saves checkpoints.

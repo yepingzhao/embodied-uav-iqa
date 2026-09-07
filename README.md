@@ -11,19 +11,6 @@ A research codebase for no-reference image quality assessment (NR-IQA) tailored 
 
 ---
 
-## Key Research Claims
-
-The project tests 4 claims (see [EXPERIMENT_PLAN.md](refine-logs/EXPERIMENT_PLAN.md) for details):
-
-| Claim | Statement |
-|-------|-----------|
-| **C1** | UAV-specific distortions (propeller vibration, atmospheric scattering, 6DoF blur, packet loss, low-res+SR, propeller shadow) are **distinct** from generic distortions in terms of human/VLM quality assessment. |
-| **C2** | Synthetic distortions injected into clean AirCopBench frames **correlate with real** UAV-degraded image quality. |
-| **C3** | Existing IQA methods (PSNR, SSIM, BRISQUE, CLIP-IQA, MANIQA, etc.) **fail** to accurately assess UAV-specific distortions. |
-| **C4** | A task-conditioned IQA model **generalizes across** 14 embodied subtasks (scene understanding, object understanding, planning, collaboration). |
-
----
-
 ## Architecture
 
 ```
@@ -90,8 +77,8 @@ scripts/                   # Executable experiment scripts (12 total)
   inference.py                   # CLI entry point for multi-GPU offline inference
 
 configs/
-  default.yaml                 # LightningCLI config template (68 lines)
-  experiments/                 # 21 per-experiment configs (r013–r024c)
+  README.md                    # Maintained configuration catalog and prerequisites
+  experiments/                 # 8 configs; full_model.yaml is the reference
 
 tests/
   test_distortion.py           # 19 tests for distortion models
@@ -107,12 +94,7 @@ tests/
   test_model_text.py           # Tests for model text/export utilities
   test_inference_phase[1-5].py # 5-phase tests for inference framework
 
-refine-logs/                   # Research refinement artifacts
-  FINAL_PROPOSAL.md            # Method thesis (score 9.0/10)
-  EXPERIMENT_PLAN.md           # 33 runs, 6 milestones, 4 claims
-  EXPERIMENT_TRACKER.md        # Run-by-run status tracker
-  REVIEW_SUMMARY.md            # External review resolution log
-  EXPERIMENT_RESULTS.md        # Experiment results summary
+docs/                         # Architecture documentation and literature references
 ```
 
 ---
@@ -177,33 +159,26 @@ python scripts/distortion_synthesis.py annotate \
 
 ### Training
 
-All hyperparameters live in self-contained YAML configs. Training uses `scripts/train.py` (vanilla LightningCLI).
+All hyperparameters live in self-contained YAML configs. Training uses `scripts/train.py` (vanilla LightningCLI). See the [configuration catalog](configs/README.md) for data prerequisites and W&B setup.
 
 ```bash
 # Standard training (task-conditioned, all components)
-python scripts/train.py fit --config configs/experiments/r013_task_cond.yaml
+python scripts/train.py fit --config configs/experiments/full_model.yaml
 
 # Multi-seed via shell loop
 for seed in 42 100 200; do
-  python scripts/train.py fit --config configs/experiments/r013_task_cond.yaml \
+  python scripts/train.py fit --config configs/experiments/full_model.yaml \
     --seed_everything $seed \
-    --trainer.default_root_dir "outputs/r013_seed${seed}"
+    --trainer.default_root_dir "outputs/full_model_seed${seed}"
 done
 
-# Per-task training
-python scripts/train.py fit --config configs/experiments/r024a_tracking.yaml
-python scripts/train.py fit --config configs/experiments/r024a_inspection.yaml
-
-# Leave-one-out (train on 3 tasks, test on SAR)
-python scripts/train.py fit --config configs/experiments/r024b_leave_sar.yaml
-
 # Distortion filter (generic only or uav_only)
-python scripts/train.py fit --config configs/experiments/r021_generic_only.yaml
-python scripts/train.py fit --config configs/experiments/r021b_uav_only.yaml
+python scripts/train.py fit --config configs/experiments/generic_only.yaml
+python scripts/train.py fit --config configs/experiments/uav_only.yaml
 
 # Override any config key from CLI
-python scripts/train.py fit --config configs/experiments/r013_task_cond.yaml \
-  --data.init_args.dry_run true \
+python scripts/train.py fit --config configs/experiments/full_model.yaml \
+  --data.dry_run true \
   --trainer.max_epochs 3
 ```
 
@@ -213,17 +188,17 @@ Each ablation has its own self-contained config:
 
 ```bash
 # Without Frequency-Aware Branch
-python scripts/train.py fit --config configs/experiments/r016_no_fab.yaml
+python scripts/train.py fit --config configs/experiments/no_frequency_encoder.yaml
 
 # Without CBAM
-python scripts/train.py fit --config configs/experiments/r018_no_cbam.yaml
+python scripts/train.py fit --config configs/experiments/no_spatial_attention.yaml
 
 # Without task conditioning
-python scripts/train.py fit --config configs/experiments/r017_no_task_cond.yaml
+python scripts/train.py fit --config configs/experiments/no_task_conditioning.yaml
 
 # Backbone ablations
-python scripts/train.py fit --config configs/experiments/r019_mobilevit_s.yaml
-python scripts/train.py fit --config configs/experiments/r020_efficientvit_b0.yaml
+python scripts/train.py fit --config configs/experiments/backbone_mobilevit_s.yaml
+python scripts/train.py fit --config configs/experiments/backbone_efficientvit_b0.yaml
 ```
 
 ### Benchmark
@@ -271,7 +246,7 @@ Support for per-task and per-distortion evaluation via `metrics.py`.
 
 ## Configuration
 
-The [default config](configs/default.yaml) serves as a reference template. Each experiment has its own self-contained YAML in `configs/experiments/`.
+The [main-model config](configs/experiments/full_model.yaml) serves as the reference. Each experiment has its own self-contained YAML in `configs/experiments/`; see the [configuration catalog](configs/README.md) for the eight maintained variants and their scope.
 
 ```yaml
 seed_everything: 42
@@ -357,12 +332,9 @@ black src/ tests/ scripts/
 | [docs/CODEMAPS/ARCHITECTURE.md](docs/CODEMAPS/ARCHITECTURE.md) | Detailed architecture diagram and data flow |
 | [docs/CODEMAPS/FILES.md](docs/CODEMAPS/FILES.md) | File tree with line counts and dependencies |
 | [docs/CODEMAPS/MODULES.md](docs/CODEMAPS/MODULES.md) | Per-module API documentation |
-| [refine-logs/FINAL_PROPOSAL.md](refine-logs/FINAL_PROPOSAL.md) | Research method thesis (score 9.0/10) |
-| [refine-logs/EXPERIMENT_PLAN.md](refine-logs/EXPERIMENT_PLAN.md) | 33 experiments across 6 milestones |
-| [refine-logs/EXPERIMENT_TRACKER.md](refine-logs/EXPERIMENT_TRACKER.md) | Run-by-run status |
-| [refine-logs/EXPERIMENT_RESULTS.md](refine-logs/EXPERIMENT_RESULTS.md) | Experiment results summary |
-| [refine-logs/REVIEW_SUMMARY.md](refine-logs/REVIEW_SUMMARY.md) | External review resolutions |
-| [docs/](docs/) | Literature reviews & research roadmap |
+| [docs/CODEMAPS/INFERENCE_FRAMEWORK.md](docs/CODEMAPS/INFERENCE_FRAMEWORK.md) | Multi-GPU offline inference architecture |
+| [configs/experiments/](configs/experiments/) | Experiment configurations |
+| [docs/README.md](docs/README.md) | Documentation index, literature notes, and source papers |
 
 ---
 

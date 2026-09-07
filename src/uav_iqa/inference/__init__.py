@@ -1,7 +1,7 @@
 """Multi-GPU offline inference framework.
 
 A lightweight, testable, resumable inference engine for single-machine
-multi-GPU batch scoring. See ``docs/INFERENCE_FRAMEWORK.md`` for the full
+multi-GPU batch scoring. See ``docs/CODEMAPS/INFERENCE_FRAMEWORK.md`` for the full
 architecture specification.
 """
 

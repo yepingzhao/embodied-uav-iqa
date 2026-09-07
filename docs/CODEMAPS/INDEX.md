@@ -7,7 +7,7 @@ This directory documents the current layered package structure.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Data flow, package ownership, and dependency direction |
 | [MODULES.md](MODULES.md) | Public APIs, internal modules, and removed-path boundaries |
 | [FILES.md](FILES.md) | Repository tree, entrypoints, and test ownership |
-| [../INFERENCE_FRAMEWORK.md](../INFERENCE_FRAMEWORK.md) | Multi-GPU offline inference details |
+| [INFERENCE_FRAMEWORK.md](INFERENCE_FRAMEWORK.md) | Multi-GPU offline inference details |
 
 ## Quick navigation
 
@@ -24,5 +24,5 @@ inference    → multi-GPU offline execution
 
 The primary commands are `scripts/distortion_synthesis.py`, `scripts/train.py`,
 `scripts/benchmark_iqa_methods.py`, and `scripts/inference.py`.  See
-`AGENTS.md` for development commands and `docs/EXPERIMENTS.md` for executable
-experiment configurations.
+`AGENTS.md` for development commands and `configs/experiments/` for experiment
+configurations.

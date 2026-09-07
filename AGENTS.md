@@ -19,8 +19,6 @@ black src/ tests/ scripts/
 # Single test
 pytest tests/test_distortion.py::test_pipeline_has_all_distortions -v
 
-# Overfit test (fast correctness check of the model)
-
 # Download VLM model weights for annotation scoring (optional)
 python scripts/download_models.py --all
 
@@ -50,8 +48,8 @@ scripts/
   benchmark_iqa_methods.py       # Benchmark existing IQA methods (pyiqa)
   inference.py                   # Multi-GPU offline inference CLI
 
-configs/default.yaml          # Model/data/training config template
-configs/experiments/          # 21 per-experiment configs (r013–r024c)
+configs/README.md             # Maintained configuration catalog and prerequisites
+configs/experiments/          # 8 configs; full_model.yaml is the reference
 scripts/train.py              # Unified training entry point (LightningCLI)
 ```
 
@@ -64,23 +62,10 @@ scripts/train.py              # Unified training entry point (LightningCLI)
 - **Data pipeline order matters**: `extract → inject → annotate → aggregate → train → benchmark`.
 - **Distortion naming**: `{name}_L{intensity*10:02d}` (e.g., `propeller_vibration_blur_L04`).
 - **14 subtask types** across 4 dimensions: scene_understanding (1.x), object_understanding (2.x), planning (3.x), collaboration (4.x).
-- **Ablation toggles**: use per-experiment config in `configs/experiments/` (e.g., `r016_no_fab.yaml`), or override via CLI: `--model.init_args.use_frequency_encoder false`.
+- **Ablation toggles**: use per-experiment config in `configs/experiments/` (e.g., `no_frequency_encoder.yaml`), or override via CLI: `--model.use_frequency_encoder false`.
 - **Test coverage is sparse** (only `test_distortion.py`, `test_lightning.py`, `test_distortion_synthesis.py`, `test_text_metrics.py`, `test_vlm_config.py`, `test_vlm_scorer.py`, `test_vlm_smoke.py`, `test_batch_annotator.py`, `test_annotations.py`, `test_dataset.py`, `test_model_text.py`, and `test_inference_phase[1-5].py` exist). Add tests to `tests/` when implementing new functionality.
 - **`scipy` removed as a direct dependency** for distortion models (`distortion.py` uses `cv2.filter2D` with manual wrap padding instead of `scipy.signal.convolve2d`). The runtime `scipy` dep is retained for metric computation.
 - **Training entry point**: `scripts/train.py` (vanilla LightningCLI). `main.py`, `run_m3_train.py` and `UAVIQACLI` were removed in 2026-06 refactor.
-
-## Research context
-
-The proposal is **READY** (score 9.0/10, 3 rounds of external review). Key docs:
-
-```
-refine-logs/FINAL_PROPOSAL.md      # Method thesis
-refine-logs/EXPERIMENT_PLAN.md     # 33 runs, 6 milestones, 4 claims
-refine-logs/EXPERIMENT_TRACKER.md  # Run-by-run status (all TODO)
-refine-logs/REVIEW_SUMMARY.md      # Review resolution log
-```
-
-4 claims to validate: C1 (UAV distortion distinctiveness), C2 (synthetic↔real correlation), C3 (existing IQA failure), C4 (cross-task generalization).
 
 ## Conventions
 
