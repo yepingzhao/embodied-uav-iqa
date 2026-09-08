@@ -13,25 +13,13 @@
 Development commands are in [AGENTS.md](../AGENTS.md). Training configurations
 are in [configs/experiments/](../configs/experiments/).
 
-## Literature notes
+## Research plan
 
-These notes summarize prior work. Their reported results belong to the cited
-papers and do not establish results for this repository.
-
-| Note | Source |
-|---|---|
-| [AirCopBench](<literature/AirCopBench A Benchmark for Multi-drone Collaborative Embodied Perception and Reasoning.md>) | arXiv:2511.11025 |
-| [Embodied-IQA](<literature/Image Quality Assessment for Embodied AI.md>) | arXiv:2505.16815 |
-| [EPD / MA-EIQA](<literature/Embodied Image Quality Assessment for Robotic Intelligence.md>) | arXiv:2412.18774 |
-| [UAV embodied IQA literature review](<literature/低空无人机具身智能的图像质量评估-文献综述.md>) | Literature synthesis dated 2026-06-18 |
-
-The imported notes retain their original titles and Obsidian references.
-Some references and attachments belong to the original note collection and
-are not included in this repository.
-
-## Research analysis
-
-- [Multi-view IQA baseline analysis](research/multi-view-iqa-baseline-report.md)
+[UAV-Embodied-IQA Research Plan](research/RESEARCH_PLAN.md) is the single maintained
+research document: problem scope, relevant prior work, current implementation/data
+limitations, two testable claims, five experiment blocks, evaluation protocol, and
+an embedded milestone tracker. It replaces the separate literature notes and baseline
+report. Planned experiments and cited paper results are not completed project results.
 
 ## Downloaded paper sources
 

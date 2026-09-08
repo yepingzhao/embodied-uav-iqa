@@ -18,7 +18,7 @@ embodied-uav-iqa/
 ├── scripts/             # CLI composition roots
 ├── configs/             # configuration catalog and 8 maintained experiment configs
 ├── tests/               # unit, package-boundary, and inference tests
-└── docs/                # codemaps, literature notes, research analysis, paper sources
+└── docs/                # codemaps, research/RESEARCH_PLAN.md, downloaded paper sources
 ```
 
 ## Main entrypoints
