@@ -39,7 +39,7 @@ scripts/               # Data pipeline + benchmark + experiment scripts
   inference.py                       # Multi-GPU offline inference CLI (Phase 5)
 data/                  # Datasets (raw = external inputs, processed = generated artifacts)
 tests/                 # pytest tests (13+ files: test_distortion, test_lightning, test_data_synthesis, test_text_metrics, test_vlm_config, test_vlm_scorer, test_vlm_smoke, test_batch_annotator, test_annotations, test_dataset, test_model_text, test_inference_phase1-5)
-docs/                  # CODEMAPS, inference architecture, and literature references
+docs/                  # CODEMAPS, research/RESEARCH_PLAN.md, and downloaded paper sources
 ```
 
 ## Data pipeline
@@ -111,6 +111,13 @@ Input (3×256×256)
 - **Callbacks**: `SetupRunCallback` (data hash, DDP-safe), `MetricsHistoryCallback` (epoch metrics → `history.json`), `ResultsSavingCallback` (best ckpt → `results.json`)
 - **Ablation toggles**: configured via `model.use_frequency_encoder`, `model.use_spatial_attention`, and `model.use_task_conditioning` in experiment YAML (e.g., `no_frequency_encoder.yaml`)
 - **Distortion naming**: `{name}_L{intensity*10:02d}` (e.g., `propeller_vibration_blur_L04`)
+
+## Research planning
+
+Use `docs/research/RESEARCH_PLAN.md` as the single research plan. It distinguishes
+current implementation from planned repairs and experiments, including data-integrity
+gates, input-matched baselines, and an embedded milestone tracker. Its claims remain
+unvalidated; configuration availability does not establish experiment completion.
 
 ## Common training invocations
 

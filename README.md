@@ -94,7 +94,7 @@ tests/
   test_model_text.py           # Tests for model text/export utilities
   test_inference_phase[1-5].py # 5-phase tests for inference framework
 
-docs/                         # Architecture documentation and literature references
+docs/                         # Architecture documentation, research plan, and paper sources
 ```
 
 ---
@@ -334,7 +334,8 @@ black src/ tests/ scripts/
 | [docs/CODEMAPS/MODULES.md](docs/CODEMAPS/MODULES.md) | Per-module API documentation |
 | [docs/CODEMAPS/INFERENCE_FRAMEWORK.md](docs/CODEMAPS/INFERENCE_FRAMEWORK.md) | Multi-GPU offline inference architecture |
 | [configs/experiments/](configs/experiments/) | Experiment configurations |
-| [docs/README.md](docs/README.md) | Documentation index, literature notes, and source papers |
+| [docs/research/RESEARCH_PLAN.md](docs/research/RESEARCH_PLAN.md) | Current research scope, data gates, claims, experiments, and milestones |
+| [docs/README.md](docs/README.md) | Documentation index and downloaded paper sources |
 
 ---
 

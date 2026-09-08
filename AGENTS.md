@@ -67,6 +67,12 @@ scripts/train.py              # Unified training entry point (LightningCLI)
 - **`scipy` removed as a direct dependency** for distortion models (`distortion.py` uses `cv2.filter2D` with manual wrap padding instead of `scipy.signal.convolve2d`). The runtime `scipy` dep is retained for metric computation.
 - **Training entry point**: `scripts/train.py` (vanilla LightningCLI). `main.py`, `run_m3_train.py` and `UAVIQACLI` were removed in 2026-06 refactor.
 
+## Research plan
+
+`docs/research/RESEARCH_PLAN.md` is the single maintained research plan, with the
+current data/implementation blockers, claim map, experiment protocol, and milestone
+tracker. Do not treat proposed experiments or cited paper results as project evidence.
+
 ## Conventions
 
 - Python 3.10+, torch 2.1+
